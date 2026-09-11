@@ -255,6 +255,41 @@ export default function App() {
     };
   }, [activeChannel?.kind, activeChannelId]);
 
+  /** 群 + 智能体 → 侧边栏条目 */
+  const buildChannels = useCallback(
+    (roomList: RoomView[], agents: BotSummary[]): ChannelItem[] => [
+      ...roomList.map((room) => ({
+        id: room.id,
+        name: room.name,
+        time: formatClock(room.updatedAt),
+        lastMessage: room.lastMessage?.text ?? '还没有人说话',
+        color: room.members[0]?.color ?? '#a855f7',
+        role: `${room.members.length} 位成员`,
+        isGroup: true,
+        kind: 'room' as const,
+        members: room.members,
+      })),
+      ...agents
+        .filter((bot) => !bot.hidden)
+        .map((bot) => ({
+          id: bot.id,
+          name: bot.name,
+          time: formatClock(Date.parse(bot.updatedAt)),
+          lastMessage: bot.activity || bot.title || bot.role || '准备就绪',
+          color: bot.color,
+          role: bot.title || bot.role,
+          kind: 'agent' as const,
+        })),
+    ],
+    [],
+  );
+
+  /**
+   * 重新拉工作台并重建侧边栏。
+   *
+   * 智能体可以通过工具建同事/建群/拉人（工作台写操作），
+   * 这些改动必须立刻反映到界面上——不然「建好了但侧边栏看不见」。
+   */
   // 载入健康状态、真实房间与后台 Agent
   useEffect(() => {
     let cancelled = false;
@@ -277,28 +312,7 @@ export default function App() {
         setRooms(roomData.rooms);
 
         // 侧边栏 = 群（扇出）+ 智能体（1:1）
-        const channelList: ChannelItem[] = [
-          ...roomData.rooms.map((room) => ({
-            id: room.id,
-            name: room.name,
-            time: formatClock(room.updatedAt),
-            lastMessage: room.lastMessage?.text ?? '还没有人说话',
-            color: room.members[0]?.color ?? '#a855f7',
-            role: `${room.members.length} 位成员`,
-            isGroup: true,
-            kind: 'room' as const,
-            members: room.members,
-          })),
-          ...backendBots.map((bot) => ({
-            id: bot.id,
-            name: bot.name,
-            time: formatClock(Date.parse(bot.updatedAt)),
-            lastMessage: bot.activity || bot.role || '准备就绪',
-            color: bot.color,
-            role: bot.role,
-            kind: 'agent' as const,
-          })),
-        ];
+        const channelList = buildChannels(roomData.rooms, backendBots);
         setChannels(channelList);
         setActiveChannelId((current) =>
           channelList.some((item) => item.id === current)
@@ -312,45 +326,35 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [buildChannels]);
 
-  const refreshRooms = useCallback(async () => {
-    try {
-      const data = await api.fetchRooms();
-      setRooms(data.rooms);
-      setChannels((current) =>
-        current.map((item) => {
-          if (item.kind !== 'room') return item;
-          const room = data.rooms.find((candidate) => candidate.id === item.id);
-          if (!room) return item;
-          return {
-            ...item,
-            time: formatClock(room.updatedAt),
-            lastMessage: room.lastMessage?.text ?? item.lastMessage,
-            members: room.members,
-          };
-        }),
-      );
-    } catch {
-      // 静默失败：下次轮询会补上
+  const syncWorkspace = useCallback(async () => {
+    const [roomData, agents] = await Promise.all([
+      api.fetchRooms().catch(() => null),
+      api.fetchBots().catch(() => null),
+    ]);
+    if (!roomData && !agents) return;
+
+    if (agents) setBackendAgents(agents);
+    if (roomData) {
+      setRooms(roomData.rooms);
+      setRoomMemberLimit(roomData.memberLimit);
     }
-  }, []);
 
-  /** 重新拉花名册，并用服务端数据重建侧边栏 */
-  const refreshAgents = useCallback(async () => {
-    const list = await api.fetchBots().catch(() => null);
-    if (!list) return;
-    setBackendAgents(list);
-    setChannels((current) =>
-      current.map((item) => {
-        if (item.kind !== 'agent') return item;
-        const agent = list.find((candidate) => candidate.id === item.id);
-        if (!agent) return item;
-        return { ...item, name: agent.name, role: agent.role, color: agent.color };
-      }),
-    );
-    return list;
-  }, []);
+    setChannels((current) => {
+      const roomsNow = roomData?.rooms ?? [];
+      const agentsNow = agents ?? [];
+      const rebuilt = buildChannels(roomsNow, agentsNow);
+      // 后端还没回来的那一半保留旧值，避免整列表闪一下
+      if (!roomData) {
+        return [...current.filter((item) => item.kind === 'room'), ...rebuilt.filter((i) => i.kind === 'agent')];
+      }
+      if (!agents) {
+        return [...rebuilt.filter((i) => i.kind === 'room'), ...current.filter((item) => item.kind === 'agent')];
+      }
+      return rebuilt;
+    });
+  }, [buildChannels]);
 
   /** 新建智能体：只有服务端确认建成才进侧栏，避免出现发不出消息的死频道 */
   const createAgent = useCallback(
@@ -369,7 +373,7 @@ export default function App() {
         ]);
         return;
       }
-      await refreshAgents();
+      await syncWorkspace();
       const channel: ChannelItem = {
         id: created.id,
         name: created.name,
@@ -385,7 +389,7 @@ export default function App() {
       setActiveChannelId(created.id);
       setChannelHistories((prev) => ({ ...prev, [created.id]: [] }));
     },
-    [refreshAgents],
+    [syncWorkspace],
   );
 
   /** 新建群：建完立刻可进，成员表由服务端校验 */
@@ -432,6 +436,12 @@ export default function App() {
       ),
     );
   }, []);
+
+  // 安全网：后台可能被别的入口改动（另一个窗口、脚本），定期同步一次
+  useEffect(() => {
+    const timer = window.setInterval(() => void syncWorkspace(), 15000);
+    return () => window.clearInterval(timer);
+  }, [syncWorkspace]);
 
   const send = useCallback(
     async (text: string) => {
@@ -561,7 +571,8 @@ export default function App() {
           abortRef.current = null;
           setBusy(false);
           setRoundActive(null);
-          void refreshRooms();
+          // 回合里可能建了同事 / 拉了人，立刻反映到侧边栏
+          void syncWorkspace();
         }
         return;
       }
@@ -643,9 +654,11 @@ export default function App() {
         abortRef.current = null;
         setBusy(false);
         setMemoryToken((token) => token + 1);
+        // 工作台工具可能改了同事 / 群，同步一次
+        void syncWorkspace();
       }
     },
-    [activeAgentId, activeChannel, activeChannelId, busy, model, refreshRooms],
+    [activeAgentId, activeChannel, activeChannelId, busy, model, syncWorkspace],
   );
 
   const stop = useCallback(() => {

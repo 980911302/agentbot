@@ -1,0 +1,209 @@
+import type { AgentPatch } from '../agent/registry.js';
+import type { AgentRecord } from '../agent/types.js';
+import { ROOM_MEMBER_LIMIT, type Room } from '../room/types.js';
+import type { AgentRegistry } from '../agent/registry.js';
+import type { RoomStore } from '../room/store.js';
+import type { MessageStore } from '../store/messages.js';
+
+/** 工作台操作被拒绝时的错误；工具层会把它转成 "Error: ..." 回给模型 */
+export class WorkbenchError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'WorkbenchError';
+  }
+}
+
+export interface PostToRoomResult {
+  roomName: string;
+  /** 实际进入回合的成员数 */
+  called: number;
+  spoke: number;
+  silent: number;
+  skipped: string[];
+}
+
+export interface WorkbenchDeps {
+  registry: AgentRegistry;
+  rooms: RoomStore;
+  messages: MessageStore;
+  /** 由运行时注入：往群里发一条并扇出（排除调用者自己） */
+  postToRoom: (roomId: string, text: string, excludeAgentIds: string[]) => Promise<PostToRoomResult>;
+  /** 主人在群里的显示名 */
+  ownerName: string;
+}
+
+/**
+ * 工作台写操作。
+ *
+ * 对应《智能体可操作能力.md》：智能体在对话里替用户改工作台，
+ * 而不是「在对话里假装有个新角色」——建完必须真的进 agents.json / rooms，
+ * 侧边栏立刻可见，新同事有自己的记忆和对话线。
+ *
+ * 权限边界（规格第 10 节「不要给智能体的工具」）：
+ *   - 没有删除同事 / 解散群的入口
+ *   - 改群成员要求调用者自己也在群里
+ *   - 读不到别人的私聊与记忆
+ */
+export class Workbench {
+  constructor(private readonly deps: WorkbenchDeps) {}
+
+  // ── 同事 ────────────────────────────────────────────
+
+  async createAgent(input: {
+    name: string;
+    title?: string;
+    description?: string;
+    instructions?: string;
+    color?: string;
+    avatar?: string;
+    section?: string;
+  }): Promise<AgentRecord> {
+    const name = input.name?.trim();
+    if (!name) throw new WorkbenchError('新建同事必须给一个名字');
+
+    const existing = await this.deps.registry.findByName(name);
+    if (existing) {
+      throw new WorkbenchError(
+        `已经有一个叫「${name}」的同事了（id=${existing.id}）。要改资料请用 update_agent，不要重名再建一个。`,
+      );
+    }
+
+    if (input.color !== undefined && !/^#[0-9a-fA-F]{6}$/.test(input.color.trim())) {
+      throw new WorkbenchError('color 必须是 #rrggbb 形式的十六进制色值');
+    }
+
+    return this.deps.registry.create({
+      name,
+      title: input.title,
+      description: input.description,
+      instructions: input.instructions,
+      color: input.color?.trim(),
+      avatar: input.avatar,
+      section: input.section,
+    });
+  }
+
+  /**
+   * 改同事资料。合并写入：没传的字段保持原值，空字符串不会把资料抹空。
+   * 允许改别人（规格第 1 节），但不允许读别人的私聊与记忆。
+   */
+  async updateAgent(targetId: string, patch: AgentPatch): Promise<AgentRecord> {
+    const target = await this.deps.registry.get(targetId);
+    if (!target) throw new WorkbenchError(`找不到 id 为 ${targetId} 的同事`);
+
+    const updated = await this.deps.registry.update(targetId, patch);
+    if (!updated) throw new WorkbenchError(`更新「${target.name}」失败`);
+    return updated;
+  }
+
+  async listAgents(): Promise<AgentRecord[]> {
+    return this.deps.registry.list();
+  }
+
+  async listSections(): Promise<string[]> {
+    return this.deps.registry.listSections();
+  }
+
+  async listRooms(): Promise<Room[]> {
+    return this.deps.rooms.list();
+  }
+
+  // ── 群 ──────────────────────────────────────────────
+
+  async createRoom(callerId: string, input: { name: string; memberIds: string[] }): Promise<{
+    room: Room;
+    callerIncluded: boolean;
+  }> {
+    const name = input.name?.trim();
+    if (!name) throw new WorkbenchError('建群必须给一个群名');
+
+    const memberIds = await this.resolveMemberIds(input.memberIds, { requireAtLeastOne: true });
+
+    const duplicate = (await this.deps.rooms.list()).find(
+      (room) => room.name.toLowerCase() === name.toLowerCase(),
+    );
+    if (duplicate) {
+      throw new WorkbenchError(
+        `已经有一个叫「${name}」的群了（id=${duplicate.id}）。要改成员请用 update_room。`,
+      );
+    }
+
+    const room = await this.deps.rooms.create({ name, memberIds });
+    return { room, callerIncluded: memberIds.includes(callerId) };
+  }
+
+  /** 加人 / 减人 / 改名；调用者必须已是成员 */
+  async updateRoom(
+    callerId: string,
+    roomId: string,
+    patch: { name?: string; memberIds?: string[] },
+  ): Promise<Room> {
+    const room = await this.deps.rooms.get(roomId);
+    if (!room) throw new WorkbenchError(`找不到 id 为 ${roomId} 的群`);
+
+    if (!room.memberIds.includes(callerId)) {
+      throw new WorkbenchError('只有自己也在群里才能改成员或改名；先让群里的人把你拉进去');
+    }
+
+    if (patch.name !== undefined) await this.deps.rooms.rename(roomId, patch.name);
+
+    if (patch.memberIds !== undefined) {
+      const next = await this.resolveMemberIds(patch.memberIds, { requireAtLeastOne: false });
+      if (next.length === 0) {
+        throw new WorkbenchError('不能把成员删空，至少留 1 个（解散群只有用户能做）');
+      }
+      await this.deps.rooms.setMembers(roomId, next);
+    }
+
+    const updated = await this.deps.rooms.get(roomId);
+    if (!updated) throw new WorkbenchError('更新群失败');
+    return updated;
+  }
+
+  /**
+   * 以自己身份往群里发一条并扇出。
+   * 与群回合里的 `say` 不同：这会把全体成员叫醒开新的一轮。
+   */
+  async postToRoom(callerId: string, roomId: string, text: string): Promise<PostToRoomResult> {
+    const body = text?.trim();
+    if (!body) throw new WorkbenchError('要发的内容不能为空');
+
+    const room = await this.deps.rooms.get(roomId);
+    if (!room) throw new WorkbenchError(`找不到 id 为 ${roomId} 的群`);
+    if (!room.memberIds.includes(callerId)) {
+      throw new WorkbenchError('你不在这个群里，不能代群发言；先让成员把你拉进去');
+    }
+
+    return this.deps.postToRoom(roomId, body, [callerId]);
+  }
+
+  // ── 内部 ────────────────────────────────────────────
+
+  private async resolveMemberIds(
+    raw: string[] | undefined,
+    options: { requireAtLeastOne: boolean },
+  ): Promise<string[]> {
+    const ids = [...new Set((raw ?? []).map((id) => id.trim()).filter(Boolean))];
+    if (ids.length === 0 && options.requireAtLeastOne) {
+      throw new WorkbenchError('建群时至少要有 1 个成员（把要参加的人 id 放进来）');
+    }
+    if (ids.length > ROOM_MEMBER_LIMIT) {
+      throw new WorkbenchError(`群成员最多 ${ROOM_MEMBER_LIMIT} 个，当前给了 ${ids.length} 个`);
+    }
+
+    const all = await this.deps.registry.list();
+    const known = new Map(all.map((agent) => [agent.id, agent.name]));
+    const unknown = ids.filter((id) => !known.has(id));
+    if (unknown.length > 0) {
+      throw new WorkbenchError(`这些 id 找不到对应同事：${unknown.join(', ')}`);
+    }
+    return ids;
+  }
+
+  /** 给工具层用的成员名查询 */
+  async memberNames(ids: string[]): Promise<string[]> {
+    const all = await this.deps.registry.list();
+    const known = new Map(all.map((agent) => [agent.id, agent.name]));
+    return ids.map((id) => known.get(id) ?? id);
+  }
+}

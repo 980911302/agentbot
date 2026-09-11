@@ -74,8 +74,13 @@ export interface SessionSummary {
 export interface BotSummary {
   id: string;
   name: string;
+  /** 一行简介 */
+  title?: string;
   role: string;
   color: string;
+  avatar?: string;
+  section?: string;
+  hidden?: boolean;
   status: BotStatus;
   activity: string;
   conversationCount: number;

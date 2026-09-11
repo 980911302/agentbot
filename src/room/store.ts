@@ -39,14 +39,24 @@ export class RoomStore {
 
   // ── 房间表 ──────────────────────────────────────────
 
+  /**
+   * 返回房间快照（深拷贝）。
+   *
+   * 不能把缓存里的对象直接交出去：调用方拿到后如果保存了引用，
+   * 后续 setMembers 改的是同一个对象，它手里的「旧快照」会跟着变，
+   * 于是「改之前有多少人」这类对比会得出错误结论。
+   */
   async list(): Promise<Room[]> {
     await this.load();
-    return [...this.doc.rooms].sort((left, right) => right.updatedAt - left.updatedAt);
+    return [...this.doc.rooms]
+      .sort((left, right) => right.updatedAt - left.updatedAt)
+      .map(cloneRoom);
   }
 
   async get(id: string): Promise<Room | undefined> {
     await this.load();
-    return this.doc.rooms.find((room) => room.id === id);
+    const room = this.doc.rooms.find((item) => item.id === id);
+    return room ? cloneRoom(room) : undefined;
   }
 
   async create(input: { name: string; memberIds: string[] }): Promise<Room> {
@@ -200,6 +210,10 @@ export class RoomStore {
     this.timeline.set(roomId, list);
     return list;
   }
+}
+
+function cloneRoom(room: Room): Room {
+  return { ...room, memberIds: [...room.memberIds] };
 }
 
 function dedupe(ids: string[]): string[] {

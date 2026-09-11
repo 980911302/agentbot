@@ -167,7 +167,8 @@ async function handleRequest(
     const bots = list.map((record) => ({
       id: record.id,
       name: record.name,
-      role: record.instructions.slice(0, 30),
+      title: record.title,
+      role: record.title || record.instructions.slice(0, 30),
       color: record.color,
       status: runtime.isBusy(record.id) ? 'working' : 'idle',
       activity: '',
@@ -189,7 +190,8 @@ async function handleRequest(
     const bot = {
       id: record.id,
       name: record.name,
-      role: record.instructions.slice(0, 30),
+      title: record.title,
+      role: record.title || record.instructions.slice(0, 30),
       color: record.color,
       status: 'idle',
       activity: '',

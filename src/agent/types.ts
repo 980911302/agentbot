@@ -61,9 +61,19 @@ export interface AgentMemory {
 export interface AgentRecord {
   id: string;
   name: string;
+  /** 一行简介，侧边栏与群成员列表展示用 */
+  title: string;
+  /** 详细描述 */
+  description: string;
   instructions: string;
   toolNames: string[];
   color: string;
+  /** 头像；一期只支持 emoji / 短字符 */
+  avatar?: string;
+  /** 侧边栏分组 id */
+  section?: string;
+  /** 是否从侧边栏隐藏 */
+  hidden?: boolean;
   /** 这个智能体参与的项目；决定它能读到哪些项目笔记 */
   projectIds: string[];
   createdAt: number;

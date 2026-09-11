@@ -9,6 +9,11 @@ export interface RoomTurnContext {
   limit: number;
 }
 
+export interface TurnState {
+  /** 工作台工具的本轮配额，防止一次对话里建一堆东西 */
+  workbench: { agentsCreated: number; roomsCreated: number };
+}
+
 export interface ToolContext {
   agentId: string;
   /** 这个智能体参与的项目，决定项目笔记写到哪 */
@@ -18,6 +23,8 @@ export interface ToolContext {
   room?: RoomTurnContext;
   /** 智能体之间传话的链深度，防止无限互发 */
   agentChainDepth?: number;
+  /** 本轮可变状态（配额等） */
+  turnState?: TurnState;
 }
 
 export interface Tool<TArgs = Record<string, unknown>> {

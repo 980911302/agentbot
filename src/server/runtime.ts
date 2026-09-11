@@ -11,6 +11,8 @@ import type {
 import { assembleAgent } from '../agent/assemble.js';
 import { AgentLoop } from '../agent/agent-loop.js';
 import { AgentRegistry } from '../agent/registry.js';
+import { createWorkbenchTools } from '../tools/examples/workbench.js';
+import { Workbench } from '../workbench/service.js';
 import { AgentInbox } from '../agent/inbox.js';
 import { DEFAULT_OWNER_NAME } from '../config.js';
 import { ContextBuilder, type BuiltContext, type BuildOptions } from '../context/builder.js';
@@ -32,7 +34,7 @@ import { MessageStore } from '../store/messages.js';
 import { resolveProjectOwner } from '../tools/examples/memory.js';
 import { ToolRegistry } from '../tools/registry.js';
 import { createAgentMessageTool, createSayTool, createSilentTool } from '../tools/examples/room.js';
-import type { Tool } from '../tools/tool.js';
+import type { Tool, TurnState } from '../tools/tool.js';
 
 export interface SeedAgent {
   name: string;
@@ -71,6 +73,8 @@ export interface SendOptions {
   signal?: AbortSignal;
   /** 覆盖主人显示名（一般不用传，从 runtime 配置读） */
   ownerName?: string;
+  /** 这些成员跳过这一轮（工作台代发时排除调用者自己） */
+  excludeAgentIds?: string[];
 }
 
 export interface TurnResult extends RunResult {
@@ -89,6 +93,8 @@ export interface RoomRoundSummary {
   roomId: string;
   roomName: string;
   outcomes: RoundOutcome[];
+  /** 因为正在跑别的回合而跳过的成员名 */
+  skipped: string[];
 }
 
 export class AgentBusyError extends Error {
@@ -130,6 +136,8 @@ export class AgentRuntime {
   readonly rooms: RoomStore;
   readonly inbox: AgentInbox;
 
+  readonly workbench: Workbench;
+
   private readonly tools: Tool<any>[];
   private readonly builder: ContextBuilder;
   private readonly compactor: Compactor;
@@ -138,8 +146,7 @@ export class AgentRuntime {
   private readonly locks = new Set<string>();
 
   constructor(private readonly options: AgentRuntimeOptions) {
-    this.tools = options.tools;
-    this.registry = new AgentRegistry(options.dataDir, options.tools.map((tool) => tool.name));
+    this.registry = new AgentRegistry(options.dataDir, []);
     this.messages = new MessageStore(options.dataDir);
     this.memory = options.memoryStore ?? new MemoryStore(options.dataDir);
     this.compaction = new CompactionStore(options.dataDir);
@@ -153,6 +160,29 @@ export class AgentRuntime {
       options.budget.reserveRecent,
     );
     this.extractor = new MemoryExtractor(this.memory, options.memoryExtraction);
+
+    // 工作台：智能体在对话里替用户改工作台（建同事、建群、拉人、代群发言）
+    this.workbench = new Workbench({
+      registry: this.registry,
+      rooms: this.rooms,
+      messages: this.messages,
+      ownerName: options.ownerName ?? DEFAULT_OWNER_NAME,
+      postToRoom: async (roomId, text, excludeAgentIds) => {
+        const summary = await this.postToRoom(roomId, text, { excludeAgentIds });
+        const spoke = summary.outcomes.filter((item) => item.status === 'spoke').length;
+        return {
+          roomName: summary.roomName,
+          called: summary.outcomes.length,
+          spoke,
+          silent: summary.outcomes.length - spoke,
+          skipped: summary.skipped,
+        };
+      },
+    });
+
+    this.tools = [...options.tools, ...createWorkbenchTools(this.workbench)];
+    // 新同事默认拿到全部工具——包括工作台那一组
+    this.registry.setDefaultToolNames(this.tools.map((tool) => tool.name));
   }
 
   // ── 智能体 ──────────────────────────────────────────
@@ -311,12 +341,25 @@ export class AgentRuntime {
     if (!room) throw new Error(`Unknown room: ${roomId}`);
     if (members.length === 0) throw new Error('房间没有成员');
 
-    const memberLike: RoomMemberLike[] = members.map((record) => ({
+    // 正在进行别的回合的成员不能被打断；工作台代发时还要排除调用者自己
+    const exclude = new Set(options.excludeAgentIds ?? []);
+    const skipped: string[] = [];
+    const active = members.filter((record) => {
+      if (exclude.has(record.id)) return false;
+      if (this.locks.has(record.id)) {
+        skipped.push(record.name);
+        return false;
+      }
+      return true;
+    });
+    if (active.length === 0) throw new Error('房间里没有可叫醒的成员（其他人正忙）');
+
+    const memberLike: RoomMemberLike[] = active.map((record) => ({
       id: record.id,
       name: record.name,
       color: record.color,
     }));
-    const byId = new Map(members.map((record) => [record.id, record]));
+    const byId = new Map(active.map((record) => [record.id, record]));
 
     const mentions = resolveMentions(text, memberLike);
     const roundId = randomUUID();
@@ -340,7 +383,7 @@ export class AgentRuntime {
     // 入站消息写进每个成员自己的对话线（私聊与群聊是同一条线）
     const stripped = stripMentions(text, memberLike);
     await Promise.all(
-      members.map((member) =>
+      active.map((member) =>
         this.messages.append({
           id: randomUUID(),
           agentId: member.id,
@@ -411,7 +454,7 @@ export class AgentRuntime {
         roundPosts.push({ speaker: member.name, text: post });
 
         await Promise.all(
-          members
+          active
             .filter((other) => other.id !== member.id)
             .map((other) =>
               this.messages.append({
@@ -457,7 +500,7 @@ export class AgentRuntime {
       silent: outcomes.length - spoke,
     });
 
-    return { roundId, roomId, roomName: room.name, outcomes };
+    return { roundId, roomId, roomName: room.name, outcomes, skipped };
   }
 
   private async runRoomTurn(input: {
@@ -703,6 +746,9 @@ export class AgentRuntime {
         ? ToolRegistry.from([...agent.tools, ...turn.extraTools])
         : ToolRegistry.from(agent.tools);
 
+      // 本轮配额：工作台工具建多少同事/群，回合结束即失效
+      const turnState: TurnState = { workbench: { agentsCreated: 0, roomsCreated: 0 } };
+
       const loop = new AgentLoop({
         provider,
         messages: this.messages,
@@ -710,7 +756,7 @@ export class AgentRuntime {
         onEvent: options.onEvent,
         signal: turn.signal ?? options.signal,
         toolsOverride: registry,
-        toolContext: turn.toolContext,
+        toolContext: { ...(turn.toolContext ?? {}), turnState },
         persistAssistantText: turn.persistAssistantText,
         stamp: task.roomId
           ? { roomId: task.roomId, roomName: task.roomName, speaker: task.speaker, source: 'room' }
