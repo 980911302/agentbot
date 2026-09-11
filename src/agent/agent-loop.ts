@@ -24,7 +24,7 @@ export interface AgentLoopDeps {
   /** 覆盖这一轮可用的工具（群回合会额外挂 say / stay_silent） */
   toolsOverride?: ToolRegistry;
   /** 工具执行上下文里要带的额外信息 */
-  toolContext?: Pick<ToolContext, 'room' | 'agentChainDepth' | 'turnState'>;
+  toolContext?: Pick<ToolContext, 'room' | 'agentChainDepth' | 'turnState' | 'emit'>;
   /** 群回合里模型的收尾文本属于内部推理，不写进对话历史 */
   persistAssistantText?: boolean;
   /** 追加到每条持久化消息上的元信息（房间标记等） */

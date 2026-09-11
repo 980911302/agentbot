@@ -29,6 +29,8 @@ export interface AppConfig {
   memoryExtraction: boolean;
   /** 主人在群里的显示名 */
   ownerName: string;
+  /** 是否启用联网工具（web_search / web_fetch） */
+  web: boolean;
 }
 
 export class MissingApiKeyError extends Error {
@@ -107,5 +109,6 @@ export function resolveConfig(options: ResolveConfigOptions = {}): AppConfig {
       (env.AGENT_OWNER_NAME ?? '').trim() ||
       (env.AGENT_OWNER ?? '').trim() ||
       DEFAULT_OWNER_NAME,
+    web: env.AGENT_WEB !== 'off',
   };
 }

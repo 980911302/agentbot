@@ -13,6 +13,8 @@ import { AgentLoop } from '../agent/agent-loop.js';
 import { AgentRegistry } from '../agent/registry.js';
 import { createWorkbenchTools } from '../tools/examples/workbench.js';
 import { Workbench } from '../workbench/service.js';
+import { InteractionBroker } from '../interaction/broker.js';
+import { SecretStore } from '../secret/store.js';
 import { AgentInbox } from '../agent/inbox.js';
 import { DEFAULT_OWNER_NAME } from '../config.js';
 import { ContextBuilder, type BuiltContext, type BuildOptions } from '../context/builder.js';
@@ -64,6 +66,10 @@ export interface AgentRuntimeOptions {
   maxAgentChainDepth?: number;
   /** 主人在群里的显示名；不配则用「主人」 */
   ownerName?: string;
+  /** 交互代理（工具问用户 → 界面作答）；不传则自建 */
+  broker?: InteractionBroker;
+  /** 密钥存储；不传则自建 */
+  secrets?: SecretStore;
 }
 
 export interface SendOptions {
@@ -137,6 +143,8 @@ export class AgentRuntime {
   readonly inbox: AgentInbox;
 
   readonly workbench: Workbench;
+  readonly broker: InteractionBroker;
+  readonly secrets: SecretStore;
 
   private readonly tools: Tool<any>[];
   private readonly builder: ContextBuilder;
@@ -152,6 +160,8 @@ export class AgentRuntime {
     this.compaction = new CompactionStore(options.dataDir);
     this.rooms = new RoomStore(options.dataDir);
     this.inbox = new AgentInbox(options.dataDir);
+    this.broker = options.broker ?? new InteractionBroker();
+    this.secrets = options.secrets ?? new SecretStore(options.dataDir);
     this.builder = new ContextBuilder(this.messages, options.budget);
     this.compactor = new Compactor(
       this.messages,
@@ -181,6 +191,7 @@ export class AgentRuntime {
     });
 
     this.tools = [...options.tools, ...createWorkbenchTools(this.workbench)];
+    this.registry.setDefaultToolNames(this.tools.map((tool) => tool.name));
     // 新同事默认拿到全部工具——包括工作台那一组
     this.registry.setDefaultToolNames(this.tools.map((tool) => tool.name));
   }
@@ -756,7 +767,7 @@ export class AgentRuntime {
         onEvent: options.onEvent,
         signal: turn.signal ?? options.signal,
         toolsOverride: registry,
-        toolContext: { ...(turn.toolContext ?? {}), turnState },
+        toolContext: { ...(turn.toolContext ?? {}), turnState, emit: options.onEvent },
         persistAssistantText: turn.persistAssistantText,
         stamp: task.roomId
           ? { roomId: task.roomId, roomName: task.roomName, speaker: task.speaker, source: 'room' }

@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ReactNode, WheelEvent as ReactWheelEvent } from 'react';
-import type { ArtifactView, BotSummary, DisplayMessage } from '../types';
+import type { ArtifactView, BotSummary, DisplayMessage, InteractionRequest } from '../types';
 import { BotAvatar } from './BotAvatar';
 import { IconChevronDown, IconInfo } from '../icons';
 import { MessageItem } from './MessageItem';
+import { InteractionCard } from './InteractionCard';
 
 interface ChatViewProps {
   bot: BotSummary | null;
@@ -21,6 +22,12 @@ interface ChatViewProps {
   members?: Array<{ id: string; name: string; color: string }>;
   /** 切换频道时用它触发内容淡入 */
   channelKey?: string;
+  /** 正在等用户回答的卡片 */
+  interactions?: InteractionRequest[];
+  onAnswerInteraction?: (
+    id: string,
+    answer: { value?: string; secret?: string; cancelled?: boolean },
+  ) => void;
 }
 
 export function ChatView({
@@ -36,6 +43,8 @@ export function ChatView({
   isGroup,
   members = [],
   channelKey,
+  interactions,
+  onAnswerInteraction,
 }: ChatViewProps) {
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   /** 是否跟随新消息 */
@@ -172,6 +181,16 @@ export function ChatView({
               {silentNotes?.map((note) => <span key={note}>{note}</span>)}
             </div>
           ) : null}
+
+          {(interactions ?? []).length > 0
+            ? (interactions ?? []).map((request) => (
+                <InteractionCard
+                  key={request.id}
+                  request={request}
+                  onAnswer={(answer) => onAnswerInteraction?.(request.id, answer)}
+                />
+              ))
+            : null}
 
           {busy && !isGroup ? (
             <div className="msg-group-item assistant thinking-indicator">

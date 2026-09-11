@@ -25,6 +25,8 @@ export interface ToolContext {
   agentChainDepth?: number;
   /** 本轮可变状态（配额等） */
   turnState?: TurnState;
+  /** 把事件推给界面（例如弹出选项卡等用户回答） */
+  emit?: (event: import('../agent/types.js').AgentEvent) => void;
 }
 
 export interface Tool<TArgs = Record<string, unknown>> {

@@ -4,6 +4,8 @@ import { createAgentTools } from './server/tools.js';
 import { resolveConfig } from './config.js';
 import { OpenAIProvider } from './llm/openai-provider.js';
 import { MemoryStore } from './memory/store.js';
+import { InteractionBroker } from './interaction/broker.js';
+import { SecretStore } from './secret/store.js';
 import type { AgentEvent } from './agent/types.js';
 
 export { AgentRuntime } from './server/runtime.js';
@@ -98,9 +100,20 @@ async function main(): Promise<void> {
   const rootDir = resolve(process.cwd());
   const config = resolveConfig({ env: process.env, rootDir });
   const memoryStore = new MemoryStore(config.dataDir);
+  const broker = new InteractionBroker();
+  const secrets = new SecretStore(config.dataDir);
+  let runtime: AgentRuntime;
 
-  const runtime = new AgentRuntime({
-    tools: createAgentTools({ rootDir, memory: memoryStore }),
+  runtime = new AgentRuntime({
+    tools: createAgentTools({
+      rootDir,
+      memory: memoryStore,
+      secrets,
+      broker,
+      // CLI 模式没有界面，卡片交互拿不到回答；让工具报错时说得清楚些
+      agentName: async (agentId) => (await runtime?.registry.get(agentId))?.name ?? agentId,
+      web: config.web,
+    }),
     createProvider: (model) =>
       new OpenAIProvider({ apiKey: config.apiKey, model, baseURL: config.baseURL }),
     dataDir: config.dataDir,
@@ -109,6 +122,9 @@ async function main(): Promise<void> {
     budget: config.budget,
     memoryExtraction: config.memoryExtraction,
     memoryStore,
+    broker,
+    secrets,
+    ownerName: config.ownerName,
   });
 
   const agent = await runtime.ensureDefaultAgent();

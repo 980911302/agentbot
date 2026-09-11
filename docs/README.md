@@ -219,6 +219,12 @@ npm run typecheck    # 双端类型检查
 | `create_room` | 建群 | 成员上限 6，拒绝重名，自己要参加需写入 |
 | `update_room` | 改群名 / 加人 / 减人 | **调用者必须已在群里**，不能删空 |
 | `post_to_room` | 以自己身份广播到群（开新一轮） | 必须已在群里，会叫醒全体成员 |
+| `ask_user` | 弹选项卡让用户点，而不是打字 | 2~4 个选项，可自定义输入，5 分钟超时 |
+| `request_secret` | 弹遮罩框收密钥 | **值不进对话、不进记忆**，落盘 0600 |
+| `list_secrets` | 列出已保存的密钥名字 | 只有名字，没有值 |
+| `web_search` | 搜公网，返回标题 + 链接 + 摘要 | 过滤广告位；需登录的内容搜不到 |
+| `web_fetch` | 抓网页转纯文本 | **拒绝内网 / 环回地址（SSRF 防护）**，≤ 2 MB |
+| `deliver_file` | 把工作区文件投递到用户磁盘 | 只允许下载 / 桌面 / 文档，文件名不能逃逸 |
 | `say` | 群内发言 | **仅群回合**，每轮最多 3 条 |
 | `stay_silent` | 保持沉默 | **仅群回合**，被点名时不提供 |
 | `send_to_agent` | 私发同事 | 传话链深度上限 3 |
@@ -296,7 +302,18 @@ GET  /api/agents/:id/inbox     查看积压
 POST /api/agents/:id/inbox     立即处理积压（合并成一个回合）
 ```
 
-### 5.7 群
+### 5.7 交互与密钥
+
+```
+GET  /api/interactions?agentId=        正在等回答的卡片
+POST /api/interactions/:id             作答 { value? , secret? , cancelled? }
+GET  /api/secrets                      已保存的密钥名字（不含值）
+DELETE /api/secrets/:name              删除一个密钥
+```
+
+密钥的值**永远不会**从接口回传；`request_secret` 只把名字交给模型。
+
+### 5.8 群
 
 ```
 GET    /api/rooms                            列出全部群（含成员信息与最后一条消息）
@@ -310,7 +327,7 @@ POST   /api/rooms/:id/messages               SSE 扇出  { text, model?, ownerNa
 
 `POST /api/rooms/:id/messages` 会**同时**返回 `event:`（AgentEvent）和 `room:`（RoomEvent）两种事件。
 
-### 5.8 兼容层
+### 5.9 兼容层
 
 | 旧接口 | 映射到 |
 | --- | --- |
@@ -396,6 +413,8 @@ cp .env.example .env
 | `AGENT_OWNER_NAME` | `主人` | 在群里显示的主人名 |
 | `AGENT_DATA_DIR` | `<root>/.agentbot` | 数据目录 |
 | `AGENT_MEMORY_EXTRACTION` | 开启 | 设为 `off` 关闭回合后自动抽取记忆 |
+| `AGENT_WEB` | 开启 | 设为 `off` 关闭联网工具 |
+| `AGENT_DELIVER_DIRS` | `~/Downloads,~/Desktop,~/Documents` | `deliver_file` 允许写入的目录 |
 | `PORT` | `8787` | 仅 `npm run server` 使用 |
 
 读取顺序：**进程环境变量 > `.env` 文件**（命令行传入的能覆盖 `.env`）。

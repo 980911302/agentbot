@@ -4,6 +4,8 @@ import { extname, isAbsolute, join, relative, resolve } from 'node:path';
 import { AVAILABLE_MODELS, resolveConfig, type AppConfig, type ModelOption } from '../config.js';
 import { OpenAIProvider } from '../llm/openai-provider.js';
 import { MemoryStore } from '../memory/store.js';
+import { InteractionBroker } from '../interaction/broker.js';
+import { SecretStore } from '../secret/store.js';
 import type { MemoryScope, MemoryTier } from '../memory/types.js';
 import { AgentBusyError, AgentRuntime } from './runtime.js';
 import { SEED_AGENTS, SEED_ROOMS } from './seed.js';
@@ -61,6 +63,9 @@ interface RouteContext {
   ownerName: string;
 }
 
+/** 工具里要反查同事名；用软引用避免构造顺序上的循环依赖 */
+let runtimeRef: AgentRuntime | undefined;
+
 export async function createAgentServer(options: AgentServerOptions = {}): Promise<AgentServerHandle> {
   const rootDir = resolve(options.rootDir ?? process.cwd());
   const config = resolveConfig({ env: process.env, rootDir });
@@ -70,7 +75,16 @@ export async function createAgentServer(options: AgentServerOptions = {}): Promi
 
   const dataDir = options.dataDir ?? config.dataDir;
   const memoryStore = new MemoryStore(dataDir);
-  const tools = createAgentTools({ rootDir, memory: memoryStore });
+  const broker = new InteractionBroker();
+  const secrets = new SecretStore(dataDir);
+  const tools = createAgentTools({
+    rootDir,
+    memory: memoryStore,
+    secrets,
+    broker,
+    agentName: async (agentId) => (await runtimeRef?.registry.get(agentId))?.name ?? agentId,
+    web: config.web,
+  });
 
   const runtime = new AgentRuntime({
     tools,
@@ -85,7 +99,11 @@ export async function createAgentServer(options: AgentServerOptions = {}): Promi
     seed: SEED_AGENTS,
     seedRooms: SEED_ROOMS,
     ownerName: config.ownerName,
+    broker,
+    secrets,
   });
+
+  runtimeRef = runtime;
 
   const toolDefs = tools.map((tool) => ({ name: tool.name, description: tool.description }));
   await runtime.ensureDefaultAgent();
@@ -278,6 +296,48 @@ async function handleRequest(
     return;
   }
 
+
+  // ── 交互：等用户回答的卡片 ────────────────────────
+  if (path === '/api/interactions' && method === 'GET') {
+    const agentId = url.searchParams.get('agentId') ?? undefined;
+    json(response, 200, { interactions: runtime.broker.list(agentId ? { agentId } : undefined) });
+    return;
+  }
+
+  const interactionMatch = /^\/api\/interactions\/([^/]+)$/.exec(path);
+  if (interactionMatch && method === 'POST') {
+    const id = decodeURIComponent(interactionMatch[1] ?? '');
+    const body = await readJson(request);
+
+    if (body.cancelled === true) {
+      json(response, 200, { ok: runtime.broker.cancel(id) });
+      return;
+    }
+
+    const value = readString(body.value);
+    const secret = readString(body.secret);
+    if (value === undefined && secret === undefined) {
+      json(response, 400, { error: '需要 value（选项）或 secret（密钥）' });
+      return;
+    }
+
+    const ok = runtime.broker.resolve(id, { value, secret });
+    json(response, ok ? 200 : 404, ok ? { ok: true } : { error: '这个交互已经结束或不存在' });
+    return;
+  }
+
+  // ── 密钥：只暴露名字，永远不回传值 ────────────────
+  if (path === '/api/secrets' && method === 'GET') {
+    json(response, 200, { names: await runtime.secrets.names() });
+    return;
+  }
+
+  const secretMatch = /^\/api\/secrets\/([^/]+)$/.exec(path);
+  if (secretMatch && method === 'DELETE') {
+    const name = decodeURIComponent(secretMatch[1] ?? '');
+    json(response, 200, { ok: await runtime.secrets.remove(name) });
+    return;
+  }
 
   // ── 房间：名字 + 成员表 + 共享时间线 ──────────────
   if (path === '/api/rooms' && method === 'GET') {

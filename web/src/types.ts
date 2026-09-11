@@ -210,9 +210,32 @@ export interface ContextStats {
   generatedAt: number;
 }
 
+export type InteractionKind = 'choice' | 'secret';
+
+export interface InteractionOption {
+  id: string;
+  label: string;
+  description?: string;
+}
+
+export interface InteractionRequest {
+  id: string;
+  kind: InteractionKind;
+  question: string;
+  detail?: string;
+  options?: InteractionOption[];
+  name?: string;
+  agentId: string;
+  agentName: string;
+  createdAt: number;
+  expiresAt: number;
+}
+
 /** 与后端 src/agent/types.ts 的 AgentEvent 保持一致 */
 export type AgentEvent =
   | { type: 'context'; stats: ContextStats }
+  | { type: 'interaction'; request: InteractionRequest }
+  | { type: 'interaction_closed'; id: string; answered: boolean }
   | { type: 'message'; message: WireMessage }
   | { type: 'iteration'; index: number }
   | { type: 'compacted'; coversUpTo: number; messageCount: number }

@@ -7,6 +7,7 @@ import { SettingsDialog } from './components/SettingsDialog';
 import { CreateDialog } from './components/CreateDialog';
 import { MemberPanel } from './components/MemberPanel';
 import { MemoryPanel } from './components/MemoryPanel';
+import { InteractionCard } from './components/InteractionCard';
 import { IconClose } from './icons';
 import { usePresence } from './motion';
 import { useTheme } from './theme';
@@ -17,6 +18,7 @@ import type {
   BotSummary,
   DisplayMessage,
   HealthInfo,
+  InteractionRequest,
   RoomView,
 } from './types';
 
@@ -180,6 +182,8 @@ export default function App() {
   const [memoryToken, setMemoryToken] = useState(0);
   const [backendAgents, setBackendAgents] = useState<BotSummary[]>([]);
   const [rooms, setRooms] = useState<RoomView[]>([]);
+  /** 正在等用户回答的卡片 */
+  const [interactions, setInteractions] = useState<InteractionRequest[]>([]);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [newBotOpen, setNewBotOpen] = useState(false);
   const [model, setModel] = useState('');
@@ -586,6 +590,19 @@ export default function App() {
           },
           {
             onEvent: (event) => {
+              if (event.type === 'interaction') {
+                setInteractions((current) =>
+                  current.some((item) => item.id === event.request.id)
+                    ? current
+                    : [...current, event.request],
+                );
+                return;
+              }
+              if (event.type === 'interaction_closed') {
+                setInteractions((current) => current.filter((item) => item.id !== event.id));
+                return;
+              }
+
               setChannelHistories((prev) => ({
                 ...prev,
                 [activeChannelId]: applyEvent(prev[activeChannelId] ?? [], event),
@@ -659,6 +676,20 @@ export default function App() {
       }
     },
     [activeAgentId, activeChannel, activeChannelId, busy, model, syncWorkspace],
+  );
+
+  const answerInteraction = useCallback(
+    async (id: string, answer: { value?: string; secret?: string; cancelled?: boolean }) => {
+      // 先从界面移除，回答失败再放回来
+      setInteractions((current) => current.filter((item) => item.id !== id));
+      try {
+        await api.answerInteraction(id, answer);
+      } catch {
+        const list = await api.fetchInteractions().catch(() => null);
+        if (list) setInteractions(list);
+      }
+    },
+    [],
   );
 
   const stop = useCallback(() => {
@@ -740,6 +771,8 @@ export default function App() {
       {/* 2. 主消息区 */}
       <ChatView
         bot={currentBotSummary}
+        interactions={interactions}
+        onAnswerInteraction={(id, answer) => void answerInteraction(id, answer)}
         channelTitle={activeChannel.name}
         messages={currentMessages}
         artifacts={artifacts}

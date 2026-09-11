@@ -1,5 +1,6 @@
 import type { Tool } from '../tools/tool.js';
 import type { MemoryEntry, MemoryScope } from '../memory/types.js';
+import type { InteractionRequest } from '../interaction/types.js';
 
 export type MessageRole = 'user' | 'assistant' | 'tool';
 
@@ -141,6 +142,8 @@ export interface ContextStats {
 
 export type AgentEvent =
   | { type: 'context'; stats: ContextStats }
+  | { type: 'interaction'; request: InteractionRequest }
+  | { type: 'interaction_closed'; id: string; answered: boolean }
   | { type: 'message'; message: Message }
   | { type: 'iteration'; index: number }
   | { type: 'compacted'; coversUpTo: number; messageCount: number }

@@ -4,6 +4,7 @@ import type {
   BotSummary,
   DisplayMessage,
   HealthInfo,
+  InteractionRequest,
   MemoryScope,
   MemorySnapshot,
   MemoryTier,
@@ -120,6 +121,31 @@ export async function promoteMemory(
       body: JSON.stringify({ tier }),
     },
   );
+}
+
+// ── 交互卡片 ───────────────────────────────────────────
+
+export async function fetchInteractions(agentId?: string): Promise<InteractionRequest[]> {
+  const query = agentId ? `?agentId=${encodeURIComponent(agentId)}` : '';
+  const data = await request<{ interactions: InteractionRequest[] }>(`/api/interactions${query}`);
+  return data.interactions;
+}
+
+/** 回答问题：choice 传 value，secret 传 secret（值不落对话、不进记忆） */
+export async function answerInteraction(
+  id: string,
+  answer: { value?: string; secret?: string; cancelled?: boolean },
+): Promise<void> {
+  await request(`/api/interactions/${encodeURIComponent(id)}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(answer),
+  });
+}
+
+export async function fetchSecretNames(): Promise<string[]> {
+  const data = await request<{ names: string[] }>('/api/secrets');
+  return data.names;
 }
 
 // ── 房间（群） ─────────────────────────────────────────
