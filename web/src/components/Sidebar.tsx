@@ -1,0 +1,161 @@
+import { useState } from 'react';
+import { IconGrid, IconPlus, IconSearch } from '../icons';
+import { BotAvatar } from './BotAvatar';
+
+export interface ChannelItem {
+  id: string;
+  name: string;
+  time: string;
+  lastMessage: string;
+  color?: string;
+  role?: string;
+  isGroup?: boolean;
+  /** room = 群（扇出给成员）；agent = 1:1 私聊 */
+  kind?: 'room' | 'agent';
+  members?: Array<{ id: string; name: string; color: string }>;
+}
+
+interface SidebarProps {
+  channels: ChannelItem[];
+  activeId: string | null;
+  onSelect: (id: string) => void;
+  onNew: () => void;
+  onOpenMarket: () => void;
+  onOpenProfile: () => void;
+}
+
+export function Sidebar({
+  channels,
+  activeId,
+  onSelect,
+  onNew,
+  onOpenMarket,
+  onOpenProfile,
+}: SidebarProps) {
+  const [query, setQuery] = useState('');
+
+  const keyword = query.trim().toLowerCase();
+  const visibleChannels = keyword
+    ? channels.filter((item) => item.name.toLowerCase().includes(keyword) || item.lastMessage.toLowerCase().includes(keyword))
+    : channels;
+
+  return (
+    <aside className="app-sidebar">
+      {/* 1. macOS 系统原生红绿灯占位区域 + Plus Action */}
+      <div className="sidebar-window-header">
+        <div className="traffic-lights-spacer" />
+
+        <button
+          type="button"
+          className="sidebar-add-btn"
+          aria-label="新建会话或群"
+          title="新建会话或群聊"
+          onClick={onNew}
+        >
+          <IconPlus size={18} />
+        </button>
+      </div>
+
+      {/* 2. Search Bar */}
+      <div className="sidebar-search-box">
+        <label className="sidebar-search-label">
+          <IconSearch size={14} className="search-icon" />
+          <input
+            type="text"
+            className="sidebar-search-input"
+            value={query}
+            placeholder="搜索会话与智能体…"
+            onChange={(e) => setQuery(e.target.value)}
+          />
+          {query ? (
+            <button
+              type="button"
+              className="search-clear-btn"
+              onClick={() => setQuery('')}
+              title="清空搜索"
+            >
+              ×
+            </button>
+          ) : null}
+        </label>
+      </div>
+
+      {/* 3. Channels / Bots / Sessions List */}
+      <div className="sidebar-channel-list">
+        {visibleChannels.length === 0 ? (
+          <div className="sidebar-empty">
+            <span className="sidebar-empty-icon">🔍</span>
+            <span className="sidebar-empty-title">无匹配会话</span>
+            <span className="sidebar-empty-hint">换个关键词试试</span>
+          </div>
+        ) : (
+          visibleChannels.map((channel) => {
+            const isActive = channel.id === activeId;
+            return (
+              <div
+                key={channel.id}
+                role="button"
+                tabIndex={0}
+                className={`channel-item${isActive ? ' active' : ''}`}
+                onClick={() => onSelect(channel.id)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    onSelect(channel.id);
+                  }
+                }}
+              >
+                <div className="channel-avatar-wrapper">
+                  <BotAvatar
+                    name={channel.name}
+                    color={channel.color || '#8b5cf6'}
+                    size={38}
+                  />
+                </div>
+
+                <div className="channel-info-wrapper">
+                  <div className="channel-title-row">
+                    <div className="channel-name-box">
+                      <span className="channel-title">{channel.name}</span>
+                      {channel.isGroup ? (
+                        <span className="channel-tag group">群</span>
+                      ) : null}
+                    </div>
+                    <span className="channel-time">{channel.time}</span>
+                  </div>
+                  <div className="channel-snippet-row">
+                    <span className="channel-snippet">{channel.lastMessage}</span>
+                  </div>
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      {/* 4. Bottom Footer: Marketplace + User Profile */}
+      <div className="sidebar-footer">
+        <button
+          type="button"
+          className="sidebar-footer-btn"
+          onClick={onOpenMarket}
+          title="模型服务与环境配置"
+        >
+          <IconGrid size={17} />
+          <span>设置与模型</span>
+        </button>
+
+        <button
+          type="button"
+          className="sidebar-user-row"
+          onClick={onOpenProfile}
+          title="用户与模型偏好设置"
+        >
+          <div className="user-avatar-badge">LZ</div>
+          <span className="user-name">linlin zhang</span>
+        </button>
+      </div>
+    </aside>
+  );
+}
+

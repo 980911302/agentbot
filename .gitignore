@@ -1,0 +1,12 @@
+node_modules/
+dist/
+web/dist/
+desktop/release/
+.agentbot/
+.env
+.env.local
+.DS_Store
+*.log
+.commandcode/
+*.tmp
+test-results/

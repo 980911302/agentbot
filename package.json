@@ -1,0 +1,25 @@
+{
+  "name": "agentbot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20.3.0"
+  },
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "server": "tsx src/server/main.ts",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "web:dev": "npm --prefix web run dev",
+    "web:build": "npm --prefix web run build",
+    "desktop": "npm run build && npm run web:build && npm --prefix desktop start",
+    "test": "node --test --import tsx \"./test/*.test.ts\"",
+    "test:watch": "node --test --watch --import tsx \"./test/*.test.ts\""
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.2",
+    "tsx": "^4.23.13",
+    "typescript": "^7.0.2"
+  }
+}
