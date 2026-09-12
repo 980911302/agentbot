@@ -1,7 +1,8 @@
 import { useCallback, useRef, useState } from 'react';
 import * as api from '../../api';
 import { applyEvent, errorMessage, now } from './message-reducer';
-import type { ChannelItem, DisplayMessage, ArtifactView, InteractionRequest, BotSummary } from '../../types';
+import type { DisplayMessage, ArtifactView, InteractionRequest, BotSummary } from '../../types';
+import type { ChannelItem } from '../../components/Sidebar';
 
 /**
  * useChatStream（E2.5c）：发送与流消费。
@@ -25,7 +26,7 @@ export function useChatStream(input: {
   handleInteractionRequest: (request: InteractionRequest) => void;
   handleInteractionClosed: (id: string) => void;
   onMemoryBump: () => void;
-  syncWorkspace: () => Promise<void>;
+  syncWorkspace: () => Promise<unknown>;
   reloadChannel: (channelId: string) => Promise<void>;
 }) {
   const deps = input;

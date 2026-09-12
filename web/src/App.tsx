@@ -20,6 +20,7 @@ import { applyEvent, errorMessage, now, uid } from './features/chat/message-redu
 import { ensureNotifyPermission, notifyIfHidden } from './notify';
 import { useInteractions } from './features/interactions/use-interactions';
 import { useChatStream } from './features/chat/use-chat-stream';
+import { useWorkspace } from './features/workspace/use-workspace';
 import type {
   AgentEvent,
   ArtifactView,
@@ -36,10 +37,26 @@ export default function App() {
   const [online, setOnline] = useState(true);
 
   // 侧边栏 = 群（扇出）+ 智能体（1:1），全部来自后端
-  const [channels, setChannels] = useState<ChannelItem[]>([]);
   const [activeChannelId, setActiveChannelId] = useState<string>('');
   const [channelHistories, setChannelHistories] = useState<Record<string, DisplayMessage[]>>({});
-  const [roomMemberLimit, setRoomMemberLimit] = useState(6);
+
+  // 工作台状态（E2.5d 拆出）：频道、轮询、未读、reloadChannel
+  const {
+    backendAgents,
+    setBackendAgents,
+    agentsRef,
+    rooms,
+    setRooms,
+    roomMemberLimit,
+    channels,
+    setChannels,
+    sidebarChannels,
+    syncWorkspace,
+    reloadChannel,
+  } = useWorkspace({
+    activeChannelId,
+    setChannelHistories,
+  });
   /** 群回合：正在进入回合的成员（谁的回合谁的气泡在动） */
   const [roundActive, setRoundActive] = useState<{ id: string; name: string; color: string } | null>(
     null,
@@ -48,11 +65,6 @@ export default function App() {
   const [doneFlash, setDoneFlash] = useState(false);
   /** 这一轮谁沉默了（沉默是合法结果，只做轻提示，不进正文） */
   const [silentNotes, setSilentNotes] = useState<Record<string, string[]>>({});
-  /** 群频道未读数：轮询发现 lastMessage 变化且不在当前频道时累加 */
-  const [unread, setUnread] = useState<Record<string, number>>({});
-  const seenRoomsRef = useRef<Map<string, number>>(new Map());
-  const seenBaselineRef = useRef(false);
-  const activeChannelIdRef = useRef('');
 
   const [artifacts, setArtifacts] = useState<ArtifactView[]>([]);
   /** 频道内的轻状态行（挂起/停止这类系统提示） */
@@ -63,10 +75,6 @@ export default function App() {
   const drawerPresence = usePresence(screenOpen);
   const [drawerTab, setDrawerTab] = useState<'screen' | 'memory' | 'members'>('screen');
   const [memoryToken, setMemoryToken] = useState(0);
-  const [backendAgents, setBackendAgents] = useState<BotSummary[]>([]);
-  /** 给流式回调读最新成员表用的 ref（避免 send 闭包过期） */
-  const agentsRef = useRef<BotSummary[]>([]);
-  const [rooms, setRooms] = useState<RoomView[]>([]);
   /** 正在等用户回答的卡片（E2.5b 拆出） */
   const { interactions, handleRequest, handleClose: closeInteraction, answer: answerRequest } = useInteractions();
 
@@ -123,13 +131,7 @@ export default function App() {
     agentsRef.current = backendAgents;
   }, [backendAgents]);
 
-  useEffect(() => {
-    activeChannelIdRef.current = activeChannelId;
-    // 切进频道就是看过了
-    setUnread((current) =>
-      current[activeChannelId] ? { ...current, [activeChannelId]: 0 } : current,
-    );
-  }, [activeChannelId]);
+
 
   // busy 落下时闪一个短暂的绿勾：完成了，但不用你做任何事
   useEffect(() => {
@@ -152,34 +154,6 @@ export default function App() {
     return backendAgents[0]?.id ?? null;
   }, [activeChannel, activeChannelId, backendAgents]);
 
-  /** 重新拉当前频道的服务端真相（群读时间线，私聊读对话） */
-  const reloadChannel = useCallback(async (channelId: string) => {
-    if (!channelId) return;
-    try {
-      if (channels.find((item) => item.id === channelId)?.kind === 'room') {
-        const messages = await api.fetchRoomMessages(channelId);
-        setChannelHistories((prev) => ({
-          ...prev,
-          [channelId]: messages.map((message) => ({
-            id: message.id,
-            role: message.senderKind === 'user' ? 'user' : 'assistant',
-            content: message.text,
-            senderName: message.senderName,
-            senderColor: message.senderColor,
-            toolCalls: [],
-            createdAt: new Date(message.createdAt).toISOString(),
-          })),
-        }));
-        return;
-      }
-      const detail = await api.fetchSession(channelId);
-      setChannelHistories((prev) => ({ ...prev, [channelId]: detail.messages }));
-    } catch {
-      // 保持现有内容
-    }
-  }, [channels]);
-
-  /** 打开一个频道：群读房间时间线，私聊读它自己的对话 */
   useEffect(() => {
     if (!activeChannelId) return undefined;
     let cancelled = false;
@@ -226,42 +200,6 @@ export default function App() {
   }, [activeChannel?.kind, activeChannelId]);
 
   /** 群 + 智能体 → 侧边栏条目 */
-  const buildChannels = useCallback(
-    (roomList: RoomView[], agents: BotSummary[]): ChannelItem[] => [
-      ...roomList.map((room) => ({
-        id: room.id,
-        name: room.name,
-        time: formatClock(room.updatedAt),
-        lastMessage: room.lastMessage?.text ?? '还没有人说话',
-        color: room.members[0]?.color ?? '#a855f7',
-        role: `${room.members.length} 位成员`,
-        isGroup: true,
-        kind: 'room' as const,
-        members: room.members,
-      })),
-      ...agents
-        .filter((bot) => !bot.hidden)
-        .map((bot) => ({
-          id: bot.id,
-          name: bot.name,
-          time: formatClock(Date.parse(bot.updatedAt)),
-          lastMessage: bot.activity || bot.title || bot.role || '准备就绪',
-          color: bot.color,
-          role: bot.title || bot.role,
-          kind: 'agent' as const,
-          status: bot.status,
-        })),
-    ],
-    [],
-  );
-
-  /**
-   * 重新拉工作台并重建侧边栏。
-   *
-   * 智能体可以通过工具建同事/建群/拉人（工作台写操作），
-   * 这些改动必须立刻反映到界面上——不然「建好了但侧边栏看不见」。
-   */
-  // 载入健康状态、真实房间与后台 Agent
   useEffect(() => {
     let cancelled = false;
     // 尽早拿通知授权（Electron 静默授权；浏览器会在首次通知前再确认）
@@ -274,19 +212,9 @@ export default function App() {
         setOnline(Boolean(info));
         if (info) setModel((curr) => curr || info.model);
 
-        const [roomData, backendBots] = await Promise.all([
-          api.fetchRooms().catch(() => ({ rooms: [], memberLimit: 6 })),
-          api.fetchBots().catch(() => [] as BotSummary[]),
-        ]);
+        const channelList = await syncWorkspace();
         if (cancelled) return;
 
-        setBackendAgents(backendBots);
-        setRoomMemberLimit(roomData.memberLimit);
-        setRooms(roomData.rooms);
-
-        // 侧边栏 = 群（扇出）+ 智能体（1:1）
-        const channelList = buildChannels(roomData.rooms, backendBots);
-        setChannels(channelList);
         setActiveChannelId((current) =>
           channelList.some((item) => item.id === current)
             ? current
@@ -299,56 +227,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [buildChannels]);
-
-  const syncWorkspace = useCallback(async () => {
-    const [roomData, agents] = await Promise.all([
-      api.fetchRooms().catch(() => null),
-      api.fetchBots().catch(() => null),
-    ]);
-    if (!roomData && !agents) return;
-
-    if (agents) setBackendAgents(agents);
-    if (roomData) {
-      setRooms(roomData.rooms);
-      setRoomMemberLimit(roomData.memberLimit);
-
-      // 未读：首轮只记基线；之后 messageCount 增长且不在当前频道 → 累加差值
-      const updates: Record<string, number> = {};
-      for (const room of roomData.rooms) {
-        const seen = seenRoomsRef.current.get(room.id);
-        if (seen === undefined) {
-          seenRoomsRef.current.set(room.id, room.messageCount);
-          continue;
-        }
-        if (room.messageCount > seen) {
-          seenRoomsRef.current.set(room.id, room.messageCount);
-          if (room.id !== activeChannelIdRef.current) {
-            updates[room.id] = (updates[room.id] ?? 0) + Math.min(room.messageCount - seen, 99);
-          }
-        } else if (room.messageCount < seen) {
-          seenRoomsRef.current.set(room.id, room.messageCount);
-        }
-      }
-      if (Object.keys(updates).length > 0) {
-        setUnread((current) => ({ ...current, ...updates }));
-      }
-    }
-
-    setChannels((current) => {
-      const roomsNow = roomData?.rooms ?? [];
-      const agentsNow = agents ?? [];
-      const rebuilt = buildChannels(roomsNow, agentsNow);
-      // 后端还没回来的那一半保留旧值，避免整列表闪一下
-      if (!roomData) {
-        return [...current.filter((item) => item.kind === 'room'), ...rebuilt.filter((i) => i.kind === 'agent')];
-      }
-      if (!agents) {
-        return [...rebuilt.filter((i) => i.kind === 'room'), ...current.filter((item) => item.kind === 'agent')];
-      }
-      return rebuilt;
-    });
-  }, [buildChannels]);
+  }, [syncWorkspace]);
 
   /** 新建智能体：只有服务端确认建成才进侧栏，避免出现发不出消息的死频道 */
   const createAgent = useCallback(
@@ -567,10 +446,6 @@ export default function App() {
   }, [activeChannel, backendAgents, busy, currentMessages, liveText]);
 
   /** 侧边栏数据 = 频道 + 未读数合并 */
-  const sidebarChannels = useMemo(
-    () => channels.map((item) => ({ ...item, unread: unread[item.id] ?? 0 })),
-    [channels, unread],
-  );
 
   const composer = useMemo(
     () => (
