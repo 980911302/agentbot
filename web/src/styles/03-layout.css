@@ -1,0 +1,429 @@
+/* ── Main Application Grid Layout ─────────────────────────── */
+.app {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  transition: grid-template-columns var(--dur-slow) var(--ease);
+}
+
+.app.with-screen {
+  grid-template-columns: 280px minmax(0, 1fr) 350px;
+}
+
+/* ── Group Round Status & Silent Indicators ───────────────── */
+.silent-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--fg-faint);
+  margin: 2px auto;
+  padding: 4px 12px;
+}
+
+.working-bubble {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.working-label {
+  color: var(--fg-muted);
+  font-size: 13px;
+}
+
+/* ── Jump to Bottom Button ────────────────────────────────── */
+.scroll-bottom {
+  position: absolute;
+  bottom: 84px;
+  right: 32px;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  color: var(--fg);
+  display: grid;
+  place-items: center;
+  box-shadow: var(--shadow-md);
+  z-index: 25;
+  transition: transform var(--dur-fast), background var(--dur-fast);
+  animation: pop var(--dur-fast) var(--ease);
+}
+
+.scroll-bottom:hover {
+  transform: translateY(-2px);
+  background: var(--raised);
+}
+
+.unread-dot {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  padding: 2px 5px;
+  border-radius: var(--r-full);
+  background: var(--accent);
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+/* ── Offline Banner ───────────────────────────────────────── */
+.offline {
+  position: fixed;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 6px 14px;
+  border-radius: var(--r-full);
+  background: var(--raised);
+  border: 1px solid var(--warn);
+  color: var(--warn);
+  font-size: 12px;
+  font-weight: 500;
+  box-shadow: var(--shadow-md);
+  z-index: 100;
+}
+
+/* ── 右键菜单 ─────────────────────────────────────────── */
+
+.context-menu {
+  position: fixed;
+  z-index: 200;
+  min-width: 190px;
+  padding: 5px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  background: var(--panel);
+  box-shadow: var(--shadow-lg);
+  animation: pop var(--dur-fast) var(--ease);
+}
+
+.context-menu-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+}
+
+.context-menu-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 550;
+}
+
+.context-menu-kind {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: var(--r-full);
+  border: 1px solid var(--line);
+  font-size: 10px;
+  color: var(--fg-faint);
+}
+
+.context-menu-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 9px;
+  border-radius: var(--r-sm);
+  font-size: 13px;
+  text-align: left;
+  color: var(--fg);
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.context-menu-row:hover {
+  background: var(--hover);
+}
+
+.context-menu-row.danger {
+  color: var(--bad);
+}
+
+.context-menu-row.danger:hover {
+  background: color-mix(in srgb, var(--bad) 14%, transparent);
+}
+
+/* ── 危险按钮 + 确认弹窗 ──────────────────────────────── */
+
+.btn.danger {
+  background: var(--bad);
+  color: #ffffff;
+}
+
+.btn.danger:hover {
+  background: color-mix(in srgb, var(--bad) 85%, #000);
+}
+
+.dialog.confirm .dialog-body {
+  padding: 20px;
+}
+
+.confirm-title {
+  margin: 0 0 8px;
+  font-size: 16px;
+  font-weight: 620;
+}
+
+.confirm-text {
+  margin: 0 0 18px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--fg-muted);
+}
+
+/* ── 流式打字 ─────────────────────────────────────────── */
+
+.live-bubble {
+  white-space: pre-wrap;
+}
+
+.type-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: -0.15em;
+  background: currentColor;
+  opacity: 0.7;
+  animation: caret-blink 0.9s steps(1) infinite;
+}
+
+@keyframes caret-blink {
+  0%,
+  55% {
+    opacity: 0.7;
+  }
+  56%,
+  100% {
+    opacity: 0;
+  }
+}
+
+/* ── 在场感：头像即状态 ───────────────────────────────── */
+
+.channel-avatar-wrapper {
+  position: relative;
+}
+
+.channel-avatar-wrapper.working::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--warn, '#f59e0b') 70%, transparent);
+  animation: pulse-ring 1.6s var(--ease, ease) infinite;
+}
+
+@keyframes pulse-ring {
+  0% {
+    transform: scale(0.92);
+    opacity: 0.9;
+  }
+  70% {
+    transform: scale(1.12);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1.12);
+    opacity: 0;
+  }
+}
+
+.chat-header-avatar {
+  position: relative;
+  flex: none;
+  display: flex;
+}
+
+.chat-header-avatar.done-flash .done-check {
+  animation: done-pop 2.5s var(--ease, ease) forwards;
+}
+
+.done-check {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--ok, '#30d158');
+  color: #ffffff;
+  box-shadow: 0 0 0 2px var(--panel, '#ffffff');
+}
+
+@keyframes done-pop {
+  0% {
+    transform: scale(0.4);
+    opacity: 0;
+  }
+  12% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  80% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(0.9);
+    opacity: 0;
+  }
+}
+
+/* ── 智能体资料编辑 ──────────────────────────────────── */
+
+.chat-header-title-box.clickable {
+  cursor: pointer;
+}
+
+.chat-header-title-box.clickable:hover .chat-header-title {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: var(--fg-faint);
+}
+
+.profile-preview {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.swatch {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: transform var(--dur-fast) var(--ease);
+}
+
+.swatch:hover {
+  transform: scale(1.12);
+}
+
+.swatch.selected {
+  border-color: var(--fg);
+  box-shadow: 0 0 0 2px var(--panel);
+}
+
+.profile-error {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: var(--bad);
+}
+
+.field textarea {
+  width: 100%;
+  resize: vertical;
+  font: inherit;
+  line-height: 1.5;
+}
+
+/* ── 消息细节：时间 / 复制 / 重试 / @ 高亮 ───────────── */
+
+.msg-sender-header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.msg-time {
+  font-size: 10.5px;
+  font-weight: 400;
+  color: var(--fg-faint);
+}
+
+.msg-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease);
+}
+
+.msg-group-item:hover .msg-actions {
+  opacity: 1;
+}
+
+.msg-actions button {
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-full);
+  background: var(--panel);
+  font-size: 11px;
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+
+.msg-actions button:hover {
+  background: var(--hover);
+  color: var(--fg);
+}
+
+.mention {
+  padding: 0 4px;
+  border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--accent, #a855f7) 16%, transparent);
+  color: var(--accent, #a855f7);
+  font-weight: 600;
+}
+
+/* ── 频道未读角标 ────────────────────────────────────── */
+
+.channel-unread {
+  flex: none;
+  min-width: 18px;
+  padding: 1px 6px;
+  border-radius: var(--r-full);
+  background: var(--bad, '#ef4444');
+  color: #ffffff;
+  font-size: 10.5px;
+  font-weight: 650;
+  text-align: center;
+}
+
+/* ── 设置页行内输入 ──────────────────────────────────── */
+
+.row .row-input {
+  width: 170px;
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--panel);
+  font: inherit;
+  font-size: 13px;
+  color: var(--fg);
+  text-align: right;
+}
+
+.row .row-input:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent, #a855f7) 60%, transparent);
+}
+
+.notice-line {
+  opacity: 0.85;
+}

@@ -1,0 +1,232 @@
+/* ── Keyframe Animations ──────────────────────────────────── */
+@keyframes pulse {
+  0%, 100% { opacity: 0.4; transform: scale(0.9); }
+  50% { opacity: 1; transform: scale(1.1); }
+}
+
+@keyframes pop {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes shimmer {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(100%); }
+}
+
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--r-xs);
+  background: var(--sunken);
+}
+
+.skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.08),
+    transparent
+  );
+  animation: shimmer 1.5s infinite;
+}
+
+.skeleton-line {
+  height: 16px;
+  margin-bottom: 6px;
+}
+
+/* Accessibility */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ══════════════════════════════════════════════════════════
+   交互卡片：选项卡 / 密钥框
+   ══════════════════════════════════════════════════════════ */
+
+.interaction-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--card);
+  background: linear-gradient(180deg, var(--panel), var(--sunken));
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
+}
+
+.interaction-card.secret {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: linear-gradient(180deg, var(--accent-soft), var(--sunken));
+}
+
+.interaction-card.expired {
+  opacity: 0.6;
+}
+
+.interaction-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+}
+
+.interaction-agent {
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.interaction-kind {
+  padding: 1px 8px;
+  border-radius: 99px;
+  border: 1px solid var(--line);
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--fg-muted);
+}
+
+.interaction-timer {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--fg-faint);
+}
+
+.interaction-question {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 550;
+  line-height: 1.5;
+}
+
+.interaction-detail {
+  margin: -6px 0 0;
+  font-size: 12px;
+  color: var(--fg-faint);
+  line-height: 1.5;
+}
+
+.interaction-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.interaction-option {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 13px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  text-align: left;
+  transition: border-color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
+}
+
+.interaction-option:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.interaction-option:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.interaction-option-label {
+  font-size: 13.5px;
+  font-weight: 540;
+}
+
+.interaction-option-desc {
+  font-size: 11.5px;
+  color: var(--fg-faint);
+}
+
+.interaction-other {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.interaction-other input {
+  flex: 1;
+  min-width: 0;
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  outline: none;
+  background: var(--bg);
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--fg);
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+
+.interaction-other input:focus {
+  border-color: var(--line-strong);
+}
+
+.interaction-card.secret .interaction-other input {
+  font-family: var(--mono);
+  letter-spacing: 0.08em;
+}
+
+.interaction-other .btn.primary.small {
+  display: grid;
+  place-items: center;
+  min-width: 44px;
+  padding: 8px 12px;
+}
+
+.interaction-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-top: 2px;
+  border-top: 1px solid var(--line);
+}
+
+.interaction-hint {
+  flex: 1;
+  font-size: 11px;
+  color: var(--fg-faint);
+}
+
+.interaction-cancel {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 99px;
+  border: 1px solid var(--line);
+  font-size: 11.5px;
+  color: var(--fg-faint);
+  transition: color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
+}
+
+.interaction-cancel:hover:not(:disabled) {
+  color: var(--fg-muted);
+  border-color: var(--line-strong);
+}
+
+.interaction-cancel:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
