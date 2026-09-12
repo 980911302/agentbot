@@ -6,7 +6,7 @@ import {
   DeliverPathError,
   deliverRoots,
   resolveDeliverPath,
-} from '../src/tools/builtin/deliver.js';
+} from '../src/tools/services/artifact-service.js';
 import {
   assertPublicUrl,
   htmlToText,
