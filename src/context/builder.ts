@@ -1,20 +1,18 @@
-import type {
-  Agent,
-  ContextSectionStat,
-  ContextStats,
-  MemoryRef,
-  Message,
-  WorkingFile,
-} from '../agent/types.js';
+import type { Agent, ContextSectionStat, ContextStats, MemoryRef, Message } from '../agent/types.js';
 import { messageText } from '../agent/types.js';
 import { toLLMMessages } from '../llm/convert.js';
 import type { LLMMessage } from '../llm/provider.js';
-import { TIER_POLICY } from '../memory/policy.js';
 import { rankMemories } from '../memory/retrieve.js';
-import type { MemoryTier } from '../memory/types.js';
 import type { MessageStore } from '../store/messages.js';
 import { allocateSections, type SectionWants } from './allocate.js';
 import { estimateTokens, truncateToTokens, type ContextBudget } from './budget.js';
+import { collectWorkingFiles, renderMessages, trimRecentGroups } from './history-selector.js';
+import { pickTier, renderRefs } from './memory-selector.js';
+import { clip, composeIdentity, composeSystem, renderFiles, section, shorten } from './prompt-renderer.js';
+
+// 兼容导出：identity.test 等仍从 builder 取
+export { composeIdentity } from './prompt-renderer.js';
+export { groupMessages } from './history-selector.js';
 
 export interface BuiltContext {
   agentId: string;
@@ -26,19 +24,6 @@ export interface BuiltContext {
   droppedRecent: number;
   droppedGroups: number;
 }
-
-const LABELS: Record<string, string> = {
-  instructions: 'Agent 角色',
-  portrait: '画像',
-  shared: '共用的「关于你」',
-  log: '日志近况',
-  scratch: '随手笔记',
-  retrieval: '相关检索',
-  compacted: '更早摘要',
-  recent: '最近原文',
-  files: '工作文件',
-  task: '当前任务',
-};
 
 export interface BuildOptions {
   /**
@@ -207,195 +192,3 @@ export class ContextBuilder {
   }
 }
 
-/** 取某层的当前配额内条目；self 优先，其次 project，最后 user */
-function pickTier(
-  refs: MemoryRef[],
-  tier: MemoryTier,
-  filter: (ref: MemoryRef) => boolean,
-): MemoryRef[] {
-  const limit = TIER_POLICY[tier].inView;
-  return refs
-    .filter((ref) => ref.entry.tier === tier && filter(ref))
-    .sort((left, right) => scopeRank(left) - scopeRank(right) || right.entry.updatedAt - left.entry.updatedAt)
-    .slice(0, limit);
-}
-
-function scopeRank(ref: MemoryRef): number {
-  if (ref.scope === 'self') return 0;
-  if (ref.scope === 'project') return 1;
-  return 2;
-}
-
-interface MessageGroup {
-  messages: Message[];
-  tokens: number;
-}
-
-/**
- * 把消息切成「原子组」：
- * 一条 tool_calls 消息 + 它对应的 tool 结果必须同进同出，
- * 否则会出现「只有 tool 消息、没有对应 tool_calls」的非法请求（DeepSeek 会直接 400）。
- * 孤立的 tool 结果直接丢弃。
- */
-export function groupMessages(messages: Message[]): MessageGroup[] {
-  const groups: MessageGroup[] = [];
-  const pending = new Map<string, MessageGroup>();
-
-  for (const message of messages) {
-    if (message.content.type === 'tool_calls') {
-      const group: MessageGroup = { messages: [message], tokens: cost(message) };
-      for (const call of message.content.calls) pending.set(call.id, group);
-      groups.push(group);
-      continue;
-    }
-
-    if (message.content.type === 'tool_result') {
-      const group = pending.get(message.content.callId);
-      if (!group) continue; // 找不到父亲，丢弃
-      group.messages.push(message);
-      group.tokens += cost(message);
-      continue;
-    }
-
-    groups.push({ messages: [message], tokens: cost(message) });
-  }
-
-  // 补齐：有些 tool_calls 可能没等到结果（比如被中断），保留其调用记录即可
-  return groups;
-}
-
-function trimRecentGroups(
-  messages: Message[],
-  maxTokens: number,
-): { messages: Message[]; tokens: number; droppedGroups: number } {
-  const groups = groupMessages(messages);
-  const kept: MessageGroup[] = [];
-  let tokens = 0;
-  let droppedGroups = 0;
-
-  for (let index = groups.length - 1; index >= 0; index -= 1) {
-    const group = groups[index];
-    if (!group) continue;
-    if (kept.length > 0 && tokens + group.tokens > maxTokens) break;
-    kept.unshift(group);
-    tokens += group.tokens;
-  }
-  droppedGroups = groups.length - kept.length;
-
-  return { messages: kept.flatMap((group) => group.messages), tokens, droppedGroups };
-}
-
-function cost(message: Message): number {
-  return estimateTokens(messageText(message)) + 8;
-}
-
-function collectWorkingFiles(messages: Message[]): WorkingFile[] {
-  const seen = new Map<string, WorkingFile>();
-  for (const message of messages) {
-    if (message.content.type !== 'tool_calls') continue;
-    for (const call of message.content.calls) {
-      let path: unknown;
-      try {
-        path = (JSON.parse(call.arguments || '{}') as { path?: unknown }).path;
-      } catch {
-        continue;
-      }
-      if (typeof path !== 'string' || !path) continue;
-      seen.set(path, { path, tool: call.name, at: message.createdAt });
-    }
-  }
-  return [...seen.values()].slice(-12);
-}
-
-/**
- * 身份块。
- *
- * 模型必须知道「我是谁」——否则问它叫什么，它只能把职责复述一遍。
- * 名字同时是群聊里 @ 人的依据，认不出自己就没法正确判断「有没有人点我」。
- */
-export function composeIdentity(agent: {
-  id: string;
-  name: string;
-  title?: string;
-  description?: string;
-}): string {
-  const lines = [`你是「${agent.name}」（id: ${agent.id}）。`];
-
-  const title = agent.title?.trim();
-  const description = agent.description?.trim();
-  if (title) lines.push(`一句话简介：${title}`);
-  if (description && description !== title) lines.push(`职责描述：${description}`);
-
-  return lines.join('\n');
-}
-
-function composeSystem(parts: Record<string, string | undefined>): string {
-  const blocks: string[] = [parts.identity?.trim() ?? ''];
-  const instructions = parts.instructions?.trim();
-  if (instructions) {
-    blocks.push(blocks[0] ? `## 你的职责\n${instructions}` : instructions);
-  }
-
-  const push = (title: string, body?: string, raw = false) => {
-    if (!body || !body.trim()) return;
-    blocks.push(raw ? body : `## ${title}\n${body}`);
-  };
-
-  push('', parts.brief, true);
-  push('画像', parts.portrait);
-  push('关于你（所有智能体共用）', parts.shared);
-  push('日志近况', parts.log);
-  push('随手笔记', parts.scratch);
-  push('相关检索', parts.retrieval);
-  push('更早的对话摘要', parts.compacted);
-  push('工作文件', parts.files);
-
-  return blocks.filter(Boolean).join('\n\n');
-}
-
-function renderRefs(refs: MemoryRef[]): string {
-  return refs
-    .map((ref) => {
-      const where = ref.scope === 'self' ? '' : ref.scope === 'user' ? '[共用] ' : '[项目] ';
-      return `- ${where}${ref.entry.text}`;
-    })
-    .join('\n');
-}
-
-function renderFiles(files: WorkingFile[]): string {
-  return files.map((file) => `- ${file.path}（${file.tool}）`).join('\n');
-}
-
-function renderMessages(messages: Message[]): string {
-  return messages.map(renderMessage).join('\n');
-}
-
-/**
- * 私聊回合和它参加过的每个群回合，都在它自己的同一条对话里，
- * 用「这是哪个房间」标一下（文档第 2 节）。
- */
-function renderMessage(message: Message): string {
-  const text = messageText(message);
-  if (!message.roomName) return text;
-  const who = message.speaker ? `${message.speaker} 在「${message.roomName}」` : `「${message.roomName}」`;
-  return `[${who}] ${text}`;
-}
-
-function clip(message: Message): string {
-  return shorten(messageText(message));
-}
-
-function shorten(text: string): string {
-  const single = text.replace(/\s+/g, ' ').trim();
-  return single.length > 60 ? `${single.slice(0, 60)}…` : single;
-}
-
-function section(
-  key: string,
-  tokens: number,
-  limit: number,
-  items: number,
-  detail: string[],
-): ContextSectionStat {
-  return { key, label: LABELS[key] ?? key, tokens, limit, items, detail };
-}
