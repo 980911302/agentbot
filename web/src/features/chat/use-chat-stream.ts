@@ -41,6 +41,8 @@ export function useChatStream(input: {
     async (text: string) => {
       const trimmed = text.trim();
       if (!trimmed) return;
+      // 幂等键：同一键重复提交，服务端返回原消息（E3.2）
+      const clientMessageId = crypto.randomUUID();
       const session = deps.getSession();
       const { activeAgentId, activeChannel, activeChannelId, model, ownerName } = session;
       if (!activeAgentId) {
@@ -67,8 +69,6 @@ export function useChatStream(input: {
         [activeChannelId]: [...(prev[activeChannelId] ?? []), userMsg],
       }));
 
-      // 幂等键：同一键重复提交，服务端返回原消息（E3.2）
-      const clientMessageId = crypto.randomUUID();
       busyCountRef.current += 1;
       setBusy(true);
       setLiveText('');

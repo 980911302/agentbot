@@ -282,7 +282,7 @@ export interface ChatHandlers {
 }
 
 export async function streamChat(
-  body: { sessionId?: string; botId?: string; message: string; model?: string },
+  body: { sessionId?: string; botId?: string; message: string; model?: string; clientMessageId?: string },
   handlers: ChatHandlers,
   signal?: AbortSignal,
 ): Promise<void> {
