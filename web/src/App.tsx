@@ -178,9 +178,14 @@ export default function App() {
 
   const [artifacts, setArtifacts] = useState<ArtifactView[]>([]);
   const [busy, setBusy] = useState(false);
-  /** 私聊流式：正在生成的增量文本；收到完整消息即清空（记录归属频道，切走不串台） */
+  /** 并发回合计数（《停止与插话.md》：新句可插队，busy 只是"还有流在跑"） */
+  const busyCountRef = useRef(0);
+  /** 私聊流式：正在生成的增量文本；只属于最新一条流，旧流结束不许清别人的字 */
   const [liveText, setLiveText] = useState('');
   const [liveChannelId, setLiveChannelId] = useState('');
+  const liveSidRef = useRef(0);
+  /** 频道内的轻状态行（挂起/停止这类系统提示） */
+  const [notices, setNotices] = useState<Record<string, string[]>>({});
   const [screenOpen, setScreenOpen] = useState(false);
   const [screenFull, setScreenFull] = useState(false);
   /** 抽屉卸载前先播完退出动画 */
@@ -255,6 +260,33 @@ export default function App() {
     if (backendAgents.some((agent) => agent.id === activeChannelId)) return activeChannelId;
     return backendAgents[0]?.id ?? null;
   }, [activeChannel, activeChannelId, backendAgents]);
+
+  /** 重新拉当前频道的服务端真相（群读时间线，私聊读对话） */
+  const reloadChannel = useCallback(async (channelId: string) => {
+    if (!channelId) return;
+    try {
+      if (channels.find((item) => item.id === channelId)?.kind === 'room') {
+        const messages = await api.fetchRoomMessages(channelId);
+        setChannelHistories((prev) => ({
+          ...prev,
+          [channelId]: messages.map((message) => ({
+            id: message.id,
+            role: message.senderKind === 'user' ? 'user' : 'assistant',
+            content: message.text,
+            senderName: message.senderName,
+            senderColor: message.senderColor,
+            toolCalls: [],
+            createdAt: new Date(message.createdAt).toISOString(),
+          })),
+        }));
+        return;
+      }
+      const detail = await api.fetchSession(channelId);
+      setChannelHistories((prev) => ({ ...prev, [channelId]: detail.messages }));
+    } catch {
+      // 保持现有内容
+    }
+  }, [channels]);
 
   /** 打开一个频道：群读房间时间线，私聊读它自己的对话 */
   useEffect(() => {
@@ -602,7 +634,7 @@ export default function App() {
   const send = useCallback(
     async (text: string) => {
       const trimmed = text.trim();
-      if (!trimmed || busy) return;
+      if (!trimmed) return;
       if (!activeAgentId) {
         setChannelHistories((prev) => ({
           ...prev,
@@ -637,9 +669,11 @@ export default function App() {
         [activeChannelId]: [...(prev[activeChannelId] ?? []), userMsg],
       }));
 
+      busyCountRef.current += 1;
       setBusy(true);
       setLiveText('');
       setLiveChannelId(activeChannel.kind === 'room' ? '' : activeChannelId);
+      const sid = ++liveSidRef.current;
       const controller = new AbortController();
       abortRef.current = controller;
 
@@ -757,7 +791,8 @@ export default function App() {
           }
         } finally {
           abortRef.current = null;
-          setBusy(false);
+          busyCountRef.current = Math.max(0, busyCountRef.current - 1);
+          if (busyCountRef.current === 0) setBusy(false);
           setRoundActive(null);
           // 回合里可能建了同事 / 拉了人，立刻反映到侧边栏
           void syncWorkspace();
@@ -775,7 +810,7 @@ export default function App() {
           {
             onEvent: (event) => {
               if (event.type === 'delta') {
-                setLiveText((current) => current + event.text);
+                if (sid === liveSidRef.current) setLiveText((current) => current + event.text);
                 return;
               }
               if (event.type === 'interaction') {
@@ -794,7 +829,9 @@ export default function App() {
 
               if (event.type === 'message' && event.message.role === 'assistant') {
                 // 完整消息落地，清掉正在打字的增量
-                if (event.message.content.type === 'text') setLiveText('');
+                if (event.message.content.type === 'text' && sid === liveSidRef.current) {
+                  setLiveText('');
+                }
               }
 
               setChannelHistories((prev) => ({
@@ -821,7 +858,7 @@ export default function App() {
               }
             },
             onError: (err) => {
-              setLiveText('');
+              if (sid === liveSidRef.current) setLiveText('');
               setChannelHistories((prev) => ({
                 ...prev,
                 [activeChannelId]: [
@@ -829,6 +866,17 @@ export default function App() {
                   errorMessage(activeChannel, err, trimmed),
                 ],
               }));
+            },
+            onDone: (result) => {
+              if (result.stopReason === 'parked') {
+                setNotices((prev) => ({
+                  ...prev,
+                  [activeChannelId]: [
+                    ...(prev[activeChannelId] ?? []).slice(-4),
+                    '⏸ 有一条任务被新指令插队挂起，做完手头的事会自动接着做',
+                  ],
+                }));
+              }
             },
           },
           controller.signal,
@@ -850,15 +898,22 @@ export default function App() {
         }
       } finally {
         abortRef.current = null;
-        setBusy(false);
-        setLiveText('');
-        setLiveChannelId('');
+        busyCountRef.current = Math.max(0, busyCountRef.current - 1);
+        if (busyCountRef.current === 0) {
+          setBusy(false);
+          // 忙完拉一次服务端真相：挂起续跑、停止回执、后台来信都只落了库
+          void reloadChannel(activeChannelId);
+        }
+        if (liveSidRef.current === sid) {
+          setLiveText('');
+          setLiveChannelId('');
+        }
         setMemoryToken((token) => token + 1);
         // 工作台工具可能改了同事 / 群，同步一次
         void syncWorkspace();
       }
     },
-    [activeAgentId, activeChannel, activeChannelId, busy, model, ownerName, syncWorkspace],
+    [activeAgentId, activeChannel, activeChannelId, model, ownerName, reloadChannel, syncWorkspace],
   );
 
   const answerInteraction = useCallback(
@@ -929,6 +984,7 @@ export default function App() {
         models={models}
         tools={tools}
         onSend={(text) => void send(text)}
+        onStopSend={activeChannel.kind === 'room' ? undefined : () => void send('停')}
         onModelChange={setModel}
       />
     ),
@@ -979,6 +1035,7 @@ export default function App() {
         artifacts={artifacts}
         busy={busy}
         liveText={liveChannelId === activeChannelId ? liveText : ''}
+        notices={notices[activeChannelId] ?? []}
         composer={composer}
         onToggleInfo={() => setScreenOpen((prev) => !prev)}
         isGroup={activeChannel.kind === 'room'}

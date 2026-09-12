@@ -21,6 +21,8 @@ interface ChatViewProps {
   onOpenProfile?: () => void;
   /** 错误消息的重试（重新发送原话） */
   onRetry?: (text: string) => void;
+  /** 频道内的轻状态行（任务挂起等系统提示） */
+  notices?: string[];
   /** 群回合：正在进入回合的成员 */
   roundActive?: { id: string; name: string; color: string } | null;
   /** 回合/回复刚结束的短暂绿勾 */
@@ -50,6 +52,7 @@ export function ChatView({
   onToggleInfo,
   onOpenProfile,
   onRetry,
+  notices,
   roundActive,
   doneFlash,
   silentNotes,
@@ -239,6 +242,13 @@ export function ChatView({
               {silentNotes?.map((note) => <span key={note}>{note}</span>)}
             </div>
           ) : null}
+
+          {/* 系统状态行：任务挂起等 */}
+          {(notices ?? []).map((notice, index) => (
+            <div className="silent-line notice-line" key={`${notice}-${index}`}>
+              <span>{notice}</span>
+            </div>
+          ))}
 
           {(interactions ?? []).length > 0
             ? (interactions ?? []).map((request) => (

@@ -19,6 +19,8 @@ interface ComposerProps {
   isGroup?: boolean;
   members?: ChannelMemberItem[];
   onSend: (text: string) => void;
+  /** 忙碌时的「停止」：等价于发一条停止词回合（《停止与插话.md》§9） */
+  onStopSend?: () => void;
   onModelChange: (model: string) => void;
 }
 
@@ -31,6 +33,7 @@ export function Composer({
   isGroup = false,
   members = [],
   onSend,
+  onStopSend,
   onModelChange,
 }: ComposerProps) {
   const [value, setValue] = useState('');
@@ -107,7 +110,8 @@ export function Composer({
 
   const submit = () => {
     const text = value.trim();
-    if (!text || busy) return;
+    // 忙也照发：新句插队开新回合（《停止与插话.md》§6）
+    if (!text) return;
     onSend(text);
     setValue('');
     setMentionOpen(false);
@@ -250,23 +254,23 @@ export function Composer({
           onKeyDown={handleKeyDown}
         />
 
-        {/* Right White Circle Button (Send / Mic)——没有「停止」：它会把活干完 */}
-        {busy ? (
+        {/* Right: 停止（忙碌时） + Send / Mic */}
+        {busy && onStopSend ? (
           <button
             type="button"
-            className="capsule-action-btn send"
-            disabled
-            aria-label="它正在处理"
-            title="它正在处理，忙完自动恢复"
+            className="capsule-stop-btn"
+            onClick={onStopSend}
+            title="给当前对话的这个智能体发停止令"
           >
-            <IconArrowUp size={18} />
+            停止
           </button>
-        ) : value.trim() ? (
+        ) : null}
+        {value.trim() || busy ? (
           <button
             type="button"
             className="capsule-action-btn send"
-            aria-label="发送消息"
-            title="发送 (Enter)"
+            aria-label={busy ? '插队发送' : '发送消息'}
+            title={busy ? '它正忙着——新句会插队开新回合' : '发送 (Enter)'}
             onClick={submit}
           >
             <IconArrowUp size={18} />

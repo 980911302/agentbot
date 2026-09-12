@@ -2761,3 +2761,27 @@ button {
   outline: none;
   border-color: color-mix(in srgb, var(--accent, #a855f7) 60%, transparent);
 }
+
+/* ── 停止令按钮（输入框旁，忙碌时出现）───────────────── */
+
+.capsule-stop-btn {
+  flex: none;
+  margin-right: 8px;
+  padding: 5px 12px;
+  border-radius: var(--r-full);
+  border: 1px solid color-mix(in srgb, var(--bad, '#ef4444') 45%, transparent);
+  background: transparent;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--bad, '#ef4444');
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.capsule-stop-btn:hover {
+  background: color-mix(in srgb, var(--bad, '#ef4444') 12%, transparent);
+}
+
+.notice-line {
+  opacity: 0.85;
+}
