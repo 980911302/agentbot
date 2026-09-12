@@ -1,6 +1,6 @@
-import { createReadStream, existsSync, statSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { extname, isAbsolute, join, relative, resolve } from 'node:path';
+import { resolve } from 'node:path';
 import { AVAILABLE_MODELS, resolveConfig, type AppConfig, type ModelOption } from '../config.js';
 import type { AgentRecord } from '../agent/types.js';
 import { OpenAIProvider } from '../llm/openai-provider.js';
@@ -16,28 +16,10 @@ import type { Room } from '../room/types.js';
 import { ROOM_MEMBER_LIMIT } from '../room/types.js';
 import type { Message } from '../agent/types.js';
 import { createAgentTools } from './tools.js';
+import { json, readJson } from './transport/json.js';
+import { PING_INTERVAL_MS, sse } from './transport/sse.js';
+import { serveStatic } from './transport/static.js';
 import { isKnownAgentEvent, parseSendMessageInput } from '../shared/contracts/index.js';
-
-const MAX_BODY_BYTES = 1024 * 1024;
-const PING_INTERVAL_MS = 15_000;
-
-const STATIC_TYPES: Record<string, string> = {
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.mjs': 'text/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.json': 'application/json; charset=utf-8',
-  '.map': 'application/json; charset=utf-8',
-  '.svg': 'image/svg+xml',
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.webp': 'image/webp',
-  '.ico': 'image/x-icon',
-  '.woff': 'font/woff',
-  '.woff2': 'font/woff2',
-  '.txt': 'text/plain; charset=utf-8',
-};
 
 export interface AgentServerOptions {
   port?: number;
@@ -940,71 +922,3 @@ function parseTier(value: unknown): MemoryTier {
   return 'log';
 }
 
-function sse(response: ServerResponse, event: string, data: unknown): void {
-  if (response.writableEnded || response.destroyed) return;
-  response.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-}
-
-function json(response: ServerResponse, status: number, payload: unknown): void {
-  const body = JSON.stringify(payload);
-  response.writeHead(status, {
-    'content-type': 'application/json; charset=utf-8',
-    'content-length': Buffer.byteLength(body),
-  });
-  response.end(body);
-}
-
-async function readJson(request: IncomingMessage): Promise<Record<string, unknown>> {
-  const chunks: Buffer[] = [];
-  let size = 0;
-  for await (const chunk of request) {
-    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
-    size += buffer.length;
-    if (size > MAX_BODY_BYTES) throw new Error('request body is too large');
-    chunks.push(buffer);
-  }
-  if (chunks.length === 0) return {};
-  const parsed: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error('request body must be a JSON object');
-  }
-  return parsed as Record<string, unknown>;
-}
-
-function serveStatic(
-  response: ServerResponse,
-  pathname: string,
-  headOnly: boolean,
-  staticDir?: string,
-): void {
-  if (!staticDir) {
-    json(response, 404, {
-      error: 'UI bundle not found. Run `npm run web:build`, or use the Vite dev server on :5173.',
-    });
-    return;
-  }
-
-  const indexFile = join(staticDir, 'index.html');
-  if (!existsSync(indexFile)) {
-    json(response, 404, { error: 'web/dist/index.html is missing. Run `npm run web:build`.' });
-    return;
-  }
-
-  const target = decodeURIComponent(pathname).replace(/^\/+/, '') || 'index.html';
-  const candidate = resolve(staticDir, target);
-  const rel = relative(staticDir, candidate);
-  const insideRoot = !rel.startsWith('..') && !isAbsolute(rel);
-  const file =
-    insideRoot && existsSync(candidate) && statSync(candidate).isFile() ? candidate : indexFile;
-  const type = STATIC_TYPES[extname(file).toLowerCase()] ?? 'application/octet-stream';
-
-  response.writeHead(200, {
-    'content-type': type,
-    'cache-control': file === indexFile ? 'no-cache' : 'public, max-age=3600',
-  });
-  if (headOnly) {
-    response.end();
-    return;
-  }
-  createReadStream(file).pipe(response);
-}
