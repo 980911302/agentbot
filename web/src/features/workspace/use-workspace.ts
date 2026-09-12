@@ -19,7 +19,6 @@ export function useWorkspace(deps: {
   const [unread, setUnread] = useState<Record<string, number>>({});
   const seenRoomsRef = useRef<Map<string, number>>(new Map());
   const activeChannelIdRef = useRef('');
-  const activeChannelIdRef = useRef('');
   const agentsRef = useRef<BotSummary[]>([]);
 
   useEffect(() => {
