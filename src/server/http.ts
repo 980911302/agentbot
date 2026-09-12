@@ -721,6 +721,7 @@ async function handleChatRoute(
       model,
       signal: controller.signal,
       onEvent: (event) => sse(response, 'event', event),
+      onDelta: (text) => sse(response, 'event', { type: 'delta', text }),
     });
     sse(response, 'done', result);
   } catch (error) {
@@ -770,6 +771,7 @@ async function handleSend(
       model,
       signal: controller.signal,
       onEvent: (event) => sse(response, 'event', event),
+      onDelta: (text) => sse(response, 'event', { type: 'delta', text }),
     });
     sse(response, 'done', result);
   } catch (error) {
