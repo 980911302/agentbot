@@ -55,6 +55,8 @@ export interface DisplayMessage {
   toolCalls: ToolCallView[];
   createdAt: string;
   error?: boolean;
+  /** 触发这条错误的原话；有它错误气泡才显示「重试」 */
+  retryText?: string;
   senderName?: string;
   senderColor?: string;
   senderAvatar?: string;

@@ -19,6 +19,8 @@ interface ChatViewProps {
   onToggleInfo?: () => void;
   /** 私聊点标题打开智能体资料编辑 */
   onOpenProfile?: () => void;
+  /** 错误消息的重试（重新发送原话） */
+  onRetry?: (text: string) => void;
   /** 群回合：正在进入回合的成员 */
   roundActive?: { id: string; name: string; color: string } | null;
   /** 回合/回复刚结束的短暂绿勾 */
@@ -47,6 +49,7 @@ export function ChatView({
   channelTitle,
   onToggleInfo,
   onOpenProfile,
+  onRetry,
   roundActive,
   doneFlash,
   silentNotes,
@@ -199,7 +202,13 @@ export function ChatView({
       >
         <div className="chat-message-list swap" key={channelKey}>
           {messages.map((message) => (
-            <MessageItem key={message.id} message={message} bot={bot} />
+            <MessageItem
+              key={message.id}
+              message={message}
+              bot={bot}
+              memberNames={isGroup ? members.map((member) => member.name) : []}
+              onRetry={onRetry}
+            />
           ))}
 
           {artifacts.length > 0 ? <ArtifactRow artifacts={artifacts} /> : null}

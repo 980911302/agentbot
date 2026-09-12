@@ -2679,3 +2679,52 @@ button {
   font: inherit;
   line-height: 1.5;
 }
+
+/* ── 消息细节：时间 / 复制 / 重试 / @ 高亮 ───────────── */
+
+.msg-sender-header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.msg-time {
+  font-size: 10.5px;
+  font-weight: 400;
+  color: var(--fg-faint);
+}
+
+.msg-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease);
+}
+
+.msg-group-item:hover .msg-actions {
+  opacity: 1;
+}
+
+.msg-actions button {
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-full);
+  background: var(--panel);
+  font-size: 11px;
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+
+.msg-actions button:hover {
+  background: var(--hover);
+  color: var(--fg);
+}
+
+.mention {
+  padding: 0 4px;
+  border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--accent, #a855f7) 16%, transparent);
+  color: var(--accent, #a855f7);
+  font-weight: 600;
+}

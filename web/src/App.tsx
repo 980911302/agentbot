@@ -15,6 +15,7 @@ import { IconClose } from './icons';
 import { usePresence } from './motion';
 import { useTheme } from './theme';
 import * as api from './api';
+import { formatClock } from './format';
 import type {
   AgentEvent,
   ArtifactView,
@@ -33,18 +34,7 @@ function now(): string {
   return new Date().toISOString();
 }
 
-function formatClock(timestamp: number): string {
-  if (!Number.isFinite(timestamp) || timestamp <= 0) return '刚刚';
-  const date = new Date(timestamp);
-  const diff = Date.now() - timestamp;
-  if (diff < 60_000) return '刚刚';
-  if (diff < 24 * 60 * 60 * 1000) {
-    return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
-  }
-  return `${date.getMonth() + 1}/${date.getDate()}`;
-}
-
-function errorMessage(channel: ChannelItem, text: string): DisplayMessage {
+function errorMessage(channel: ChannelItem, text: string, retryText?: string): DisplayMessage {
   return {
     id: uid(),
     role: 'assistant',
@@ -54,6 +44,7 @@ function errorMessage(channel: ChannelItem, text: string): DisplayMessage {
     toolCalls: [],
     createdAt: now(),
     error: true,
+    ...(retryText ? { retryText } : {}),
   };
 }
 
@@ -677,7 +668,10 @@ export default function App() {
               onError: (err) => {
                 setChannelHistories((prev) => ({
                   ...prev,
-                  [activeChannelId]: [...(prev[activeChannelId] ?? []), errorMessage(activeChannel, err)],
+                  [activeChannelId]: [
+                    ...(prev[activeChannelId] ?? []),
+                    errorMessage(activeChannel, err, trimmed),
+                  ],
                 }));
               },
             },
@@ -691,7 +685,11 @@ export default function App() {
               ...prev,
               [activeChannelId]: [
                 ...(prev[activeChannelId] ?? []),
-                errorMessage(activeChannel, `请求异常：${error instanceof Error ? error.message : String(error)}`),
+                errorMessage(
+                  activeChannel,
+                  `请求异常：${error instanceof Error ? error.message : String(error)}`,
+                  trimmed,
+                ),
               ],
             }));
           }
@@ -765,16 +763,7 @@ export default function App() {
                 ...prev,
                 [activeChannelId]: [
                   ...(prev[activeChannelId] ?? []),
-                  {
-                    id: uid(),
-                    role: 'assistant',
-                    senderName: activeChannel.name,
-                    senderColor: activeChannel.color,
-                    content: `⚠️ ${err}`,
-                    toolCalls: [],
-                    createdAt: now(),
-                    error: true,
-                  },
+                  errorMessage(activeChannel, err, trimmed),
                 ],
               }));
             },
@@ -788,16 +777,11 @@ export default function App() {
             ...prev,
             [activeChannelId]: [
               ...(prev[activeChannelId] ?? []),
-              {
-                id: uid(),
-                role: 'assistant',
-                senderName: activeChannel.name,
-                senderColor: activeChannel.color,
-                content: `⚠️ 请求异常：${error instanceof Error ? error.message : String(error)}`,
-                toolCalls: [],
-                createdAt: now(),
-                error: true,
-              },
+              errorMessage(
+                activeChannel,
+                `请求异常：${error instanceof Error ? error.message : String(error)}`,
+                trimmed,
+              ),
             ],
           }));
         }
@@ -951,6 +935,7 @@ export default function App() {
                 if (bot) setEditingBot(bot);
               }
         }
+        onRetry={(text) => void send(text)}
       />
 
       {/* 3. 右侧抽屉：Bot 的屏幕 / 它的记忆 */}
