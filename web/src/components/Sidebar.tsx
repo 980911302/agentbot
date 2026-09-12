@@ -30,6 +30,8 @@ interface SidebarProps {
   /** 右键编辑智能体资料 / 右键重命名群 */
   onEdit: (channel: ChannelItem) => void;
   onRename: (channel: ChannelItem) => void;
+  /** 主人显示名（设置里可改） */
+  ownerName?: string;
 }
 
 interface MenuState {
@@ -51,6 +53,7 @@ export function Sidebar({
   onDelete,
   onEdit,
   onRename,
+  ownerName = '主人',
 }: SidebarProps) {
   const [query, setQuery] = useState('');
   const [menu, setMenu] = useState<MenuState | null>(null);
@@ -212,8 +215,10 @@ export function Sidebar({
           onClick={onOpenProfile}
           title="用户与模型偏好设置"
         >
-          <div className="user-avatar-badge">LZ</div>
-          <span className="user-name">linlin zhang</span>
+          <div className="user-avatar-badge">
+            {ownerName.replace(/\s+/g, '').slice(0, 2).toUpperCase() || '主'}
+          </div>
+          <span className="user-name">{ownerName}</span>
         </button>
       </div>
 

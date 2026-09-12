@@ -2742,3 +2742,22 @@ button {
   font-weight: 650;
   text-align: center;
 }
+
+/* ── 设置页行内输入 ──────────────────────────────────── */
+
+.row .row-input {
+  width: 170px;
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--panel);
+  font: inherit;
+  font-size: 13px;
+  color: var(--fg);
+  text-align: right;
+}
+
+.row .row-input:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent, #a855f7) 60%, transparent);
+}

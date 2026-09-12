@@ -10,9 +10,11 @@ interface SettingsDialogProps {
   models: ModelOption[];
   endpoint: string;
   toolCount: number;
+  ownerName: string;
   open: boolean;
   onTheme: (next: ThemePreference) => void;
   onModel: (next: string) => void;
+  onOwnerName: (next: string) => void;
   onClose: () => void;
 }
 
@@ -28,9 +30,11 @@ export function SettingsDialog({
   models,
   endpoint,
   toolCount,
+  ownerName,
   open,
   onTheme,
   onModel,
+  onOwnerName,
   onClose,
 }: SettingsDialogProps) {
   const [tab, setTab] = useState<'general' | 'usage'>('general');
@@ -89,6 +93,21 @@ export function SettingsDialog({
                     <div className="row">
                       <span className="row-label">语言</span>
                       <span className="row-value">简体中文</span>
+                    </div>
+                  </div>
+                </section>
+
+                <section className="group">
+                  <h3>主人</h3>
+                  <div className="rows">
+                    <div className="row">
+                      <span className="row-label">显示名</span>
+                      <input
+                        className="row-input"
+                        value={ownerName}
+                        placeholder="主人"
+                        onChange={(event) => onOwnerName(event.target.value)}
+                      />
                     </div>
                   </div>
                 </section>

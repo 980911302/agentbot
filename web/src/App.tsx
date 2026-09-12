@@ -201,6 +201,10 @@ export default function App() {
   const [editingBot, setEditingBot] = useState<BotSummary | null>(null);
   const [renamingChannel, setRenamingChannel] = useState<ChannelItem | null>(null);
   const [model, setModel] = useState('');
+  /** 主人显示名：本地发言、群消息、侧栏都用它；存 localStorage */
+  const [ownerName, setOwnerNameState] = useState(
+    () => localStorage.getItem('agentbot.ownerName') || '主人',
+  );
   const abortRef = useRef<AbortController | null>(null);
   const prevBusyRef = useRef(false);
 
@@ -621,7 +625,7 @@ export default function App() {
       const userMsg: DisplayMessage = {
         id: `pending-${uid()}`,
         role: 'user',
-        senderName: 'linlin zhang',
+        senderName: ownerName,
         content: trimmed,
         toolCalls: [],
         createdAt: now(),
@@ -732,6 +736,7 @@ export default function App() {
             },
             controller.signal,
             model || undefined,
+            ownerName,
           );
         } catch (error) {
           const aborted = error instanceof DOMException && error.name === 'AbortError';
@@ -850,7 +855,7 @@ export default function App() {
         void syncWorkspace();
       }
     },
-    [activeAgentId, activeChannel, activeChannelId, busy, model, syncWorkspace],
+    [activeAgentId, activeChannel, activeChannelId, busy, model, ownerName, syncWorkspace],
   );
 
   const answerInteraction = useCallback(
@@ -872,6 +877,12 @@ export default function App() {
     abortRef.current = null;
     setBusy(false);
     setLiveText('');
+  }, []);
+
+  const setOwnerName = useCallback((name: string) => {
+    const trimmed = name.trim() || '主人';
+    localStorage.setItem('agentbot.ownerName', trimmed);
+    setOwnerNameState(trimmed);
   }, []);
 
   const models = health?.models ?? [];
@@ -969,6 +980,7 @@ export default function App() {
           if (busy) return;
           setRenamingChannel(channel);
         }}
+        ownerName={ownerName}
       />
 
       {/* 2. 主消息区 */}
@@ -1113,8 +1125,10 @@ export default function App() {
         models={models}
         endpoint={endpoint}
         toolCount={tools.length}
+        ownerName={ownerName}
         onTheme={setPreference}
         onModel={setModel}
+        onOwnerName={setOwnerName}
         onClose={() => setSettingsOpen(false)}
       />
 
