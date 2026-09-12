@@ -792,21 +792,29 @@ export default function App() {
     [rooms, activeChannelId],
   );
 
-  // 当前对应的虚拟或真实 BotSummary 供右侧抽屉面板显示
-  const currentBotSummary: BotSummary = useMemo(
-    () => ({
+  // 当前频道的 BotSummary：真实记录优先，状态/活动取自本机流与本轮工具调用，不编造
+  const currentBotSummary: BotSummary = useMemo(() => {
+    const record = backendAgents.find((bot) => bot.id === activeChannel.id) ?? null;
+    let runningTool: string | null = null;
+    for (let index = currentMessages.length - 1; index >= 0; index -= 1) {
+      const call = currentMessages[index]?.toolCalls.find((item) => item.status === 'running');
+      if (call) {
+        runningTool = call.name;
+        break;
+      }
+    }
+    return {
       id: activeChannel.id,
-      name: activeChannel.name,
-      role: activeChannel.role || '智能协作助理',
-      color: activeChannel.color || '#a855f7',
-      status: busy ? 'working' : 'idle',
-      activity: busy ? '正在协同推理…' : '待命中',
-      conversationCount: currentMessages.length,
-      createdAt: now(),
-      updatedAt: now(),
-    }),
-    [activeChannel, busy, currentMessages.length],
-  );
+      name: record?.name ?? activeChannel.name,
+      role: record?.role ?? activeChannel.role ?? '',
+      color: record?.color ?? activeChannel.color ?? '#a855f7',
+      status: busy ? (liveText ? 'thinking' : 'working') : (record?.status ?? 'idle'),
+      activity: runningTool ?? '',
+      conversationCount: record?.conversationCount ?? 0,
+      createdAt: record?.createdAt ?? '',
+      updatedAt: record?.updatedAt ?? '',
+    };
+  }, [activeChannel, backendAgents, busy, currentMessages, liveText]);
 
   const composer = useMemo(
     () => (

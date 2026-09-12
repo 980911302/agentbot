@@ -183,18 +183,7 @@ async function handleRequest(
 
   if ((path === '/api/bots' || path === '/api/agents') && method === 'GET') {
     const list = await runtime.registry.list();
-    const bots = list.map((record) => ({
-      id: record.id,
-      name: record.name,
-      title: record.title,
-      role: record.title || record.instructions.slice(0, 30),
-      color: record.color,
-      status: runtime.isBusy(record.id) ? 'working' : 'idle',
-      activity: '',
-      conversationCount: 1,
-      createdAt: new Date(record.createdAt).toISOString(),
-      updatedAt: new Date(record.updatedAt).toISOString(),
-    }));
+    const bots = await Promise.all(list.map((record) => toBotView(runtime, record)));
     json(response, 200, { bots, agents: list });
     return;
   }
@@ -206,19 +195,7 @@ async function handleRequest(
       instructions: readString(body.instructions) ?? readString(body.role),
       color: readString(body.color),
     });
-    const bot = {
-      id: record.id,
-      name: record.name,
-      title: record.title,
-      role: record.title || record.instructions.slice(0, 30),
-      color: record.color,
-      status: 'idle',
-      activity: '',
-      conversationCount: 1,
-      createdAt: new Date(record.createdAt).toISOString(),
-      updatedAt: new Date(record.updatedAt).toISOString(),
-    };
-    json(response, 201, { agent: record, bot });
+    json(response, 201, { agent: record, bot: await toBotView(runtime, record) });
     return;
   }
 
@@ -232,7 +209,7 @@ async function handleRequest(
     }
 
     if (method === 'GET') {
-      json(response, 200, { bot: toBotView(record, context.runtime.isBusy(record.id)) });
+      json(response, 200, { bot: await toBotView(context.runtime, record) });
       return;
     }
 
@@ -244,7 +221,7 @@ async function handleRequest(
         color: readString(body.color),
       });
       json(response, 200, {
-        bot: updated ? toBotView(updated, context.runtime.isBusy(updated.id)) : null,
+        bot: updated ? await toBotView(context.runtime, updated) : null,
       });
       return;
     }
@@ -825,15 +802,17 @@ async function resolveAgent(context: RouteContext, idOrName: string) {
   return list.find((item) => item.name === wanted);
 }
 
-function toBotView(record: AgentRecord, busy: boolean) {
+/** 智能体的界面视图：状态与计数一律来自真实数据源，不放假数 */
+async function toBotView(runtime: AgentRuntime, record: AgentRecord) {
   return {
     id: record.id,
     name: record.name,
-    role: record.instructions.slice(0, 30),
+    title: record.title,
+    role: record.title || record.instructions.slice(0, 30),
     color: record.color,
-    status: busy ? 'working' : 'idle',
+    status: runtime.isBusy(record.id) ? 'working' : 'idle',
     activity: '',
-    conversationCount: 1,
+    conversationCount: await runtime.messages.count(record.id),
     createdAt: new Date(record.createdAt).toISOString(),
     updatedAt: new Date(record.updatedAt).toISOString(),
   };
