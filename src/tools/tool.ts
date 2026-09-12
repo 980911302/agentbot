@@ -17,7 +17,9 @@ export interface TurnState {
   /** 记一笔"派给谁"：停止令要沿这张表往下传 */
   registerChild?(child: { agentId: string; via: 'dm' | 'room'; roomId?: string }): void;
   /** 记一笔"起了什么进程/流"：停止令要能掐掉 */
-  registerJob?(abort: AbortController, label: string): void;
+  registerJob?(abort: () => void, label: string): void;
+  /** 以当前智能体的身份把一条文本落到它的对话线并推给界面（SendToUser 私聊/群内 dm 用） */
+  persistOutgoing?(text: string): Promise<void>;
 }
 
 export interface ToolContext {

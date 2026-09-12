@@ -35,7 +35,8 @@ import { ROOM_MAX_RUNS_PER_MEMBER, ROOM_POST_LIMIT_PER_TURN } from '../room/type
 import { MessageStore } from '../store/messages.js';
 import { resolveProjectOwner } from '../tools/examples/memory.js';
 import { ToolRegistry } from '../tools/registry.js';
-import { createAgentMessageTool, createSayTool, createSilentTool } from '../tools/examples/room.js';
+import { createSendToAgentTool } from '../tools/examples/room.js';
+import { createTaskTools } from '../tools/examples/task.js';
 import type { Tool, TurnState } from '../tools/tool.js';
 
 export interface SeedAgent {
@@ -106,7 +107,7 @@ export interface TaskTree {
   id: string;
   rootTurnId: string;
   agentId: string;
-  jobs: Array<{ abort: AbortController; label: string }>;
+  jobs: Array<{ abort: () => void; label: string }>;
   children: Array<{ agentId: string; via: 'dm' | 'room'; roomId?: string }>;
   status: 'open' | 'cancelling' | 'cancelled';
   /** 自动续跑次数上限 3，防止打断-续跑打乒乓 */
@@ -188,7 +189,8 @@ export class AgentRuntime {
   readonly broker: InteractionBroker;
   readonly secrets: SecretStore;
 
-  private readonly tools: Tool<any>[];
+  /** 全量工具面（常驻 + 平台层），/api/health 与新同事默认表都从这里来 */
+  readonly tools: Tool<any>[];
   private readonly builder: ContextBuilder;
   private readonly compactor: Compactor;
   private readonly extractor: MemoryExtractor;
@@ -239,8 +241,17 @@ export class AgentRuntime {
       },
     });
 
-    this.tools = [...options.tools, ...createWorkbenchTools(this.workbench)];
-    this.registry.setDefaultToolNames(this.tools.map((tool) => tool.name));
+    this.tools = [
+      ...options.tools,
+      ...createWorkbenchTools(this.workbench),
+      this.createSendToAgentTool(),
+      ...createTaskTools({
+        provider: this.providerFor(this.options.defaultModel),
+        messages: this.messages,
+        workerTools: () => this.tools.filter((tool) => tool.name !== 'SendToUser'),
+        maxIterations: this.options.maxIterations,
+      }),
+    ];
     // 新同事默认拿到全部工具——包括工作台那一组
     this.registry.setDefaultToolNames(this.tools.map((tool) => tool.name));
   }
@@ -450,7 +461,7 @@ export class AgentRuntime {
     const roomChildren: Array<{ roomId?: string }> = [];
     for (const tree of targets) {
       tree.status = 'cancelling';
-      for (const job of tree.jobs) job.abort.abort();
+      for (const job of tree.jobs) job.abort();
       for (const child of tree.children) {
         if (child.via === 'dm') dmChildren.push({ agentId: child.agentId, treeId: tree.id });
         else roomChildren.push({ roomId: child.roomId });
@@ -786,9 +797,7 @@ export class AgentRuntime {
         skipPersist: true,
         persistAssistantText: false,
         // 被点名时必须开口：连沉默工具都不给，把「必须说」做成硬约束
-        extraTools: summoned
-          ? [createSayTool(), this.agentMessageTool(member.id, 0)]
-          : [createSayTool(), createSilentTool(), this.agentMessageTool(member.id, 0)],
+        extraTools: [],
         toolContext: {
           room: {
             roomId: input.roomId,
@@ -860,23 +869,43 @@ export class AgentRuntime {
 
   // ── 智能体 1:1 ──────────────────────────────────────
 
-  private agentMessageTool(selfId: string, depth: number) {
-    return createAgentMessageTool({
-      depth,
+  /** SendToAgent：target 支持 id / 名字（同事），群 id / 群名（必须是自己所在的群） */
+  private createSendToAgentTool() {
+    return createSendToAgentTool({
       maxDepth: this.options.maxAgentChainDepth ?? DEFAULT_MAX_AGENT_DEPTH,
-      onSend: async ({ toAgentId, text, priority }) => {
-        const target = await this.registry.get(toAgentId);
-        if (!target) return `没有找到 id 为 ${toAgentId} 的智能体，请改用 @名字 在群里点名`;
-        const sender = await this.registry.get(selfId);
-        await this.inbox.enqueue({
-          toAgentId,
-          fromAgentId: selfId,
-          fromName: sender?.name ?? '同事',
-          text,
-          priority,
-          depth: depth + 1,
-        });
-        return `已投递给「${target.name}」，它会作为之后的一个新回合处理`;
+      resolveTarget: async (wanted) => {
+        const agents = await this.registry.list();
+        const agent =
+          agents.find((item) => item.id === wanted) ??
+          agents.find((item) => item.name === wanted.trim());
+        if (agent) return { kind: 'agent' as const, id: agent.id, name: agent.name };
+
+        const rooms = await this.workbench.listRooms();
+        const room =
+          rooms.find((item) => item.id === wanted) ??
+          rooms.find((item) => item.name === wanted.trim());
+        if (room) return { kind: 'room' as const, id: room.id, name: room.name };
+        return undefined;
+      },
+      dispatch: async ({ targetId, kind, text, priority, callerId }) => {
+        if (kind === 'agent') {
+          const sender = await this.registry.get(callerId);
+          const target = await this.registry.get(targetId);
+          await this.inbox.enqueue({
+            toAgentId: targetId,
+            fromAgentId: callerId,
+            fromName: sender?.name ?? '同事',
+            text,
+            priority,
+            depth: 0,
+            kind: 'message',
+          });
+          return `已投递给「${target?.name ?? targetId}」；发出去就结束，回复会作为之后的一个新回合回来。`;
+        }
+        const result = await this.workbench.postToRoom(callerId, targetId, text);
+        const skipped =
+          result.skipped.length > 0 ? `（${result.skipped.join('、')} 正忙，跳过）` : '';
+        return `已发到「${result.roomName}」，${result.called} 人进入回合：${result.spoke} 开口 / ${result.silent} 沉默${skipped}`;
       },
     });
   }
@@ -940,7 +969,7 @@ export class AgentRuntime {
         depth,
         maxDepth: this.options.maxAgentChainDepth ?? DEFAULT_MAX_AGENT_DEPTH,
       }),
-      extraTools: [this.agentMessageTool(agentId, depth)],
+      extraTools: [],
       toolContext: { agentChainDepth: depth },
     }, options);
 
@@ -1029,7 +1058,7 @@ export class AgentRuntime {
 
     // 本回合自己的 abort 控制器：挂起（park）就掐这里；外部 close 信号并行生效
     const controller = new AbortController();
-    tree.jobs.push({ abort: controller, label: 'turn' });
+    tree.jobs.push({ abort: () => controller.abort(), label: 'turn' });
     const externalSignal = turn.signal ?? options.signal;
     const signal = externalSignal
       ? AbortSignal.any([controller.signal, externalSignal])
@@ -1078,6 +1107,18 @@ export class AgentRuntime {
           }
         },
         registerJob: (abort, label) => tree.jobs.push({ abort, label }),
+        persistOutgoing: async (text) => {
+          const message: Message = {
+            id: randomUUID(),
+            agentId,
+            role: 'assistant',
+            content: { type: 'text', text },
+            createdAt: Date.now(),
+            source: 'agent',
+          };
+          await this.messages.append(message);
+          options.onEvent?.({ type: 'message', message });
+        },
       };
 
       const loop = new AgentLoop({
@@ -1155,7 +1196,7 @@ export class AgentRuntime {
     rt.status = 'parked';
     const tree = this.trees.get(rt.treeId);
     if (tree) {
-      for (const job of tree.jobs) job.abort.abort();
+      for (const job of tree.jobs) job.abort();
     }
   }
 

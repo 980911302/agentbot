@@ -1,93 +1,94 @@
 import { defineTool } from '../tool.js';
 
 /**
- * 群回合的出站工具。
+ * SendToAgent —— 对齐《内置工具清单.md》A 组。
  *
- * 文档第 5 节：开口 = 往房间发纯文本；闭嘴 = 什么都不发，也是一等公民的结果。
- * 所以这里只有两个动作，由智能体自己选。
+ * 私发另一个智能体，或发到自己所在的群。发出去立刻返回，不等回复；
+ * 回复是之后的一个新回合（《停止与插话.md》：投递即结束）。
+ *
+ * 与 Grok 的差异记录：images 参数接受但忽略（消息面还没有附件气泡）；
+ * priority=true 只表达紧急/叫停，插队用；真正的停止传播由运行时按任务树下发。
+ * target_id 支持同事 id / 名字、群 id / 群名（群里被 @ 时简报里带 id）。
  */
 
-export function createSayTool() {
-  return defineTool<{ text: string }>({
-    name: 'say',
-    ephemeral: true,
-    description: [
-      '向当前群发一条纯文本消息。',
-      '只在你有别人还没说过的、且归你管的实质内容时调用。',
-      '1~3 句，像人在群里打字；不要总结整楼；说完就停。',
-      '同一轮最多调 3 次。没有要补充的就不要调用，直接结束回合。',
-    ].join(' '),
-    parameters: {
-      type: 'object',
-      properties: {
-        text: { type: 'string', description: '要说的话，纯文本' },
-      },
-      required: ['text'],
-    },
-    execute({ text }, context) {
-      const room = context.room;
-      if (!room) throw new Error('say 只能在群回合里使用');
-      if (room.posts.length >= room.limit) {
-        throw new Error(`这一轮已经说了 ${room.limit} 条，请结束回合`);
-      }
-      const trimmed = typeof text === 'string' ? text.trim() : '';
-      if (!trimmed) throw new Error('内容不能为空');
-      room.posts.push(trimmed);
-      return `已发出（本轮第 ${room.posts.length} 条）`;
-    },
-  });
-}
-
-export function createSilentTool() {
-  return defineTool<Record<string, never>>({
-    name: 'stay_silent',
-    ephemeral: true,
-    description: [
-      '这一轮不发言，直接结束回合。',
-      '当你没有被点名、且没有别人还没说过的实质内容时调用它。',
-      '沉默是正常结果，不是失败；不要为了“在场”而说话。',
-    ].join(' '),
-    parameters: { type: 'object', properties: {} },
-    execute(_args, context) {
-      if (!context.room) throw new Error('stay_silent 只能在群回合里使用');
-      return context.room.posts.length > 0
-        ? `这一轮已经发过 ${context.room.posts.length} 条，可以结束回合了`
-        : '已保持沉默';
-    },
-  });
-}
-
-export function createAgentMessageTool(options: {
-  onSend: (input: { toAgentId: string; text: string; priority: boolean }) => Promise<string>;
-  depth: number;
+export function createSendToAgentTool(options: {
   maxDepth: number;
+  resolveTarget: (targetId: string) => Promise<
+    | { kind: 'agent'; id: string; name: string }
+    | { kind: 'room'; id: string; name: string }
+    | undefined
+  >;
+  dispatch: (input: {
+    targetId: string;
+    kind: 'agent' | 'room';
+    text: string;
+    priority: boolean;
+    callerId: string;
+  }) => Promise<string>;
 }) {
-  return defineTool<{ toAgentId: string; text: string; priority?: boolean }>({
-    name: 'send_to_agent',
+  return defineTool<{
+    target_id: string;
+    message: string;
+    images?: Array<{ url: string; alt?: string }>;
+    priority?: boolean;
+  }>({
+    name: 'SendToAgent',
     description: [
-      '按 id 私发给另一个智能体（1:1）。',
-      '发出去这一步就结束，不要等对方回复——它的回复会作为之后的一个新回合回来。',
-      '只在需要另一个同事接手上才用；不要在用户还没回答你之前“顺便”扇出去。',
+      '私发另一个智能体，或发到自己所在的群。发出去立刻返回，不等回复——对方的回复是之后的新回合。',
+      '1:1 可以 priority=true（紧急/叫停，插到对方队列前面；不会打断它正在跟用户的对话）。',
+      '群发是纯文本、忽略 priority；扇出多人前要征得用户明确同意。',
+      '拿不准要不要转发给同事时，先问用户。',
     ].join(' '),
     parameters: {
       type: 'object',
       properties: {
-        toAgentId: { type: 'string', description: '对方智能体的 id' },
-        text: { type: 'string', description: '要传的话，只转可执行的那一句' },
-        priority: { type: 'boolean', description: '紧急/叫停，插入对方队列前面' },
+        target_id: { type: 'string', description: '同事的 id 或名字；群则给群 id 或群名（必须是你所在的群）' },
+        message: { type: 'string', description: '要传的话，只转可执行的那一句' },
+        images: {
+          type: 'array',
+          description: '暂不支持附件，传了会被忽略',
+          properties: {
+            url: { type: 'string' },
+            alt: { type: 'string' },
+          },
+        },
+        priority: { type: 'boolean', description: '紧急/叫停时插队' },
       },
-      required: ['toAgentId', 'text'],
+      required: ['target_id', 'message'],
     },
-    async execute({ toAgentId, text, priority }, context) {
-      if (options.depth >= options.maxDepth) {
+    async execute({ target_id, message, images, priority }, context) {
+      if ((context.agentChainDepth ?? 0) >= options.maxDepth) {
         throw new Error('传话链已达上限，请直接把结论说给用户');
       }
-      const trimmed = typeof text === 'string' ? text.trim() : '';
-      if (!trimmed) throw new Error('内容不能为空');
-      if (toAgentId === context.agentId) throw new Error('不要发给自己');
-      // 派活记账（《停止与插话.md》§8）：停止令要能沿这笔记往下传
-      context.turnState?.registerChild?.({ agentId: toAgentId, via: 'dm' });
-      return options.onSend({ toAgentId, text: trimmed, priority: priority === true });
+      const text = typeof message === 'string' ? message.trim() : '';
+      if (!text) throw new Error('message 不能为空');
+      const wanted = target_id?.trim();
+      if (!wanted) throw new Error('target_id 不能为空');
+
+      const target = await options.resolveTarget(wanted);
+      if (!target) {
+        throw new Error(`找不到收件方「${wanted}」：既不是同事（id 或名字），也不是你所在的群`);
+      }
+      if (target.kind === 'agent' && target.id === context.agentId) {
+        throw new Error('不要发给自己');
+      }
+
+      // 派活记账（《停止与插话.md》§8）：停止令沿这笔记往下传
+      context.turnState?.registerChild?.({
+        agentId: target.id,
+        via: target.kind === 'agent' ? 'dm' : 'room',
+        roomId: target.kind === 'room' ? target.id : undefined,
+      });
+
+      const reply = await options.dispatch({
+        targetId: target.id,
+        kind: target.kind,
+        text,
+        priority: priority === true,
+        callerId: context.agentId,
+      });
+      const note = Array.isArray(images) && images.length > 0 ? '（附件暂不支持，已忽略）' : '';
+      return `${reply}${note}`;
     },
   });
 }

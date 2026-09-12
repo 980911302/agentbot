@@ -1,8 +1,7 @@
 import { defineTool } from '../tool.js';
-import { USER_OWNER } from '../../memory/policy.js';
 import { retrieveMemories } from '../../memory/retrieve.js';
 import type { MemoryStore } from '../../memory/store.js';
-import type { MemoryScope, MemoryTier } from '../../memory/types.js';
+import type { MemoryScope } from '../../memory/types.js';
 
 /**
  * 解析项目作用域的归属。
@@ -41,118 +40,54 @@ export function resolveProjectOwner(
   };
 }
 
+/**
+ * RecallMemory —— 对齐《内置工具清单.md》1.4。
+ *
+ * 只读搜长期记忆；写入和忘记走 update_state(target=memory)。
+ * Grok 的 scope：agent | user | all（默认 all）。
+ */
 export function createMemoryTools(memory: MemoryStore) {
-  const remember = defineTool<{
-    text: string;
-    scope?: MemoryScope;
-    tier?: MemoryTier;
-    tags?: string[];
-    projectId?: string;
-  }>({
-    name: 'remember',
-    description: [
-      'Save one durable fact to long-term memory.',
-      'scope: "user" for facts true across every assistant (name, timezone, standing preference);',
-      '"project" for facts bound to one codebase; "self" for your own working notes. Default "self".',
-      'When scope is "project" and you belong to more than one project, you MUST pass projectId.',
-      'tier: "portrait" for stable facts worth always carrying; "log" for things that happened (default);',
-      '"scratch" for a short-lived note.',
-      'Duplicates are merged automatically.',
-    ].join(' '),
-    parameters: {
-      type: 'object',
-      properties: {
-        text: { type: 'string', description: 'The fact, one sentence' },
-        scope: { type: 'string', description: 'self | user | project' },
-        tier: { type: 'string', description: 'portrait | log | scratch' },
-        tags: { type: 'array', description: 'Optional lowercase tags' },
-        projectId: {
-          type: 'string',
-          description: 'Required when scope=project and you belong to several projects',
+  return [
+    defineTool<{ query: string; scope?: 'agent' | 'user' | 'all'; limit?: number }>({
+      name: 'RecallMemory',
+      description: [
+        '搜长期记忆：不在当前提示词里的旧日志、淡掉的笔记、以及所有助手写下的共用用户事实。',
+        '只读——要改记忆用 update_state(target=memory)。',
+        'query 对得上的优先，否则子串匹配；先于“让用户重复一遍”使用。',
+      ].join(' '),
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: '关键词' },
+          scope: { type: 'string', description: 'agent | user | all，默认 all' },
+          limit: { type: 'number', description: '最多返回几条，1~50，默认 20' },
         },
+        required: ['query'],
       },
-      required: ['text'],
-    },
-    async execute({ text, scope, tier, tags, projectId }, context) {
-      if (typeof text !== 'string' || text.trim().length < 4) {
-        throw new Error('text must be a sentence worth remembering');
-      }
+      async execute({ query, scope, limit }, context) {
+        const keyword = query?.trim();
+        if (!keyword) throw new Error('query 不能为空');
+        const capped = Math.min(Math.max(limit ?? 20, 1), 50);
 
-      const resolvedScope = parseScope(scope);
-      let ownerId = context.agentId;
-      let where = '我的笔记';
+        const refs = await memory.visibleTo(context.agentId, { projectIds: context.projectIds });
+        const filtered =
+          scope && scope !== 'all' ? refs.filter((ref) => ref.scope === (scope === 'agent' ? 'self' : scope)) : refs;
+        const hits = retrieveMemories(filtered, keyword, capped);
+        if (hits.length === 0) return '没有找到相关记忆';
 
-      if (resolvedScope === 'user') {
-        ownerId = USER_OWNER;
-        where = '共用记忆';
-      } else if (resolvedScope === 'project') {
-        const resolved = resolveProjectOwner(projectId, context.projectIds);
-        if ('error' in resolved) throw new Error(resolved.error);
-        ownerId = resolved.ownerId;
-        where = `项目笔记（${ownerId}）`;
-      }
+        await memory.touch(
+          'self',
+          context.agentId,
+          hits.filter((ref) => ref.scope === 'self').map((ref) => ref.entry.id),
+        );
 
-      const result = await memory.write({
-        scope: resolvedScope,
-        tier: parseTier(tier),
-        ownerId,
-        text,
-        tags: Array.isArray(tags) ? tags.filter((tag) => typeof tag === 'string') : [],
-        source: 'agent',
-      });
-
-      const verb =
-        result.action === 'created'
-          ? '已记下'
-          : result.action === 'merged'
-            ? '已合并到已有记录'
-            : '已更新';
-      return `${verb}（${where}/${result.entry.tier}）`;
-    },
-  });
-
-  const recall = defineTool<{ query: string; scope?: MemoryScope }>({
-    name: 'recall',
-    description:
-      'Search long-term memory for entries not currently in view: older logs, fading notes, and shared user facts. Use it before asking the user to repeat something.',
-    parameters: {
-      type: 'object',
-      properties: {
-        query: { type: 'string', description: 'What to look for' },
-        scope: { type: 'string', description: 'Optional: self | user | project' },
+        return hits
+          .map((ref) => {
+            const where = ref.scope === 'self' ? '我的笔记' : ref.scope === 'user' ? '共用' : '项目';
+            return `- [${where}/${ref.entry.tier}] ${ref.entry.text}`;
+          })
+          .join('\n');
       },
-      required: ['query'],
-    },
-    async execute({ query, scope }, context) {
-      const refs = await memory.visibleTo(context.agentId, { projectIds: context.projectIds });
-      const filtered = scope ? refs.filter((ref) => ref.scope === scope) : refs;
-      const hits = retrieveMemories(filtered, query, 8);
-      if (hits.length === 0) return '没有找到相关记忆';
-
-      await memory.touch(
-        'self',
-        context.agentId,
-        hits.filter((ref) => ref.scope === 'self').map((ref) => ref.entry.id),
-      );
-
-      return hits
-        .map((ref) => {
-          const where = ref.scope === 'self' ? '我的笔记' : ref.scope === 'user' ? '共用' : '项目';
-          return `- [${where}/${ref.entry.tier}] ${ref.entry.text}`;
-        })
-        .join('\n');
-    },
-  });
-
-  return [remember, recall];
-}
-
-function parseScope(value: unknown): MemoryScope {
-  if (value === 'user' || value === 'project') return value;
-  return 'self';
-}
-
-function parseTier(value: unknown): MemoryTier {
-  if (value === 'portrait' || value === 'scratch') return value;
-  return 'log';
+    }),
+  ];
 }

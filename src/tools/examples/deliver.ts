@@ -1,7 +1,5 @@
-import { copyFile, mkdir, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
-import { defineTool } from '../tool.js';
 
 /**
  * 把文件投递到用户磁盘。
@@ -67,45 +65,4 @@ export function resolveDeliverPath(
   if (!root) throw new DeliverPathError(`目标路径超出允许范围：${finalPath}`);
 
   return { path: finalPath, root };
-}
-
-export function createDeliverTool(sandboxRoot: string) {
-  const root = resolve(sandboxRoot);
-
-  return defineTool<{ path: string; fileName?: string; targetDir?: string }>({
-    name: 'deliver_file',
-    description: [
-      '把你工作区里的文件放到用户的磁盘上（默认「下载」目录），这样用户能直接打开。',
-      'path 是工作区内的相对路径；fileName 可以改名。',
-      '只能投递到下载 / 桌面 / 文档这几个目录，不能写到别处。',
-      '适合「把结果写成文件给用户」，不要用它当通用写文件工具。',
-    ].join(' '),
-    parameters: {
-      type: 'object',
-      properties: {
-        path: { type: 'string', description: '工作区内的文件路径' },
-        fileName: { type: 'string', description: '投递后的文件名（默认用原文件名）' },
-        targetDir: { type: 'string', description: '目标目录，默认下载' },
-      },
-      required: ['path'],
-    },
-    async execute(args) {
-      const source = resolve(root, args.path);
-      const rel = relative(root, source);
-      if (rel.startsWith('..') || isAbsolute(rel)) {
-        throw new Error('path 超出了工作区范围');
-      }
-
-      const info = await stat(source).catch(() => null);
-      if (!info?.isFile()) throw new Error(`工作区里没有这个文件：${args.path}`);
-
-      const roots = deliverRoots();
-      const target = resolveDeliverPath(args.fileName ?? basename(source), args.targetDir, roots);
-
-      await mkdir(dirname(target.path), { recursive: true });
-      await copyFile(source, target.path);
-
-      return `已投递到 ${target.path}（${info.size} 字节）。用户可以直接打开这个文件。`;
-    },
-  });
 }

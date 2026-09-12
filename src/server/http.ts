@@ -84,6 +84,10 @@ export async function createAgentServer(options: AgentServerOptions = {}): Promi
     secrets,
     broker,
     agentName: async (agentId) => (await runtimeRef?.registry.get(agentId))?.name ?? agentId,
+    updateAgent: async (agentId, patch) => {
+      if (!runtimeRef) throw new Error('runtime is not ready yet');
+      return runtimeRef.registry.update(agentId, patch);
+    },
     web: config.web,
   });
 
@@ -107,7 +111,8 @@ export async function createAgentServer(options: AgentServerOptions = {}): Promi
 
   runtimeRef = runtime;
 
-  const toolDefs = tools.map((tool) => ({ name: tool.name, description: tool.description }));
+  // 健康检查报全量工具面（常驻 + 平台层），而不是装配前的常驻子集
+  const toolDefs = runtime.tools.map((tool) => ({ name: tool.name, description: tool.description }));
   await runtime.ensureDefaultAgent();
   await runtime.ensureSeedRooms();
 

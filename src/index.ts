@@ -112,6 +112,10 @@ async function main(): Promise<void> {
       broker,
       // CLI 模式没有界面，卡片交互拿不到回答；让工具报错时说得清楚些
       agentName: async (agentId) => (await runtime?.registry.get(agentId))?.name ?? agentId,
+      updateAgent: async (agentId, patch) => {
+        if (!runtime) throw new Error('runtime is not ready yet');
+        return runtime.registry.update(agentId, patch);
+      },
       web: config.web,
     }),
     createProvider: (model) =>

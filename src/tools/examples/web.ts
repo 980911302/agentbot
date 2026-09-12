@@ -133,7 +133,7 @@ async function readLimited(response: Response): Promise<string> {
 
 export function createWebTools(secrets: SecretStore) {
   const webFetch = defineTool<{ url: string; secretName?: string; maxChars?: number }>({
-    name: 'web_fetch',
+    name: 'WebFetch',
     description: [
       '抓取一个公开网页并转成纯文本。只支持公网 http/https，不能访问内网与需要登录的页面。',
       '需要带鉴权时，让用户先用 request_secret 存好，再用 secretName 引用（不要索要明文）。',
@@ -185,8 +185,8 @@ export function createWebTools(secrets: SecretStore) {
     },
   });
 
-  const webSearch = defineTool<{ query: string; limit?: number }>({
-    name: 'web_search',
+  const webSearch = defineTool<{ search_term: string; explanation?: string }>({
+    name: 'WebSearch',
     description: [
       '用关键词搜公网，返回标题 + 链接 + 摘要。',
       '搜到结果后如果需要正文，再用 web_fetch 抓具体那一条。',
@@ -195,15 +195,15 @@ export function createWebTools(secrets: SecretStore) {
     parameters: {
       type: 'object',
       properties: {
-        query: { type: 'string', description: '搜索词' },
-        limit: { type: 'number', description: '返回条数，默认 5，最多 10' },
+        search_term: { type: 'string', description: '搜索词；话题性搜索要带当前年份' },
+        explanation: { type: 'string', description: '一句话说明为什么要搜' },
       },
-      required: ['query'],
+      required: ['search_term'],
     },
     async execute(args, context) {
-      const query = args.query?.trim();
+      const query = args.search_term?.trim();
       if (!query) throw new Error('搜索词不能为空');
-      const limit = Math.min(Math.max(args.limit ?? 5, 1), 10);
+      const limit = 5;
 
       const endpoint = new URL('https://html.duckduckgo.com/html/');
       endpoint.searchParams.set('q', query);

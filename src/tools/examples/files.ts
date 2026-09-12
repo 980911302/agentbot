@@ -1,93 +1,58 @@
-import { readFile, writeFile, readdir, stat } from 'node:fs/promises';
-import { isAbsolute, relative, resolve } from 'node:path';
+import { readFile, stat } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import { defineTool } from '../tool.js';
 
-const MAX_READ_BYTES = 64 * 1024;
-const MAX_WRITE_BYTES = 256 * 1024;
+const MAX_READ_BYTES = 256 * 1024;
 
-function resolveInside(root: string, path: string): string {
-  const absolute = resolve(root, path);
-  const rel = relative(root, absolute);
-  if (rel.startsWith('..') || isAbsolute(rel)) {
-    throw new Error('path escapes the sandbox root');
-  }
-  return absolute;
-}
+/**
+ * Read —— 对齐《内置工具清单.md》1.7。
+ *
+ * Grok 语义：读自己机器上的文本（带行号），绝对路径；offset 负数从末尾数。
+ * 没有云电脑，所以没有 machineId。
+ */
 
-export function createReadFileTool(rootDir: string = process.cwd()) {
-  const root = resolve(rootDir);
-
-  return defineTool<{ path: string }>({
-    name: 'read_file',
-    description: `Read a UTF-8 text file. Paths resolve against "${root}" and cannot escape it.`,
+export function createReadTool() {
+  return defineTool<{ path: string; offset?: number; limit?: number }>({
+    name: 'Read',
+    description: [
+      '读本机上的文本文件，返回带行号的内容；绝对路径。',
+      'offset 从 1 开始（负数表示从末尾往前数），limit 是行数。',
+      '图片 / PDF 暂不支持；大文件自动截断。',
+    ].join(' '),
     parameters: {
       type: 'object',
       properties: {
-        path: { type: 'string', description: 'File path to read' },
+        path: { type: 'string', description: '文件绝对路径' },
+        offset: { type: 'number', description: '起始行，从 1 开始；负数=从末尾数' },
+        limit: { type: 'number', description: '读取行数，默认全部' },
       },
       required: ['path'],
     },
-    async execute({ path }) {
-      const buffer = await readFile(resolveInside(root, path));
-      if (buffer.byteLength > MAX_READ_BYTES) {
-        throw new Error(`file is larger than ${MAX_READ_BYTES} bytes`);
+    async execute({ path, offset, limit }) {
+      if (!path || !path.trim()) throw new Error('path 不能为空');
+      const absolute = resolve(path.trim());
+      const info = await stat(absolute).catch(() => null);
+      if (!info?.isFile()) throw new Error(`找不到这个文件：${absolute}`);
+      if (info.size > MAX_READ_BYTES) {
+        throw new Error(`文件超过 ${MAX_READ_BYTES} 字节，用 Shell 的 head/tail 或指定 offset/limit 分段读`);
       }
-      return buffer.toString('utf8');
-    },
-  });
-}
 
-export function createWriteFileTool(rootDir: string = process.cwd()) {
-  const root = resolve(rootDir);
+      const raw = await readFile(absolute, 'utf8');
+      const lines = raw.split('\n');
+      const total = lines.length;
 
-  return defineTool<{ path: string; content: string }>({
-    name: 'write_file',
-    description: `Create or overwrite a UTF-8 text file. Paths resolve against "${root}" and cannot escape it.`,
-    parameters: {
-      type: 'object',
-      properties: {
-        path: { type: 'string', description: 'File path to write' },
-        content: { type: 'string', description: 'Full file content' },
-      },
-      required: ['path', 'content'],
-    },
-    async execute({ path, content }) {
-      if (Buffer.byteLength(content, 'utf8') > MAX_WRITE_BYTES) {
-        throw new Error(`content is larger than ${MAX_WRITE_BYTES} bytes`);
-      }
-      const target = resolveInside(root, path);
-      await writeFile(target, content, 'utf8');
-      return `wrote ${path} (${Buffer.byteLength(content, 'utf8')} bytes)`;
-    },
-  });
-}
+      let start = offset === undefined ? 1 : offset;
+      if (start < 0) start = Math.max(1, total + 1 + start);
+      start = Math.max(1, start);
+      let end = limit === undefined ? total : start - 1 + Math.max(0, limit);
+      end = Math.min(total, end);
 
-export function createListFilesTool(rootDir: string = process.cwd()) {
-  const root = resolve(rootDir);
+      const body = lines
+        .slice(start - 1, end)
+        .map((line, index) => `${String(start + index).padStart(5)}  ${line}`)
+        .join('\n');
 
-  return defineTool<{ path?: string }>({
-    name: 'list_files',
-    description: `List entries of a directory. Paths resolve against "${root}" and cannot escape it.`,
-    parameters: {
-      type: 'object',
-      properties: {
-        path: { type: 'string', description: 'Directory path, defaults to the root' },
-      },
-    },
-    async execute({ path }) {
-      const target = resolveInside(root, path && path.trim() ? path : '.');
-      const entries = await readdir(target, { withFileTypes: true });
-      const lines: string[] = [];
-      for (const entry of entries.slice(0, 200)) {
-        if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
-        if (entry.isDirectory()) {
-          lines.push(`${entry.name}/`);
-          continue;
-        }
-        const info = await stat(resolve(target, entry.name)).catch(() => null);
-        lines.push(`${entry.name} (${info ? info.size : 0}B)`);
-      }
-      return lines.length > 0 ? lines.join('\n') : '(empty directory)';
+      return `${absolute}（共 ${total} 行${end < total ? `，显示 ${start}-${end} 行` : ''}）\n${body}`;
     },
   });
 }

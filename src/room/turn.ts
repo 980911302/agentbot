@@ -80,10 +80,10 @@ export function buildRoomBrief(input: RoomBriefInput): string {
     // 被点名时不提供沉默选项，所以这里不写「可以闭嘴」
     lines.push('- 你被点名了，必须开口，直接说出你要说的话即可。');
     lines.push('- 就算只是确认现状、说清「我这边没有」，也要开口答复，不要闷着。');
-    lines.push('- 也可以改用 say 工具分几条说，但无论哪种方式都要开口。');
+    lines.push('- 可以用 SendToUser 分几条说，但无论哪种方式都要开口。');
   } else {
     lines.push('- 只有当你手上有**别人还没说过的、且归你管的实质内容**时才开口。');
-    lines.push('- 开口必须用 say 工具：你最后输出的文字**不会**进群。');
+    lines.push('- 开口必须用 SendToUser 工具（type=text）：你最后输出的文字**不会**进群。');
     lines.push('- 没有要补充的就闭嘴 = 不调用 say，直接结束回合。沉默是正常结果，不是失败。');
   }
   lines.push(`- 像人在群里打字，通常 1~3 句；同一轮最多 ${input.postLimit} 条。`);
