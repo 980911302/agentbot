@@ -10,7 +10,7 @@
   "scripts": {
     "dev": "tsx src/index.ts",
     "server": "tsx src/server/main.ts",
-    "build": "tsc",
+    "build": "node scripts/clean.mjs dist && tsc",
     "build:all": "npm run build && npm run web:build",
     "clean": "node scripts/clean.mjs dist web/dist test-results",
     "typecheck": "npm run typecheck:server && npm run typecheck:web",
