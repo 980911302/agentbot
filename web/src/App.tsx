@@ -18,6 +18,7 @@ import * as api from './api';
 import { formatClock } from './format';
 import { applyEvent, errorMessage, now, uid } from './features/chat/message-reducer';
 import { ensureNotifyPermission, notifyIfHidden } from './notify';
+import { useInteractions } from './features/interactions/use-interactions';
 import type {
   AgentEvent,
   ArtifactView,
@@ -72,8 +73,8 @@ export default function App() {
   /** 给流式回调读最新成员表用的 ref（避免 send 闭包过期） */
   const agentsRef = useRef<BotSummary[]>([]);
   const [rooms, setRooms] = useState<RoomView[]>([]);
-  /** 正在等用户回答的卡片 */
-  const [interactions, setInteractions] = useState<InteractionRequest[]>([]);
+  /** 正在等用户回答的卡片（E2.5b 拆出） */
+  const { interactions, handleRequest, handleClose: closeInteraction, answer: answerRequest } = useInteractions();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [newBotOpen, setNewBotOpen] = useState(false);
   /** 右键菜单选中的待删对象，确认后才真正动手 */
@@ -609,19 +610,11 @@ export default function App() {
               // 群回合里智能体可能 ask_user：卡片要能弹出来、能回答
               onAgentEvent: (event) => {
                 if (event.type === 'interaction') {
-                  setInteractions((current) =>
-                    current.some((item) => item.id === event.request.id)
-                      ? current
-                      : [...current, event.request],
-                  );
-                  notifyIfHidden(
-                    `「${event.request.agentName}」在等你回答`,
-                    event.request.question,
-                  );
+                  handleRequest(event.request);
                   return;
                 }
                 if (event.type === 'interaction_closed') {
-                  setInteractions((current) => current.filter((item) => item.id !== event.id));
+                  closeInteraction(event.id);
                 }
               },
               onRoundEnd: (outcome) => {
@@ -690,16 +683,11 @@ export default function App() {
                 return;
               }
               if (event.type === 'interaction') {
-                setInteractions((current) =>
-                  current.some((item) => item.id === event.request.id)
-                    ? current
-                    : [...current, event.request],
-                );
-                notifyIfHidden(`「${event.request.agentName}」在等你回答`, event.request.question);
+                handleRequest(event.request);
                 return;
               }
               if (event.type === 'interaction_closed') {
-                setInteractions((current) => current.filter((item) => item.id !== event.id));
+                closeInteraction(event.id);
                 return;
               }
 
@@ -793,17 +781,9 @@ export default function App() {
   );
 
   const answerInteraction = useCallback(
-    async (id: string, answer: { value?: string; secret?: string; cancelled?: boolean }) => {
-      // 先从界面移除，回答失败再放回来
-      setInteractions((current) => current.filter((item) => item.id !== id));
-      try {
-        await api.answerInteraction(id, answer);
-      } catch {
-        const list = await api.fetchInteractions().catch(() => null);
-        if (list) setInteractions(list);
-      }
-    },
-    [],
+    (id: string, answer: { value?: string; secret?: string; cancelled?: boolean }) =>
+      answerRequest(id, answer),
+    [answerRequest],
   );
 
   const setOwnerName = useCallback((name: string) => {
