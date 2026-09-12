@@ -1,4 +1,5 @@
 import { strict as assert } from 'node:assert';
+import { FakeProvider } from './fakes/fake-provider.js';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -240,14 +241,8 @@ describe('Shell / AwaitShell（1.6 / H）', () => {
 });
 
 describe('Task 工人族（H 组）', () => {
-  const provider: LLMProvider = {
-    name: 'fake',
-    async chat(_messages: LLMMessage[]): Promise<{ content: string; toolCalls: never[]; finishReason: string; usage: null }> {
-      return { content: '工人干完了', toolCalls: [], finishReason: 'stop', usage: null };
-    },
-  };
-
   function makeTools() {
+    const provider = new FakeProvider({ auto: () => FakeProvider.text('工人干完了') });
     return createTaskTools({
       provider: provider as never,
       messages: { append: async () => undefined } as never,
@@ -297,7 +292,7 @@ describe('Task 工人族（H 组）', () => {
 describe('TodoWrite（H 组）', () => {
   it('合并与重写，至少 2 条', async () => {
     const tools = createTaskTools({
-      provider: { name: 'fake', chat: async () => ({ content: '', toolCalls: [], finishReason: 'stop', usage: null }) as never },
+      provider: new FakeProvider({ auto: () => FakeProvider.text('') }) as never,
       messages: { append: async () => undefined } as never,
       workerTools: () => [],
     });

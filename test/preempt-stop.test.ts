@@ -1,5 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { mkdtemp, rm } from 'node:fs/promises';
+import { FakeProvider } from './fakes/fake-provider.js';
+import { waitFor } from './fakes/test-env.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
@@ -17,63 +19,19 @@ type Pending = {
   messages: LLMMessage[];
 };
 
-/** 可编程假模型：每次调用挂起，测试手动放行；abort 会拒绝 */
-function makeFakeProvider() {
-  const pending: Pending[] = [];
-  const calls: LLMMessage[][] = [];
-  const provider = {
-    name: 'fake',
-    chat(messages: LLMMessage[], options: { signal?: AbortSignal } = {}): Promise<LLMResponse> {
-      calls.push(messages.map((message) => ({ ...message })));
-      return new Promise<LLMResponse>((resolve, reject) => {
-        const entry: Pending = {
-          resolve: (response) => {
-            options.signal?.removeEventListener('abort', onAbort);
-            resolve(response);
-          },
-          signal: options.signal,
-          messages: calls[calls.length - 1]!,
-        };
-        const onAbort = () => reject(new Error('aborted'));
-        options.signal?.addEventListener('abort', onAbort, { once: true });
-        void reject;
-        pending.push(entry);
-      });
-    },
-  };
-  return {
-    provider,
-    pending,
-    calls,
-    release(index: number, response: LLMResponse) {
-      const entry = pending[index];
-      assert.ok(entry, `第 ${index + 1} 次模型调用还没发生`);
-      entry.resolve(response);
-    },
-  };
-}
-
 const TEXT: LLMResponse = { content: '完成', toolCalls: [], finishReason: 'stop', usage: null };
-
-async function waitFor(predicate: () => boolean, what: string): Promise<void> {
-  const deadline = Date.now() + 3000;
-  while (!predicate()) {
-    if (Date.now() > deadline) throw new Error(`等不到：${what}`);
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
-}
 
 describe('插话抢占式调度（见 docs/架构设计.md「插话、停止和等待」）', () => {
   let dir: string;
-  let fake: ReturnType<typeof makeFakeProvider>;
+  let fake: FakeProvider;
   let runtime: AgentRuntime;
 
   before(async () => {
     dir = await mkdtemp(join(tmpdir(), 'preempt-'));
-    fake = makeFakeProvider();
+    fake = new FakeProvider();
     runtime = new AgentRuntime({
       tools: [],
-      createProvider: () => fake.provider,
+      createProvider: () => fake,
       dataDir: dir,
       defaultModel: 'fake',
       knownModels: ['fake'],
@@ -92,10 +50,10 @@ describe('插话抢占式调度（见 docs/架构设计.md「插话、停止和�
     const agentId = (await runtime.registry.list())[0]!.id;
 
     const first = runtime.send(agentId, '任务一');
-    await waitFor(() => fake.pending.length >= 1, '第一次模型调用');
+    await waitFor(() => fake.pendingCount >= 1, '第一次模型调用');
 
     const second = runtime.send(agentId, '任务二');
-    await waitFor(() => fake.pending.length >= 2, '第二次模型调用（新句立即开回合）');
+    await waitFor(() => fake.pendingCount >= 2, '第二次模型调用（新句立即开回合）');
 
     // 放行新句 → 完成
     fake.release(1, TEXT);
@@ -103,7 +61,7 @@ describe('插话抢占式调度（见 docs/架构设计.md「插话、停止和�
     assert.equal(secondResult.stopReason, 'final_answer');
 
     // 旧回合收到 abort → parked；随后运行时自动补跑（出现第三次调用，带「续」）
-    await waitFor(() => fake.pending.length >= 3, '欠账补跑的模型调用');
+    await waitFor(() => fake.pendingCount >= 3, '欠账补跑的模型调用');
     const resumeCall = fake.calls[2]!;
     const resumeText = JSON.stringify(resumeCall);
     assert.ok(resumeText.includes('任务一'), '续跑简报要带原任务原文');
@@ -114,13 +72,13 @@ describe('插话抢占式调度（见 docs/架构设计.md「插话、停止和�
 
     // 每棵树最多续 3 次：不再出现新的调用
     await new Promise((resolve) => setTimeout(resolve, 120));
-    assert.equal(fake.pending.length, 3, '不应继续补跑');
+    assert.equal(fake.pendingCount, 3, '不应继续补跑');
   });
 });
 
 describe('停止令（见 docs/架构设计.md「插话、停止和等待」）', () => {
   let dir: string;
-  let fake: ReturnType<typeof makeFakeProvider>;
+  let fake: FakeProvider;
   let runtime: AgentRuntime;
   let inbox: AgentInbox;
   let broker: InteractionBroker;
@@ -128,7 +86,7 @@ describe('停止令（见 docs/架构设计.md「插话、停止和等待」）'
 
   before(async () => {
     dir = await mkdtemp(join(tmpdir(), 'stop-'));
-    fake = makeFakeProvider();
+    fake = new FakeProvider();
     broker = new InteractionBroker();
     const delegate = defineTool<Record<string, never>>({
       name: 'delegate',
@@ -142,7 +100,7 @@ describe('停止令（见 docs/架构设计.md「插话、停止和等待」）'
     inbox = new AgentInbox(dir);
     runtime = new AgentRuntime({
       tools: [delegate],
-      createProvider: () => fake.provider,
+      createProvider: () => fake,
       dataDir: dir,
       defaultModel: 'fake',
       knownModels: ['fake'],
@@ -162,14 +120,14 @@ describe('停止令（见 docs/架构设计.md「插话、停止和等待」）'
 
   it('派活记账：回合里 delegate 过的同事进了任务树', async () => {
     const turn = runtime.send(agentId, '派个活');
-    await waitFor(() => fake.pending.length >= 1, '第一次模型调用');
+    await waitFor(() => fake.pendingCount >= 1, '第一次模型调用');
     fake.release(0, {
       content: null,
       toolCalls: [{ id: 't1', name: 'delegate', arguments: '{}' }],
       finishReason: 'tool_calls',
       usage: null,
     });
-    await waitFor(() => fake.pending.length >= 2, '第二次模型调用');
+    await waitFor(() => fake.pendingCount >= 2, '第二次模型调用');
     fake.release(1, TEXT);
     const result = await turn;
     assert.equal(result.stopReason, 'final_answer');

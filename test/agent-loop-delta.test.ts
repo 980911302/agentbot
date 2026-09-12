@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { AgentLoop } from '../src/agent/agent-loop.js';
+import { FakeProvider } from './fakes/fake-provider.js';
 import type { Agent } from '../src/agent/types.js';
 import type { BuiltContext } from '../src/context/builder.js';
 import type { ChatOptions, LLMMessage, LLMResponse } from '../src/llm/provider.js';
@@ -13,14 +14,13 @@ import { MessageStore } from '../src/store/messages.js';
 describe('AgentLoop 流式 delta', () => {
   it('delta 先于 message 到达，且聚合文本一致', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'agentbot-loop-delta-'));
-    const provider = {
-      name: 'fake',
-      async chat(_messages: LLMMessage[], options: ChatOptions = {}): Promise<LLMResponse> {
-        options.onDelta?.('你');
-        options.onDelta?.('好');
+    const provider = new FakeProvider({
+      auto: (_messages, options) => {
+        options?.onDelta?.('你');
+        options?.onDelta?.('好');
         return { content: '你好', toolCalls: [], finishReason: 'stop', usage: null };
       },
-    };
+    });
     const events: string[] = [];
     const loop = new AgentLoop({
       provider,
