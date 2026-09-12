@@ -51,6 +51,7 @@ import {
   AgentBusyError,
 } from './runtime/types.js';
 import { AgentService } from './runtime/agent-service.js';
+import { StopCoordinator } from './runtime/stop-coordinator.js';
 export * from './runtime/types.js';
 
 const DEFAULT_MAX_AGENT_DEPTH = 3;
@@ -96,6 +97,8 @@ export class AgentRuntime {
   private readonly extractor: MemoryExtractor;
   /** 身份装配与模型解析（E2.2 拆出） */
   private readonly agentService: AgentService;
+  /** 停止令的认词、排队与执行（E2.2 拆出） */
+  private readonly stopCoordinator: StopCoordinator;
   private readonly locks = new Set<string>();
 
   /** 回合与任务树（见 docs/架构设计.md「插话、停止和等待」）：当前存于内存，消息本身已落盘 */
@@ -151,6 +154,20 @@ export class AgentRuntime {
       knownModels: options.knownModels,
       budget: options.budget,
       tools: () => this.tools,
+    });
+
+    this.stopCoordinator = new StopCoordinator({
+      registry: this.registry,
+      messages: this.messages,
+      inbox: this.inbox,
+      rooms: this.rooms,
+      broker: this.broker,
+      turns: this.turns,
+      trees: this.trees,
+      runningTurnByAgent: this.runningTurnByAgent,
+      pendingStops: this.pendingStops,
+      stopWords: options.stopWords ?? DEFAULT_STOP_WORDS,
+      stopAckTimeoutMs: options.stopAckTimeoutMs ?? 30_000,
     });
 
     this.tools = [
@@ -287,12 +304,12 @@ export class AgentRuntime {
 
   async send(agentId: string, text: string, options: SendOptions = {}): Promise<SendResult> {
     // 见 docs/架构设计.md「插话、停止和等待」：认停止词是运行时的事，不让模型「想起来去通知别人」
-    if (isStopSentence(text, this.options.stopWords ?? DEFAULT_STOP_WORDS)) {
-      return this.stopOrQueue(agentId, text, options);
+    if (this.stopCoordinator.isStopSentence(text)) {
+      return this.stopCoordinator.stopFromUser(agentId, text, options);
     }
 
     // 用户新句作废还没回答的选项卡——不当答案（§2）
-    await this.voidPendingInteractions(agentId, options.onEvent);
+    this.stopCoordinator.voidPendingInteractions(agentId, options.onEvent);
 
     const task: Message = {
       id: randomUUID(),
@@ -303,169 +320,6 @@ export class AgentRuntime {
       source: 'user',
     };
     return this.runTurn(agentId, task, { brief: undefined, onDelta: options.onDelta }, options);
-  }
-
-  /** 停止令入口：撞上正在跑的用户回合就排队（那条 SSE 保持打开），否则立刻执行 */
-  private stopOrQueue(
-    agentId: string,
-    text: string,
-    options: SendOptions,
-  ): Promise<SendResult> {
-    const runningId = this.runningTurnByAgent.get(agentId);
-    const running = runningId ? this.turns.get(runningId) : undefined;
-    if (running && running.source === 'user' && running.status === 'running') {
-      let resolve!: (result: SendResult) => void;
-      const done = new Promise<SendResult>((settle) => {
-        resolve = settle;
-      });
-      const queue = this.pendingStops.get(agentId) ?? [];
-      queue.push({ text, createdAt: Date.now(), options, notifyUser: true, resolve });
-      this.pendingStops.set(agentId, queue);
-      return done;
-    }
-    return this.executeStop(agentId, { text, createdAt: Date.now() }, {
-      notifyUser: true,
-      options,
-    });
-  }
-
-  /**
-   * 执行停止令（机械步骤，不经模型，§5）：
-   * 在停 → 砍早于本令的树 → dm 下发紧急件 / room 普通文本 → 等 stop-ack 或超时 → 停完了。
-   * 上级的令（notifyUser=false）走同一套，只是不写自己的对话线、最后回 stop-ack。
-   */
-  private async executeStop(
-    agentId: string,
-    stop: { text: string; createdAt: number },
-    opts: { notifyUser: boolean; options: SendOptions; replyTo?: { agentId: string; name: string } },
-  ): Promise<SendResult> {
-    const record = await this.registry.get(agentId);
-    const name = record?.name ?? '智能体';
-    const emit = opts.options.onEvent;
-
-    const persist = async (line: string): Promise<void> => {
-      if (!opts.notifyUser) return;
-      const message: Message = {
-        id: randomUUID(),
-        agentId,
-        role: 'assistant',
-        content: { type: 'text', text: line },
-        createdAt: Date.now(),
-        source: 'user',
-      };
-      await this.messages.append(message);
-      emit?.({ type: 'message', message });
-    };
-
-    await persist('好的，在停。');
-
-    // 只砍「早于本令」的 open 树：停止令之后用户新开的事不受牵连
-    const targets = [...this.trees.values()].filter(
-      (tree) => tree.agentId === agentId && tree.status === 'open' && tree.createdAt < stop.createdAt,
-    );
-    const dmChildren: Array<{ agentId: string; treeId: string }> = [];
-    const roomChildren: Array<{ roomId?: string }> = [];
-    for (const tree of targets) {
-      tree.status = 'cancelling';
-      for (const job of tree.jobs) job.abort();
-      for (const child of tree.children) {
-        if (child.via === 'dm') dmChildren.push({ agentId: child.agentId, treeId: tree.id });
-        else roomChildren.push({ roomId: child.roomId });
-      }
-    }
-
-    for (const child of dmChildren) {
-      await this.inbox.enqueue({
-        toAgentId: child.agentId,
-        fromAgentId: agentId,
-        fromName: name,
-        text: '停止令：把手上正在做的活停掉。',
-        priority: true,
-        depth: 0,
-        kind: 'stop',
-        treeId: child.treeId,
-      });
-    }
-    for (const child of roomChildren) {
-      if (!child.roomId) continue;
-      const message: RoomMessage = {
-        id: randomUUID(),
-        roomId: child.roomId,
-        roundId: randomUUID(),
-        senderKind: 'agent',
-        senderId: agentId,
-        senderName: name,
-        text: '先停，别继续了。',
-        mentions: [],
-        everyone: false,
-        createdAt: Date.now(),
-      };
-      await this.rooms.append(message);
-      opts.options.onRoomEvent?.({ type: 'room_message', message });
-    }
-
-    if (dmChildren.length > 0) {
-      await this.awaitStopAcks(agentId, dmChildren.length, this.options.stopAckTimeoutMs ?? 30_000);
-    }
-
-    for (const tree of targets) tree.status = 'cancelled';
-    await persist('停完了。');
-
-    if (opts.replyTo) {
-      await this.inbox.enqueue({
-        toAgentId: opts.replyTo.agentId,
-        fromAgentId: agentId,
-        fromName: name,
-        text: '已停。',
-        priority: true,
-        depth: 0,
-        kind: 'stop-ack',
-      });
-    }
-
-    return {
-      content: '停完了。',
-      iterations: 0,
-      stopReason: 'stopped',
-      agentId,
-      agentName: name,
-      context: {
-        agentId,
-        system: '',
-        messages: [],
-        stats: { sections: [], totalTokens: 0, budgetTokens: 0, generatedAt: Date.now() },
-        surfaced: [],
-        droppedRecent: 0,
-        droppedGroups: 0,
-      },
-      posts: [],
-      status: 'spoke',
-    };
-  }
-
-  /** 等下级的 stop-ack；信箱里的 ack 由这里消费，不会进模型 */
-  private async awaitStopAcks(agentId: string, expected: number, timeoutMs: number): Promise<void> {
-    const deadline = Date.now() + timeoutMs;
-    let acked = 0;
-    while (acked < expected && Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, 120));
-      const taken = await this.inbox
-        .take(agentId, (item) => item.kind === 'stop-ack')
-        .catch(() => []);
-      acked += taken.length;
-    }
-  }
-
-  /** 用户新句作废未答选项卡：不当答案，也不留悬挂卡片 */
-  private async voidPendingInteractions(
-    agentId: string,
-    emit?: AgentEventHandler,
-  ): Promise<void> {
-    const pending = this.broker.list({ agentId });
-    for (const request of pending) {
-      this.broker.cancel(request.id);
-      emit?.({ type: 'interaction_closed', id: request.id, answered: false });
-    }
   }
 
   // ── 群回合：扇出叫醒 ────────────────────────────────
@@ -827,29 +681,11 @@ export class AgentRuntime {
     // 停止令优先处理（§4.3）：先砍自己这棵再回报；普通信照旧
     const stops = items.filter((item) => item.kind === 'stop');
     for (const stop of stops) {
-      const runningId = this.runningTurnByAgent.get(agentId);
-      const running = runningId ? this.turns.get(runningId) : undefined;
-      const childStop = {
-        text: stop.text,
-        createdAt: stop.createdAt,
-      };
-      const replyTo = { agentId: stop.fromAgentId, name: stop.fromName };
-      if (running && running.source === 'user' && running.status === 'running') {
-        // 下级也保护正在进行的用户回合：排到回合结束再停
-        const queue = this.pendingStops.get(agentId) ?? [];
-        queue.push({
-          text: childStop.text,
-          createdAt: childStop.createdAt,
-          options: {},
-          notifyUser: false,
-          replyTo,
-        });
-        this.pendingStops.set(agentId, queue);
-      } else {
-        await this.executeStop(agentId, childStop, { notifyUser: false, options: {}, replyTo }).catch(
-          () => undefined,
-        );
-      }
+      await this.stopCoordinator.stopFromParent(
+        agentId,
+        { text: stop.text, createdAt: stop.createdAt },
+        { agentId: stop.fromAgentId, name: stop.fromName },
+      );
     }
 
     const letters = items.filter((item) => item.kind !== 'stop' && item.kind !== 'stop-ack');
@@ -1086,7 +922,7 @@ export class AgentRuntime {
       tree.jobs = tree.jobs.filter((job) => job.label !== 'turn');
 
       // 收尾顺序（见 docs/架构设计.md「插话、停止和等待」 优先级）：停止令 → 欠账续跑 → 同事来信
-      await this.processPendingStops(agentId).catch(() => undefined);
+      await this.stopCoordinator.processPendingStops(agentId).catch(() => undefined);
       void this.resumeOwed(agentId).catch(() => undefined);
       const pending = await this.inbox.count(agentId).catch(() => 0);
       if (pending > 0) {
@@ -1156,38 +992,6 @@ export class AgentRuntime {
     }
   }
 
-  private async processPendingStops(agentId: string): Promise<void> {
-    const queue = this.pendingStops.get(agentId);
-    if (!queue || queue.length === 0) return;
-    this.pendingStops.set(agentId, []);
-    for (const stop of queue) {
-      const result = await this.executeStop(
-        agentId,
-        { text: stop.text, createdAt: stop.createdAt },
-        { notifyUser: stop.notifyUser, options: stop.options, replyTo: stop.replyTo },
-      ).catch(() => undefined);
-      stop.resolve?.(
-        result ?? {
-          content: '停完了。',
-          iterations: 0,
-          stopReason: 'stopped',
-          agentId,
-          agentName: agentId,
-          context: {
-            agentId,
-            system: '',
-            messages: [],
-            stats: { sections: [], totalTokens: 0, budgetTokens: 0, generatedAt: Date.now() },
-            surfaced: [],
-            droppedRecent: 0,
-            droppedGroups: 0,
-          },
-          posts: [],
-          status: 'spoke',
-        },
-      );
-    }
-  }
 
   private async touchSurfaced(refs: MemoryRef[]): Promise<void> {
     const byScope = new Map<string, { scope: MemoryScope; ownerId: string; ids: string[] }>();
