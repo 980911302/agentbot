@@ -35,7 +35,7 @@ git add -A && git commit -m "feat(ui): 侧边栏右键删除智能体/解散群�
 - Modify: `src/server/runtime.ts`（SendOptions.onDelta → send → runTurn → AgentLoop）
 - Test: `test/provider-stream.test.ts`、`test/agent-loop-delta.test.ts`
 
-- [ ] **Step 1: provider 流式解析的失败测试**
+- [x] **Step 1: provider 流式解析的失败测试**
 
 ```ts
 // test/provider-stream.test.ts
@@ -85,7 +85,7 @@ test('chat with onDelta parses SSE stream: deltas, content, tool calls, usage', 
 
 Run: `npx tsx --test test/provider-stream.test.ts` → FAIL（onDelta 不存在 / 类型错误）
 
-- [ ] **Step 2: agent-loop delta 顺序的失败测试**
+- [x] **Step 2: agent-loop delta 顺序的失败测试**
 
 ```ts
 // test/agent-loop-delta.test.ts
@@ -131,7 +131,7 @@ test('AgentLoop emits delta events before the persisted message', async () => {
 
 Run: `npx tsx --test test/agent-loop-delta.test.ts` → FAIL（AgentLoopDeps 无 onDelta）
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 `src/llm/provider.ts` 的 `ChatOptions` 加：
 
@@ -272,8 +272,8 @@ return this.runTurn(agentId, task, { brief: undefined, onDelta: options.onDelta 
 
 `runTurn` 的 turn 参数类型加 `onDelta?: (text: string) => void;`，构造 `AgentLoop` 时加 `onDelta: turn.onDelta,`。**群路径（postToRoom 的各波 runTurn 调用）不传 onDelta。**
 
-- [ ] **Step 4: 两个测试跑绿，然后 `npm test && npm run typecheck`**
-- [ ] **Step 5: Commit**
+- [x] **Step 4: 两个测试跑绿，然后 `npm test && npm run typecheck`**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/llm src/agent src/server/runtime.ts test/ && git commit -m "feat(llm): 私聊真流式 —— provider SSE 解析 + AgentEvent delta"
@@ -400,7 +400,7 @@ export async function renameRoom(roomId: string, name: string): Promise<void> {
 
 ### Task 7: 收尾验证
 
-- [ ] `npm test`、`npm run typecheck`、`npm run build`、`npm --prefix web run build` 全绿
+- [x] `npm test`、`npm run typecheck`、`npm run build`、`npm --prefix web run build` 全绿
 - [ ] `git log --oneline` 核对分批提交完整；最终汇报
 
 ---
