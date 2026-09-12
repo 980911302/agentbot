@@ -1,4 +1,6 @@
+import { existsSync, realpathSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { AgentRuntime } from './server/runtime.js';
 import { createAgentTools } from './server/tools.js';
 import { resolveConfig } from './config.js';
@@ -142,7 +144,16 @@ async function main(): Promise<void> {
   console.log(`\n(${result.iterations} 轮 · ${result.stopReason})`);
 }
 
-main().catch((error: unknown) => {
-  console.error(error instanceof Error ? (error.stack ?? error.message) : error);
-  process.exitCode = 1;
-});
+// 只有作为 CLI 入口直接执行时才启动；被 import 只拿公共导出（E1 验收：导入不隐式启动）
+const invokedAsScript = (() => {
+  const entry = process.argv[1];
+  if (!entry || !existsSync(entry)) return false;
+  return import.meta.url === pathToFileURL(realpathSync(entry)).href;
+})();
+
+if (invokedAsScript) {
+  main().catch((error: unknown) => {
+    console.error(error instanceof Error ? (error.stack ?? error.message) : error);
+    process.exitCode = 1;
+  });
+}
