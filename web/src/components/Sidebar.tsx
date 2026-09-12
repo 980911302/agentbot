@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { IconGrid, IconPlus, IconSearch, IconTrash } from '../icons';
+import { IconCompose, IconGrid, IconPlus, IconSearch, IconTrash } from '../icons';
 import { BotAvatar } from './BotAvatar';
 
 export interface ChannelItem {
@@ -19,12 +19,15 @@ export interface ChannelItem {
 
 interface SidebarProps {
   channels: ChannelItem[];
-  activeId: string | null;
+  activeId: string;
   onSelect: (id: string) => void;
   onNew: () => void;
   onOpenMarket: () => void;
   onOpenProfile: () => void;
   onDelete: (channel: ChannelItem) => void;
+  /** 右键编辑智能体资料 / 右键重命名群 */
+  onEdit: (channel: ChannelItem) => void;
+  onRename: (channel: ChannelItem) => void;
 }
 
 interface MenuState {
@@ -34,7 +37,7 @@ interface MenuState {
 }
 
 const MENU_WIDTH = 196;
-const MENU_HEIGHT = 104;
+const MENU_HEIGHT = 190;
 
 export function Sidebar({
   channels,
@@ -44,6 +47,8 @@ export function Sidebar({
   onOpenMarket,
   onOpenProfile,
   onDelete,
+  onEdit,
+  onRename,
 }: SidebarProps) {
   const [query, setQuery] = useState('');
   const [menu, setMenu] = useState<MenuState | null>(null);
@@ -217,6 +222,35 @@ export function Sidebar({
             <span className="context-menu-kind">{menu.channel.isGroup ? '群' : '智能体'}</span>
           </div>
           <div className="menu-divider" />
+          {menu.channel.isGroup ? (
+            <button
+              type="button"
+              className="context-menu-row"
+              role="menuitem"
+              onClick={() => {
+                const target = menu.channel;
+                closeMenu();
+                onRename(target);
+              }}
+            >
+              <IconCompose size={15} />
+              <span>重命名</span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="context-menu-row"
+              role="menuitem"
+              onClick={() => {
+                const target = menu.channel;
+                closeMenu();
+                onEdit(target);
+              }}
+            >
+              <IconCompose size={15} />
+              <span>编辑智能体</span>
+            </button>
+          )}
           <button
             type="button"
             className="context-menu-row danger"

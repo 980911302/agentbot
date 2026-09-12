@@ -53,6 +53,19 @@ export async function deleteBot(id: string): Promise<void> {
   await request(`/api/bots/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
 
+/** 编辑智能体资料：名字 / 职责（instructions）/ 配色 */
+export async function updateBot(
+  id: string,
+  input: { name?: string; instructions?: string; color?: string },
+): Promise<BotSummary> {
+  const data = await request<{ bot: BotSummary }>(`/api/bots/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  return data.bot;
+}
+
 export async function fetchSessions(botId: string): Promise<SessionSummary[]> {
   const data = await request<{ sessions: SessionSummary[] }>(
     `/api/sessions?botId=${encodeURIComponent(botId)}`,
@@ -181,6 +194,14 @@ export async function updateRoomMembers(roomId: string, memberIds: string[]): Pr
 
 export async function deleteRoom(roomId: string): Promise<void> {
   await request(`/api/rooms/${encodeURIComponent(roomId)}`, { method: 'DELETE' });
+}
+
+export async function renameRoom(roomId: string, name: string): Promise<void> {
+  await request(`/api/rooms/${encodeURIComponent(roomId)}`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ name }),
+  });
 }
 
 export interface RoomHandlers {

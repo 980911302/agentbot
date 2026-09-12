@@ -77,6 +77,8 @@ export interface BotSummary {
   /** 一行简介 */
   title?: string;
   role: string;
+  /** 完整职责文本（进系统提示词的那份）；编辑资料时用 */
+  instructions?: string;
   color: string;
   avatar?: string;
   section?: string;

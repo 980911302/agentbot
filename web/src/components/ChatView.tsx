@@ -17,6 +17,8 @@ interface ChatViewProps {
   composer: ReactNode;
   channelTitle?: string;
   onToggleInfo?: () => void;
+  /** 私聊点标题打开智能体资料编辑 */
+  onOpenProfile?: () => void;
   /** 群回合：正在进入回合的成员 */
   roundActive?: { id: string; name: string; color: string } | null;
   /** 回合/回复刚结束的短暂绿勾 */
@@ -44,6 +46,7 @@ export function ChatView({
   composer,
   channelTitle,
   onToggleInfo,
+  onOpenProfile,
   roundActive,
   doneFlash,
   silentNotes,
@@ -147,7 +150,12 @@ export function ChatView({
               </span>
             ) : null}
           </div>
-          <div className="chat-header-title-box">
+          <div
+            className={`chat-header-title-box${onOpenProfile ? ' clickable' : ''}`}
+            onClick={onOpenProfile}
+            role={onOpenProfile ? 'button' : undefined}
+            title={onOpenProfile ? '编辑智能体资料' : undefined}
+          >
             <h2 className="chat-header-title">{title}</h2>
             {isGroup && members.length > 0 ? (
               <span className="chat-header-subtitle">

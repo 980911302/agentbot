@@ -6,6 +6,8 @@ import { Composer } from './components/Composer';
 import { SettingsDialog } from './components/SettingsDialog';
 import { CreateDialog } from './components/CreateDialog';
 import { ConfirmDialog } from './components/ConfirmDialog';
+import { BotProfileDialog } from './components/BotProfileDialog';
+import { RenameDialog } from './components/RenameDialog';
 import { MemberPanel } from './components/MemberPanel';
 import { MemoryPanel } from './components/MemoryPanel';
 import { InteractionCard } from './components/InteractionCard';
@@ -198,6 +200,9 @@ export default function App() {
   /** 右键菜单选中的待删对象，确认后才真正动手 */
   const [pendingDelete, setPendingDelete] = useState<ChannelItem | null>(null);
   const [deleting, setDeleting] = useState(false);
+  /** 正在编辑资料的智能体 / 正在改名的群 */
+  const [editingBot, setEditingBot] = useState<BotSummary | null>(null);
+  const [renamingChannel, setRenamingChannel] = useState<ChannelItem | null>(null);
   const [model, setModel] = useState('');
   const abortRef = useRef<AbortController | null>(null);
   const prevBusyRef = useRef(false);
@@ -516,6 +521,50 @@ export default function App() {
       setDeleting(false);
     }
   }, [deleting, pendingDelete, syncWorkspace]);
+
+  /**
+   * 保存智能体资料（名字 / 职责 / 配色）。
+   * 成功就同步侧边栏与抽屉用的智能体表；失败把原因还给对话框展示。
+   */
+  const saveBotProfile = useCallback(
+    async (input: { name: string; instructions: string; color: string }) => {
+      if (!editingBot) return '没有正在编辑的智能体';
+      try {
+        const updated = await api.updateBot(editingBot.id, input);
+        setBackendAgents((current) =>
+          current.map((bot) => (bot.id === updated.id ? { ...bot, ...updated } : bot)),
+        );
+        setChannels((current) =>
+          current.map((item) =>
+            item.id === updated.id
+              ? { ...item, name: updated.name, color: updated.color, role: updated.role || item.role }
+              : item,
+          ),
+        );
+        return null;
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+    },
+    [editingBot],
+  );
+
+  /** 群改名：群有独立的 PATCH；智能体改名走资料编辑 */
+  const submitRoomRename = useCallback(
+    async (name: string) => {
+      if (!renamingChannel) return '没有正在改名的群';
+      try {
+        await api.renameRoom(renamingChannel.id, name);
+        setChannels((current) =>
+          current.map((item) => (item.id === renamingChannel.id ? { ...item, name } : item)),
+        );
+        return null;
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+    },
+    [renamingChannel],
+  );
 
   const send = useCallback(
     async (text: string) => {
@@ -865,6 +914,15 @@ export default function App() {
           if (busy) return;
           setPendingDelete(channel);
         }}
+        onEdit={(channel) => {
+          if (busy) return;
+          const bot = backendAgents.find((item) => item.id === channel.id) ?? null;
+          if (bot) setEditingBot(bot);
+        }}
+        onRename={(channel) => {
+          if (busy) return;
+          setRenamingChannel(channel);
+        }}
       />
 
       {/* 2. 主消息区 */}
@@ -885,6 +943,14 @@ export default function App() {
         roundActive={roundActive}
         doneFlash={doneFlash}
         silentNotes={silentNotes[activeChannelId] ?? []}
+        onOpenProfile={
+          activeChannel.kind === 'room'
+            ? undefined
+            : () => {
+                const bot = backendAgents.find((item) => item.id === activeChannel.id) ?? null;
+                if (bot) setEditingBot(bot);
+              }
+        }
       />
 
       {/* 3. 右侧抽屉：Bot 的屏幕 / 它的记忆 */}
@@ -1020,6 +1086,21 @@ export default function App() {
         onConfirm={() => void confirmDelete()}
         onCancel={() => setPendingDelete(null)}
       />
+
+      <BotProfileDialog
+        bot={editingBot}
+        onClose={() => setEditingBot(null)}
+        onSave={saveBotProfile}
+      />
+
+      {renamingChannel ? (
+        <RenameDialog
+          title="重命名群"
+          initial={renamingChannel.name}
+          onClose={() => setRenamingChannel(null)}
+          onSubmit={submitRoomRename}
+        />
+      ) : null}
     </div>
   );
 }

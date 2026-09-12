@@ -809,6 +809,8 @@ async function toBotView(runtime: AgentRuntime, record: AgentRecord) {
     name: record.name,
     title: record.title,
     role: record.title || record.instructions.slice(0, 30),
+    /** 完整职责文本，资料编辑要用；role 只是展示截断 */
+    instructions: record.instructions,
     color: record.color,
     status: runtime.isBusy(record.id) ? 'working' : 'idle',
     activity: '',
