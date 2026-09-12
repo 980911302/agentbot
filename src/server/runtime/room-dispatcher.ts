@@ -1,25 +1,29 @@
 import { randomUUID } from 'node:crypto';
-import { DEFAULT_OWNER_NAME, DEFAULT_STOP_WORDS, isStopSentence } from '../../config.js';
+import { isStopSentence } from '../../config.js';
 import type { Message } from '../../shared/contracts/sse.js';
 import type { AgentRecord } from '../../agent/types.js';
 import type { RoomMemberLike } from '../../room/member.js';
-import { resolveMentions, stripMentions } from '../../room/mentions.js';
+import { resolveMentions, stripMentions, type MentionResult } from '../../room/mentions.js';
 import { SummonQueue } from '../../room/summon.js';
 import { buildRoomBrief, decideRoomPosts } from '../../room/turn.js';
 import type { RoomMessage, RoundOutcome } from '../../room/types.js';
 import type { RoomRoundSummary, SendOptions } from './types.js';
 import { ROOM_MAX_RUNS_PER_MEMBER, ROOM_POST_LIMIT_PER_TURN } from '../../room/types.js';
+import type { AgentInbox, InboxItem } from '../../agent/inbox.js';
 
 /**
- * RoomDispatcher（E2.2 拆出）：用户往群里发一条 → 扇出给全体成员。
+ * RoomDispatcher（E2.2 拆出，E3.7 改可靠投递）：用户往群里发一条 → 扇出给全体成员。
  *
- * 分三波（参见 docs/架构设计.md「群与同事协作」）：
+ * 点名按**发送时的完整成员快照**解析（忙不忙不影响谁被点名）；
+ * 空闲成员按三波召唤跑回合，**忙碌成员改为排队**（写进收件箱、等它空下来处理），
+ * 不再静默跳过丢信；离群或群解散后，排队的投递在领取时撤销。
+ *
+ * 三波（参见 docs/架构设计.md「群与同事协作」）：
  *   波次 1  被点名的人              串行 —— 后者要能看到前者发言
  *   波次 2  在场但未被点名的人       并行 —— 互相看不见
  *   波次 3  被同事发言再次 @ 的人    串行，受 ROOM_MAX_RUNS_PER_MEMBER 约束
  *
  * `@` 是强信号不是投递开关：没被点名的一样进这一轮，只是不强制开口。
- * 回合执行经 runTurn 接缝注入（RunExecutor 在 E2.2e 落地）。
  */
 export class RoomDispatcher {
   constructor(
@@ -27,6 +31,7 @@ export class RoomDispatcher {
       registry: import('../../agent/registry.js').AgentRegistry;
       rooms: import('../../room/store.js').RoomStore;
       messages: import('../../store/messages.js').MessageStore;
+      inbox: AgentInbox;
       /** 与 runtime 共享的忙闲锁（引用传入） */
       locks: Set<string>;
       membersOf: (roomId: string) => Promise<{
@@ -54,6 +59,8 @@ export class RoomDispatcher {
         },
         options: SendOptions,
       ) => Promise<{ content: string; usedTools?: string[] }>;
+      /** 唤醒空闲成员去处理刚排队的投递（忙的人由它自己的回合收尾接手） */
+      drainInbox?: (agentId: string, options: SendOptions) => void;
     },
   ) {}
 
@@ -66,31 +73,18 @@ export class RoomDispatcher {
     if (!room) throw new Error(`Unknown room: ${roomId}`);
     if (members.length === 0) throw new Error('房间没有成员');
 
-    // 正在进行别的回合的成员不能被打断；工作台代发时还要排除调用者自己
-    const exclude = new Set(options.excludeAgentIds ?? []);
-    const skipped: string[] = [];
-    const active = members.filter((record) => {
-      if (exclude.has(record.id)) return false;
-      if (this.deps.locks.has(record.id)) {
-        skipped.push(record.name);
-        return false;
-      }
-      return true;
-    });
-    if (active.length === 0) throw new Error('房间里没有可叫醒的成员（其他人正忙）');
-
-    const memberLike: RoomMemberLike[] = active.map((record) => ({
+    // 点名按完整成员快照解析（E3.7）：忙碌与否不影响谁被点到
+    const snapshot: RoomMemberLike[] = members.map((record) => ({
       id: record.id,
       name: record.name,
       color: record.color,
     }));
-    const byId = new Map(active.map((record) => [record.id, record]));
-
-    const mentions = resolveMentions(text, memberLike);
+    const mentions = resolveMentions(text, snapshot);
     const roundId = randomUUID();
     const ownerName = options.ownerName ?? this.deps.ownerNameFallback;
-    // 群里的停止令：不能紧急下发，被点名者下一轮从简报里知道
+    // 群里的停止令：不能紧急下发，被点名者从简报里知道
     const stopRequested = isStopSentence(text, this.deps.stopWords);
+    const stripped = stripMentions(text, snapshot);
 
     const inbound: RoomMessage = {
       id: randomUUID(),
@@ -108,10 +102,11 @@ export class RoomDispatcher {
     await this.deps.rooms.append(inbound);
     options.onRoomEvent?.({ type: 'room_message', message: inbound });
 
-    // 入站消息写进每个成员自己的对话线（私聊与群聊是同一条线）
-    const stripped = stripMentions(text, memberLike);
+    // 工作台代发时排除调用者自己；其余在场成员都记进各自对话线（忙的也记，等它空下来看）
+    const exclude = new Set(options.excludeAgentIds ?? []);
+    const roster = members.filter((record) => !exclude.has(record.id));
     await Promise.all(
-      active.map((member) =>
+      roster.map((member) =>
         this.deps.messages.append({
           id: randomUUID(),
           agentId: member.id,
@@ -126,99 +121,114 @@ export class RoomDispatcher {
       ),
     );
 
-    const queue = new SummonQueue(
-      memberLike.map((item) => item.id),
-      mentions,
-      ROOM_MAX_RUNS_PER_MEMBER,
-    );
+    // 忙的排队（E3.7：不丢信），空闲的进这一轮波次
+    const queued: string[] = [];
+    const active: AgentRecord[] = [];
+    for (const record of roster) {
+      if (!this.deps.locks.has(record.id)) {
+        active.push(record);
+        continue;
+      }
+      queued.push(record.name);
+      await this.deps.inbox.enqueue({
+        toAgentId: record.id,
+        fromAgentId: 'owner',
+        fromName: ownerName,
+        text: stripped,
+        priority: false,
+        depth: 0,
+        kind: 'room',
+        room: {
+          roomId,
+          roomName: room.name,
+          roundId,
+          speaker: ownerName,
+          summoned: mentions.everyone || mentions.ids.includes(record.id),
+          everyone: mentions.everyone,
+          stopRequested,
+        },
+        correlationId: roundId,
+      });
+    }
+
+    const memberLike: RoomMemberLike[] = active.map((record) => ({
+      id: record.id,
+      name: record.name,
+      color: record.color,
+    }));
+    const byId = new Map(active.map((record) => [record.id, record]));
     const outcomes: RoundOutcome[] = [];
     /** 本轮已公开的发言，喂给后开口的人，避免重复 */
     const roundPosts: Array<{ speaker: string; text: string }> = [];
 
-    const fanOut = async (agentId: string): Promise<void> => {
-      const member = byId.get(agentId);
-      if (!member) return;
+    if (memberLike.length > 0) {
+      const queue = new SummonQueue(
+        memberLike.map((item) => item.id),
+        mentions,
+        ROOM_MAX_RUNS_PER_MEMBER,
+      );
 
-      // 同步占名额：并行派发时同波次的人必须先登记，否则互相 @ 会漏掉
-      const runIndex = queue.reserve(agentId);
-      if (runIndex > ROOM_MAX_RUNS_PER_MEMBER) return;
+      const fanOut = async (agentId: string): Promise<void> => {
+        const member = byId.get(agentId);
+        if (!member) return;
 
-      options.onRoomEvent?.({ type: 'round_start', roundId, agentId, agentName: member.name });
+        // 同步占名额：并行派发时同波次的人必须先登记，否则互相 @ 会漏掉
+        const runIndex = queue.reserve(agentId);
+        if (runIndex > ROOM_MAX_RUNS_PER_MEMBER) return;
 
-      const outcome = await this.runRoomTurn({
-        roomId,
-        roomName: room.name,
-        roundId,
-        member,
-        members: memberLike,
-        inbound,
-        summoned: queue.isSummoned(agentId),
-        everyone: queue.mentionsFor(agentId).everyone,
-        recallCount: runIndex,
-        roundPosts: [...roundPosts],
-        stopRequested: stopRequested && queue.isSummoned(agentId),
-        options,
-      });
-      outcomes.push(outcome);
-      options.onRoomEvent?.({ type: 'round_end', outcome });
+        options.onRoomEvent?.({ type: 'round_start', roundId, agentId, agentName: member.name });
 
-      for (const post of outcome.posts) {
-        // 每条发言都重新解析点名：成员之间的 @ 也要能叫醒人
-        const postMentions = resolveMentions(post, memberLike);
-        const posted: RoomMessage = {
-          id: randomUUID(),
+        const outcome = await this.runRoomTurn({
           roomId,
+          roomName: room.name,
           roundId,
-          senderKind: 'agent',
-          senderId: member.id,
-          senderName: member.name,
-          senderColor: member.color,
-          text: post,
-          mentions: postMentions.ids,
-          everyone: postMentions.everyone,
-          createdAt: Date.now(),
-        };
-        await this.deps.rooms.append(posted);
-        options.onRoomEvent?.({ type: 'room_message', message: posted });
-        roundPosts.push({ speaker: member.name, text: post });
+          member,
+          members: memberLike,
+          inbound,
+          summoned: queue.isSummoned(agentId),
+          everyone: queue.mentionsFor(agentId).everyone,
+          recallCount: runIndex,
+          roundPosts: [...roundPosts],
+          stopRequested: stopRequested && queue.isSummoned(agentId),
+          options,
+        });
+        outcomes.push(outcome);
+        options.onRoomEvent?.({ type: 'round_end', outcome });
 
-        await Promise.all(
-          active
-            .filter((other) => other.id !== member.id)
-            .map((other) =>
-              this.deps.messages.append({
-                id: randomUUID(),
-                agentId: other.id,
-                role: 'user',
-                content: { type: 'text', text: post },
-                createdAt: posted.createdAt,
-                roomId,
-                roomName: room.name,
-                speaker: member.name,
-                source: 'room',
-              }),
-            ),
-        );
+        if (outcome.posts.length > 0) {
+          // 每条发言都重新解析点名：成员之间的 @ 也要能叫醒人
+          const posted = await this.publishMemberPosts({
+            roomId,
+            roomName: room.name,
+            roundId,
+            member,
+            color: member.color,
+            posts: outcome.posts,
+            members: memberLike,
+            options,
+          });
+          for (const entry of posted) {
+            roundPosts.push({ speaker: member.name, text: entry.text });
+            queue.summonFrom(entry.mentions, member.id);
+          }
+        }
+      };
 
-        // 被同事点名的人排进队列，稍后单独跑一轮
-        queue.summonFrom(postMentions, member.id);
+      // 波次 1：被点名者，串行
+      for (const agentId of queue.initiallySummoned()) await fanOut(agentId);
+
+      // 波次 2：在场未点名者，并行（同波次互相看不见，但能看到波次 1 的发言）
+      const bystanders = queue.bystanders();
+      if (bystanders.length > 0) {
+        await Promise.all(bystanders.map((agentId) => fanOut(agentId)));
       }
-    };
 
-    // 波次 1：被点名者，串行
-    for (const agentId of queue.initiallySummoned()) await fanOut(agentId);
-
-    // 波次 2：在场未点名者，并行（同波次互相看不见，但能看到波次 1 的发言）
-    const bystanders = queue.bystanders();
-    if (bystanders.length > 0) {
-      await Promise.all(bystanders.map((agentId) => fanOut(agentId)));
-    }
-
-    // 波次 3：同事发言引发的新召唤，串行直到队列空或达每人上限
-    while (queue.hasWaiting) {
-      const agentId = queue.next();
-      if (!agentId) break;
-      await fanOut(agentId);
+      // 波次 3：同事发言引发的新召唤，串行直到队列空或达每人上限
+      while (queue.hasWaiting) {
+        const agentId = queue.next();
+        if (!agentId) break;
+        await fanOut(agentId);
+      }
     }
 
     const spoke = outcomes.filter((item) => item.status === 'spoke').length;
@@ -229,7 +239,202 @@ export class RoomDispatcher {
       silent: outcomes.length - spoke,
     });
 
-    return { roundId, roomId, roomName: room.name, outcomes, skipped };
+    return { roundId, roomId, roomName: room.name, outcomes, queued };
+  }
+
+  /**
+   * 延迟回合（E3.7）：忙碌成员空下来后处理排队的群消息。
+   * 群没了或人已经不在群里 → 撤销这条投递（不跑模型，直接确认）。
+   */
+  async deliverQueued(item: InboxItem, options: SendOptions = {}): Promise<RoundOutcome> {
+    const context = item.room;
+    const startedAt = Date.now();
+    if (!context) throw new Error('room 投递缺少群上下文');
+
+    const { room, members } = await this.deps.membersOf(context.roomId);
+    const memberLike: RoomMemberLike[] = members.map((record) => ({
+      id: record.id,
+      name: record.name,
+      color: record.color,
+    }));
+    const member = members.find((record) => record.id === item.toAgentId);
+    if (!room || !member) {
+      return {
+        roundId: context.roundId,
+        roomId: context.roomId,
+        agentId: item.toAgentId,
+        agentName: item.fromName,
+        status: 'silent',
+        posts: [],
+        note: room ? '已经不在这个群里，撤销这条投递' : '群已经不存在，撤销这条投递',
+        durationMs: Date.now() - startedAt,
+      };
+    }
+
+    const inbound: RoomMessage = {
+      id: randomUUID(),
+      roomId: context.roomId,
+      roundId: context.roundId,
+      senderKind: 'user',
+      senderId: 'owner',
+      senderName: context.speaker,
+      text: item.text,
+      mentions: [],
+      everyone: context.everyone ?? false,
+      createdAt: item.createdAt,
+    };
+    // 同一轮里别人已经说过的话：从群时间线取（晚到的人也要接得上）
+    const recent = await this.deps.rooms.messages(context.roomId, 20).catch(() => []);
+    const roundPosts = recent
+      .filter((message) => message.roundId === context.roundId && message.senderKind === 'agent')
+      .map((message) => ({ speaker: message.senderName, text: message.text }));
+
+    options.onRoomEvent?.({
+      type: 'round_start',
+      roundId: context.roundId,
+      agentId: member.id,
+      agentName: member.name,
+    });
+    const outcome = await this.runRoomTurn({
+      roomId: context.roomId,
+      roomName: context.roomName,
+      roundId: context.roundId,
+      member,
+      members: memberLike,
+      inbound,
+      summoned: context.summoned,
+      everyone: context.everyone ?? false,
+      recallCount: 1,
+      roundPosts,
+      stopRequested: context.stopRequested === true && context.summoned,
+      options,
+    });
+    options.onRoomEvent?.({ type: 'round_end', outcome });
+
+    if (outcome.posts.length > 0) {
+      const posted = await this.publishMemberPosts({
+        roomId: context.roomId,
+        roomName: context.roomName,
+        roundId: context.roundId,
+        member,
+        color: member.color,
+        posts: outcome.posts,
+        members: memberLike,
+        options,
+      });
+      await this.queueRoundMentions({
+        roomId: context.roomId,
+        roomName: context.roomName,
+        roundId: context.roundId,
+        speaker: member,
+        entries: posted,
+        members: memberLike,
+      });
+    }
+
+    return outcome;
+  }
+
+  /** 把某个成员的公开发言落到群里：时间线 + 其他成员对话线 + 事件（发言者自己那条由 runRoomTurn 写） */
+  private async publishMemberPosts(input: {
+    roomId: string;
+    roomName: string;
+    roundId: string;
+    member: AgentRecord;
+    color?: string;
+    posts: string[];
+    members: RoomMemberLike[];
+    options: SendOptions;
+  }): Promise<Array<{ mentions: MentionResult; messageId: string; text: string }>> {
+    const published: Array<{ mentions: MentionResult; messageId: string; text: string }> = [];
+    for (const post of input.posts) {
+      const postMentions = resolveMentions(post, input.members);
+      const message: RoomMessage = {
+        id: randomUUID(),
+        roomId: input.roomId,
+        roundId: input.roundId,
+        senderKind: 'agent',
+        senderId: input.member.id,
+        senderName: input.member.name,
+        senderColor: input.color,
+        text: post,
+        mentions: postMentions.ids,
+        everyone: postMentions.everyone,
+        createdAt: Date.now(),
+      };
+      await this.deps.rooms.append(message);
+      input.options.onRoomEvent?.({ type: 'room_message', message });
+      published.push({ mentions: postMentions, messageId: message.id, text: post });
+
+      await Promise.all(
+        input.members
+          .filter((other) => other.id !== input.member.id)
+          .map((other) =>
+            this.deps.messages.append({
+              id: randomUUID(),
+              agentId: other.id,
+              role: 'user',
+              content: { type: 'text', text: post },
+              createdAt: message.createdAt,
+              roomId: input.roomId,
+              roomName: input.roomName,
+              speaker: input.member.name,
+              source: 'room',
+            }),
+          ),
+      );
+    }
+    return published;
+  }
+
+  /**
+   * 延迟回合里被点到的人：转成新的排队投递。
+   * 配额看「本轮已经排在收件箱里的投递数」——持久在投递上，重投不会凭空重置。
+   */
+  private async queueRoundMentions(input: {
+    roomId: string;
+    roomName: string;
+    roundId: string;
+    speaker: AgentRecord;
+    entries: Array<{ mentions: MentionResult; text: string }>;
+    members: RoomMemberLike[];
+  }): Promise<string[]> {
+    const queued: string[] = [];
+    for (const entry of input.entries) {
+      const targets = entry.mentions.everyone
+        ? input.members.map((member) => member.id)
+        : entry.mentions.ids;
+      for (const targetId of targets) {
+        if (targetId === input.speaker.id) continue;
+        if (!input.members.some((member) => member.id === targetId)) continue;
+        const outstanding = (await this.deps.inbox.peek(targetId)).filter(
+          (delivery) => delivery.kind === 'room' && delivery.room?.roundId === input.roundId,
+        ).length;
+        if (outstanding >= ROOM_MAX_RUNS_PER_MEMBER) continue;
+        await this.deps.inbox.enqueue({
+          toAgentId: targetId,
+          fromAgentId: input.speaker.id,
+          fromName: '群消息',
+          text: stripMentions(entry.text, input.members),
+          priority: false,
+          depth: 0,
+          kind: 'room',
+          room: {
+            roomId: input.roomId,
+            roomName: input.roomName,
+            roundId: input.roundId,
+            speaker: input.speaker.name,
+            summoned: true,
+            everyone: entry.mentions.everyone,
+          },
+          correlationId: input.roundId,
+        });
+        queued.push(targetId);
+        // 空闲的人立刻叫醒；忙的人由它自己的回合收尾接手
+        if (!this.deps.locks.has(targetId)) this.deps.drainInbox?.(targetId, {});
+      }
+    }
+    return queued;
   }
 
   private async runRoomTurn(input: {

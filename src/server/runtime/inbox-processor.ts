@@ -38,6 +38,8 @@ export class InboxProcessor {
         turn: { brief?: string; toolContext?: { agentChainDepth: number } },
         options: SendOptions,
       ) => Promise<TurnResult>;
+      /** 处理一条排队的群回合（E3.7）：忙碌成员空下来后把群消息补上 */
+      deliverRoom: (item: InboxItem, options: SendOptions) => Promise<unknown>;
       /** 领取期限（毫秒） */
       leaseMs?: number;
       /** 每封信的处理上限 */
@@ -78,7 +80,24 @@ export class InboxProcessor {
       );
     }
 
-    const letters = claimed.filter((item) => item.kind !== 'stop' && item.kind !== 'stop-ack');
+    // 排队的群回合（E3.7）：逐条处理、各自一个回合（不和普通信合并）
+    for (const item of claimed.filter((entry) => entry.kind === 'room')) {
+      try {
+        await this.deps.deliverRoom(item, options);
+        await this.deps.inbox.ack(agentId, [item.id]);
+      } catch (error) {
+        if (error instanceof AgentBusyError) {
+          // 忙不是失败：归还领取，等它空下来再处理
+          await this.deps.inbox.release(agentId, [item.id]);
+        } else {
+          await this.deps.inbox.nack(agentId, [item.id], messageOf(error), this.failureInput());
+        }
+      }
+    }
+
+    const letters = claimed.filter(
+      (item) => item.kind !== 'stop' && item.kind !== 'stop-ack' && item.kind !== 'room',
+    );
     if (letters.length === 0) return null;
 
     const record = await this.deps.registry.get(agentId);

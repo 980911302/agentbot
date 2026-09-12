@@ -67,6 +67,20 @@ export interface DeliveryCheckpoint {
   note?: string;
 }
 
+/** kind=room 时的群上下文：忙碌成员排队的那条群消息（E3.7） */
+export interface DeliveryRoomContext {
+  roomId: string;
+  roomName: string;
+  roundId: string;
+  /** 这条消息由谁触发（主人名或同事名） */
+  speaker: string;
+  /** 是否被点名（决定「必须开口」） */
+  summoned: boolean;
+  everyone?: boolean;
+  /** 触发文本是停止词：这一轮先停手 */
+  stopRequested?: boolean;
+}
+
 export interface DeliveryItem {
   id: string;
   toAgentId: string;
@@ -75,9 +89,11 @@ export interface DeliveryItem {
   text: string;
   priority: boolean;
   depth: number;
-  /** stop = 停止令（排最前、不进模型）；stop-ack = 下级回报；缺省 = 普通信 */
-  kind?: 'message' | 'stop' | 'stop-ack';
+  /** stop = 停止令（排最前、不进模型）；stop-ack = 下级回报；room = 排队的群回合；缺省 = 普通信 */
+  kind?: 'message' | 'stop' | 'stop-ack' | 'room';
   treeId?: string;
+  /** kind=room 的群上下文 */
+  room?: DeliveryRoomContext;
   createdAt: number;
   /** 原消息 / 关联引用：每封信保留作者与关联（E3.3） */
   messageId?: string;

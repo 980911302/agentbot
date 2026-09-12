@@ -140,8 +140,8 @@ export interface RoomRoundSummary {
   roomId: string;
   roomName: string;
   outcomes: RoundOutcome[];
-  /** 因为正在跑别的回合而跳过的成员名 */
-  skipped: string[];
+  /** 因为正在跑别的回合而排队的成员名（E3.7：不再跳过丢信，改为排队） */
+  queued: string[];
 }
 
 export class AgentBusyError extends Error {

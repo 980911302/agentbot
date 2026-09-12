@@ -31,6 +31,20 @@ export async function waitFor(
   }
 }
 
+/** 轮询异步条件（waitFor 只接受同步谓词；异步判断用这个） */
+export async function until(
+  predicate: () => Promise<boolean>,
+  what: string,
+  timeoutMs = 3000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (await predicate()) return;
+    if (Date.now() > deadline) throw new Error(`until 超时：${what}`);
+    await sleep(20);
+  }
+}
+
 export const sleep = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
 

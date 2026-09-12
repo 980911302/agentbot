@@ -158,24 +158,26 @@ export class AgentRuntime {
           called: summary.outcomes.length,
           spoke,
           silent: summary.outcomes.length - spoke,
-          skipped: summary.skipped,
+          queued: summary.queued,
         };
       },
     });
-
-
-
 
     this.roomDispatcher = new RoomDispatcher({
       registry: this.registry,
       rooms: this.rooms,
       messages: this.messages,
+      inbox: this.inbox,
       locks: this.locks,
       membersOf: (roomId) => this.membersOf(roomId),
       ownerNameFallback: options.ownerName ?? DEFAULT_OWNER_NAME,
       stopWords: options.stopWords ?? DEFAULT_STOP_WORDS,
       runTurn: (agentId, task, turn, options) =>
         this.runTurn(agentId, task, turn, options),
+      // 延迟回合里被点到且空闲的人：立刻叫醒（忙的由它自己的回合收尾接手）
+      drainInbox: (agentId, options) => {
+        void this.drainInbox(agentId, options).catch(() => undefined);
+      },
     });
 
 
@@ -198,6 +200,12 @@ export class AgentRuntime {
       stopCoordinator: this.stopCoordinator,
       runTurn: (agentId, task, turn, options) =>
         this.runTurn(agentId, task, { extraTools: [], ...turn }, options),
+      // 排队的群回合：事件按 roomId 归属（前端据此路由到群频道）
+      deliverRoom: (item, options) =>
+        this.roomDispatcher.deliverQueued(
+          item,
+          this.journaling(options, { roomId: item.room?.roomId ?? '' }),
+        ),
       leaseMs: options.deliveryLeaseMs,
       maxAttempts: options.deliveryMaxAttempts,
       baseDelayMs: options.deliveryBaseDelayMs,
@@ -577,7 +585,7 @@ export class AgentRuntime {
               phase: 'done',
               spoke,
               silent: summary.outcomes.length - spoke,
-              skipped: summary.skipped.length,
+              queued: summary.queued.length,
             };
           },
         ),
@@ -594,7 +602,7 @@ export class AgentRuntime {
       const existing = this.receivedStore.find(clientMessageId);
       if (existing) {
         // E3.2：重复提交不再扇出，直接按已处理返回
-        return { roundId: '', roomId, roomName: roomId, outcomes: [], skipped: [] };
+        return { roundId: '', roomId, roomName: roomId, outcomes: [], queued: [] };
       }
     }
     const summary = await this.roomDispatcher.postToRoom(roomId, text, options);
@@ -682,9 +690,11 @@ export class AgentRuntime {
           return `已投递给「${target?.name ?? targetId}」；发出去就结束，回复会作为之后的一个新回合回来。`;
         }
         const result = await this.workbench.postToRoom(callerId, targetId, text);
-        const skipped =
-          result.skipped.length > 0 ? `（${result.skipped.join('、')} 正忙，跳过）` : '';
-        return `已发到「${result.roomName}」，${result.called} 人进入回合：${result.spoke} 开口 / ${result.silent} 沉默${skipped}`;
+        const busyNote =
+          result.queued.length > 0
+            ? `（${result.queued.join('、')} 正忙，已排队等它空下来处理）`
+            : '';
+        return `已发到「${result.roomName}」，${result.called} 人进入回合：${result.spoke} 开口 / ${result.silent} 沉默${busyNote}`;
       },
     });
   }

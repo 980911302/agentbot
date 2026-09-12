@@ -19,7 +19,8 @@ export interface PostToRoomResult {
   called: number;
   spoke: number;
   silent: number;
-  skipped: string[];
+  /** 正忙、已排队等它空下来处理的成员名（E3.7：不再跳过丢信） */
+  queued: string[];
 }
 
 export interface WorkbenchDeps {
