@@ -39,9 +39,6 @@ export interface AgentServerHandle {
   close: () => Promise<void>;
 }
 
-/** 工具里要反查同事名；用软引用避免构造顺序上的循环依赖 */
-let runtimeRef: AgentRuntime | undefined;
-
 export async function createAgentServer(options: AgentServerOptions = {}): Promise<AgentServerHandle> {
   const rootDir = resolve(options.rootDir ?? process.cwd());
   const config = resolveConfig({ env: process.env, rootDir });
@@ -53,16 +50,11 @@ export async function createAgentServer(options: AgentServerOptions = {}): Promi
   const memoryStore = new MemoryStore(dataDir);
   const broker = new InteractionBroker();
   const secrets = new SecretStore(dataDir);
-  const tools = createAgentTools({
+  const { tools, bind } = createAgentTools({
     rootDir,
     memory: memoryStore,
     secrets,
     broker,
-    agentName: async (agentId) => (await runtimeRef?.registry.get(agentId))?.name ?? agentId,
-    updateAgent: async (agentId, patch) => {
-      if (!runtimeRef) throw new Error('runtime is not ready yet');
-      return runtimeRef.registry.update(agentId, patch);
-    },
     web: config.web,
   });
 
@@ -84,7 +76,11 @@ export async function createAgentServer(options: AgentServerOptions = {}): Promi
     secrets,
   });
 
-  runtimeRef = runtime;
+  // DI：工具需要的运行时回调在 runtime 建好后立即绑定（无模块级全局可变状态）
+  bind({
+    agentName: async (agentId) => (await runtime.registry.get(agentId))?.name ?? agentId,
+    updateAgent: (agentId, patch) => runtime.registry.update(agentId, patch),
+  });
 
   // 健康检查报全量工具面（常驻 + 平台层），而不是装配前的常驻子集
   const toolDefs = runtime.tools.map((tool) => ({ name: tool.name, description: tool.description }));

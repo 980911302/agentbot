@@ -1,73 +1,24 @@
-import { exec } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { defineTool, type ToolContext } from '../tool.js';
+import { defineTool } from '../tool.js';
+import { ShellSessionManager } from '../services/shell-session-manager.js';
 
 /**
- * Shell / AwaitShell —— 参见 docs/工具参考.md。
+ * Shell / AwaitShell —— 对齐《内置工具清单.md》1.6 / H. AwaitShell。
  *
  * 没有云电脑：命令直接跑在本机（AgentBot 本来就装在用户机器上）。
- * 安全边界靠两点：description 里明示、任务树 registerJob 让停止令能杀进程。
+ * 进程生命周期在 ShellSessionManager（services 层）；工具只做参数校验、
+ * 同步等待与展示。停止令经任务树 registerJob 能杀掉同一个进程。
  */
 
-interface BackgroundShell {
-  id: string;
-  command: string;
-  output: string;
-  done: boolean;
-  code: number | null;
-  kill: () => void;
-  startedAt: number;
-}
-
 const SYNC_WAIT_CAP_MS = 300_000;
-const MAX_OUTPUT_CHARS = 8000;
 
 export function createShellTools() {
-  const shells = new Map<string, BackgroundShell>();
+  const manager = new ShellSessionManager();
 
-  const clip = (text: string): string =>
-    text.length > MAX_OUTPUT_CHARS
-      ? `${text.slice(0, MAX_OUTPUT_CHARS / 2)}\n…（中间截断）…\n${text.slice(-MAX_OUTPUT_CHARS / 2)}`
-      : text;
-
-  const start = (command: string, cwd: string | undefined, context: ToolContext): BackgroundShell => {
-    const id = randomUUID();
-    const child = exec(command, { cwd, maxBuffer: 16 * 1024 * 1024 }, () => undefined);
-    const shell: BackgroundShell = {
-      id,
-      command,
-      output: '',
-      done: false,
-      code: null,
-      kill: () => {
-        try {
-          child.kill('SIGKILL');
-        } catch {
-          // 已经退出
-        }
-      },
-      startedAt: Date.now(),
-    };
-    child.stdout?.on('data', (chunk) => {
-      shell.output += String(chunk);
-    });
-    child.stderr?.on('data', (chunk) => {
-      shell.output += String(chunk);
-    });
-    child.on('close', (code) => {
-      shell.done = true;
-      shell.code = code;
-    });
-    context.turnState?.registerJob?.(() => shell.kill(), `shell:${id.slice(0, 8)}`);
-    shells.set(id, shell);
-    return shell;
-  };
-
-  const summarize = (shell: BackgroundShell): string => {
+  const summarize = (shell: ReturnType<ShellSessionManager['start']>): string => {
     const status = shell.done ? `已结束（exit ${shell.code ?? '?'}）` : '仍在后台运行';
     return `shell_id: ${shell.id}\n命令：${shell.command}\n状态：${status}\n输出：\n${
-      clip(shell.output) || '（暂无输出）'
+      manager.clip(shell.output) || '（暂无输出）'
     }`;
   };
 
@@ -100,7 +51,9 @@ export function createShellTools() {
       const cwd = args.working_directory?.trim() || undefined;
       if (cwd && !existsSync(cwd)) throw new Error(`working_directory 不存在：${cwd}`);
 
-      const started = start(command, cwd, context);
+      const started = manager.start(command, cwd, (abort, label) =>
+        context.turnState?.registerJob?.(abort, label),
+      );
       const requested = Math.max(0, args.block_until_ms ?? 30_000);
       const deadline = Date.now() + Math.min(requested, SYNC_WAIT_CAP_MS);
       while (!started.done && Date.now() < deadline) {
@@ -120,7 +73,7 @@ export function createShellTools() {
     description: [
       '等一个后台 Shell 结束（或等到输出里出现某个正则），再拿到全部输出。',
       '不要用它干等 Task 工人——那有 CheckSubagent。',
-      '不传 shell_id 就等最早启动的那个还没结束的。',
+      '不传 shell_id 就等最新启动、还没结束的那个。',
     ].join(' '),
     parameters: {
       type: 'object',
@@ -131,13 +84,9 @@ export function createShellTools() {
       },
     },
     async execute(args) {
-      const list = [...shells.values()].sort((left, right) => right.startedAt - left.startedAt);
-      const target = args.shell_id
-        ? shells.get(args.shell_id)
-        : list.find((item) => !item.done);
+      const target = args.shell_id ? manager.get(args.shell_id) : manager.latestRunning();
       if (!target) {
-        const known = list.slice(0, 5).map((item) => item.id.slice(0, 8)).join('、') || '（无）';
-        throw new Error(`找不到这个 shell_id；最近的 shell：${known}`);
+        throw new Error(`找不到这个 shell_id；最近的 shell：${manager.recentIds().join('、') || '（无）'}`);
       }
       const pattern = args.pattern ? new RegExp(args.pattern) : null;
       const deadline = Date.now() + Math.min(Math.max(args.block_until_ms ?? 30_000, 0), SYNC_WAIT_CAP_MS);

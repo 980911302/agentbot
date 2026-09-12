@@ -1,13 +1,11 @@
+import { copyFile, mkdir, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 
 /**
- * 把文件投递到用户磁盘。
+ * ArtifactService（E2.3）：产物/附件的落盘交付。
  *
- * 参见 docs/工具参考.md：「把做好的 md 放到用户磁盘」可以留——
- * 这是文件投递，不是远程桌面。
- *
- * 安全边界：只允许写进白名单目录（下载 / 桌面 / 文档），
+ * 安全边界：只允许写进白名单目录（下载 / 桌面 / 文档，或 AGENT_DELIVER_DIRS 覆盖），
  * 且最终路径必须落在该目录内，防止 ../ 逃逸。
  */
 
@@ -65,4 +63,33 @@ export function resolveDeliverPath(
   if (!root) throw new DeliverPathError(`目标路径超出允许范围：${finalPath}`);
 
   return { path: finalPath, root };
+}
+
+export class ArtifactService {
+  private readonly roots: string[];
+
+  constructor(options: { roots?: string[] } = {}) {
+    this.roots = options.roots ?? deliverRoots();
+  }
+
+  /** 把工作区内的文件原样交付到用户可达目录；返回最终路径与字节数 */
+  async deliverFromWorkspace(
+    workspaceRoot: string,
+    path: string,
+    fileName?: string,
+  ): Promise<{ path: string; bytes: number }> {
+    const root = resolve(workspaceRoot);
+    const source = resolve(root, path);
+    const rel = relative(root, source);
+    if (rel.startsWith('..') || isAbsolute(rel)) {
+      throw new DeliverPathError(`path 超出了工作区范围：${path}`);
+    }
+    const info = await stat(source).catch(() => null);
+    if (!info?.isFile()) throw new DeliverPathError(`工作区里没有这个文件：${path}`);
+
+    const target = resolveDeliverPath(fileName ?? basename(source), undefined, this.roots);
+    await mkdir(dirname(target.path), { recursive: true });
+    await copyFile(source, target.path);
+    return { path: target.path, bytes: info.size };
+  }
 }

@@ -10,7 +10,7 @@ import type {
 } from '../agent/types.js';
 import { AgentLoop } from '../agent/agent-loop.js';
 import { AgentRegistry } from '../agent/registry.js';
-import { createWorkbenchTools } from '../tools/examples/workbench.js';
+import { createWorkbenchTools } from '../tools/builtin/workbench.js';
 import { Workbench } from '../workbench/service.js';
 import { InteractionBroker } from '../interaction/broker.js';
 import { SecretStore } from '../secret/store.js';
@@ -32,10 +32,10 @@ import { buildAgentBrief, buildRoomBrief, decideRoomPosts } from '../room/turn.j
 import type { RoomMessage, RoomEvent, RoomEventHandler, RoundOutcome, RoundStatus } from '../room/types.js';
 import { ROOM_MAX_RUNS_PER_MEMBER, ROOM_POST_LIMIT_PER_TURN } from '../room/types.js';
 import { MessageStore } from '../store/messages.js';
-import { resolveProjectOwner } from '../tools/examples/memory.js';
+import { resolveProjectOwner } from '../tools/builtin/memory.js';
 import { ToolRegistry } from '../tools/registry.js';
-import { createSendToAgentTool } from '../tools/examples/room.js';
-import { createTaskTools } from '../tools/examples/task.js';
+import { createSendToAgentTool } from '../tools/builtin/room.js';
+import { createTaskTools } from '../tools/builtin/task.js';
 import type { Tool, TurnState } from '../tools/tool.js';
 
 // 类型与错误定义已抽到 ./types（E2.2 第一步）；这里按原名 re-export 保持兼容

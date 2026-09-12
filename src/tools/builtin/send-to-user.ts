@@ -1,9 +1,8 @@
-import { copyFile, mkdir, stat } from 'node:fs/promises';
-import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
+import { resolve } from 'node:path';
 import { defineTool, type ToolContext } from '../tool.js';
 import type { InteractionBroker } from '../../interaction/broker.js';
 import type { SecretStore } from '../../secret/store.js';
-import { deliverRoots, resolveDeliverPath } from './deliver.js';
+import { ArtifactService } from '../services/artifact-service.js';
 
 /**
  * SendToUser —— 参见 docs/工具参考.md。
@@ -18,24 +17,15 @@ export function createSendToUserTool(input: {
   broker: InteractionBroker;
   secrets: SecretStore;
   agentName: (agentId: string) => Promise<string>;
+  /** 产物交付（E2.3 services 层） */
+  artifacts: ArtifactService;
 }) {
   const root = resolve(input.rootDir);
 
   const deliverAttachment = async (rawPath: string): Promise<string> => {
     const stripped = rawPath.replace(/^file:\/\//, '');
-    const source = resolve(root, stripped);
-    const rel = relative(root, source);
-    if (rel.startsWith('..') || isAbsolute(rel)) {
-      throw new Error(`url 超出了工作区范围：${rawPath}`);
-    }
-    const info = await stat(source).catch(() => null);
-    if (!info?.isFile()) throw new Error(`工作区里没有这个文件：${stripped}`);
-
-    const roots = deliverRoots();
-    const target = resolveDeliverPath(basename(source), undefined, roots);
-    await mkdir(dirname(target.path), { recursive: true });
-    await copyFile(source, target.path);
-    return target.path;
+    const result = await input.artifacts.deliverFromWorkspace(root, stripped);
+    return result.path;
   };
 
   return defineTool<{

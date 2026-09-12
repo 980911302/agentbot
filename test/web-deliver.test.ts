@@ -6,7 +6,7 @@ import {
   DeliverPathError,
   deliverRoots,
   resolveDeliverPath,
-} from '../src/tools/examples/deliver.js';
+} from '../src/tools/builtin/deliver.js';
 import {
   assertPublicUrl,
   htmlToText,
@@ -15,7 +15,7 @@ import {
   parseDuckDuckGo,
   unwrapDuckDuckGoUrl,
   UnsafeUrlError,
-} from '../src/tools/examples/web.js';
+} from '../src/tools/builtin/web.js';
 
 /** 覆盖 docs/工具参考.md 中的安全边界 */
 describe('联网工具', () => {

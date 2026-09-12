@@ -1,16 +1,17 @@
 import { strict as assert } from 'node:assert';
 import { FakeProvider } from './fakes/fake-provider.js';
+import { ArtifactService } from '../src/tools/services/artifact-service.js';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { InteractionBroker } from '../src/interaction/broker.js';
 import { MemoryStore } from '../src/memory/store.js';
-import { createSendToUserTool } from '../src/tools/examples/send-to-user.js';
-import { createShellTools } from '../src/tools/examples/shell.js';
-import { createTaskTools, type TodoItem } from '../src/tools/examples/task.js';
-import { createUpdateStateTools } from '../src/tools/examples/update-state.js';
-import { createWorkbenchTools } from '../src/tools/examples/workbench.js';
+import { createSendToUserTool } from '../src/tools/builtin/send-to-user.js';
+import { createShellTools } from '../src/tools/builtin/shell.js';
+import { createTaskTools, type TodoItem } from '../src/tools/builtin/task.js';
+import { createUpdateStateTools } from '../src/tools/builtin/update-state.js';
+import { createWorkbenchTools } from '../src/tools/builtin/workbench.js';
 import type { Tool, ToolContext } from '../src/tools/tool.js';
 import type { LLMMessage, LLMProvider } from '../src/llm/provider.js';
 
@@ -49,6 +50,7 @@ describe('SendToUser（见 docs/工具参考.md）', () => {
         get: async () => undefined,
       } as never,
       agentName: async () => '测试员',
+      artifacts: new ArtifactService(),
     });
   });
 
@@ -381,7 +383,7 @@ describe('工作台改名（A 组）', () => {
 
 describe('SendToAgent 记账与名字回退（A 组）', () => {
   it('resolveTarget 命中后 registerChild(dm)，dispatch 收到文本', async () => {
-    const { createSendToAgentTool } = await import('../src/tools/examples/room.js');
+    const { createSendToAgentTool } = await import('../src/tools/builtin/room.js');
     const dispatched: Array<{ targetId: string; kind: string; text: string }> = [];
     const children: Array<{ agentId: string; via: string }> = [];
     const tool = createSendToAgentTool({
