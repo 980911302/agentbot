@@ -2,6 +2,7 @@ import { createReadStream, existsSync, statSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { extname, isAbsolute, join, relative, resolve } from 'node:path';
 import { AVAILABLE_MODELS, resolveConfig, type AppConfig, type ModelOption } from '../config.js';
+import type { AgentRecord } from '../agent/types.js';
 import { OpenAIProvider } from '../llm/openai-provider.js';
 import { MemoryStore } from '../memory/store.js';
 import { InteractionBroker } from '../interaction/broker.js';
@@ -221,6 +222,47 @@ async function handleRequest(
     return;
   }
 
+  const botMatch = /^\/api\/bots\/([^/]+)$/.exec(path);
+  if (botMatch) {
+    const raw = decodeURIComponent(botMatch[1] ?? '');
+    const record = await resolveAgent(context, raw);
+    if (!record) {
+      json(response, 404, { error: `unknown bot: ${raw}` });
+      return;
+    }
+
+    if (method === 'GET') {
+      json(response, 200, { bot: toBotView(record, context.runtime.isBusy(record.id)) });
+      return;
+    }
+
+    if (method === 'PATCH') {
+      const body = await readJson(request);
+      const updated = await context.runtime.registry.update(record.id, {
+        name: readString(body.name),
+        instructions: readString(body.instructions) ?? readString(body.role),
+        color: readString(body.color),
+      });
+      json(response, 200, {
+        bot: updated ? toBotView(updated, context.runtime.isBusy(updated.id)) : null,
+      });
+      return;
+    }
+
+    if (method === 'DELETE') {
+      if (context.runtime.isBusy(record.id)) {
+        json(response, 409, { error: '这个智能体正在跑任务，等它结束后再删' });
+        return;
+      }
+      await context.runtime.messages.clear(record.id);
+      await context.runtime.memory.clear('self', record.id);
+      await context.runtime.compaction.clear(record.id);
+      const ok = await context.runtime.registry.remove(record.id);
+      json(response, 200, { ok, removed: record.name });
+      return;
+    }
+  }
+
   if (path === '/api/sessions' && method === 'GET') {
     const botId = url.searchParams.get('botId') ?? '';
     const list = await runtime.registry.list();
@@ -260,17 +302,17 @@ async function handleRequest(
 
   const sessionMatch = /^\/api\/sessions\/([^/]+)$/.exec(path);
   if (sessionMatch) {
-    const id = decodeURIComponent(sessionMatch[1] ?? '');
+    const raw = decodeURIComponent(sessionMatch[1] ?? '');
+    const record = await resolveAgent(context, raw);
+    const id = record?.id ?? raw;
     if (method === 'GET') {
-      const list = await runtime.registry.list();
-      const currentBot = list.find((item) => item.id === id) || list[0];
       const rawMsgs = await runtime.messages.list(id);
       const messages = toDisplayMessages(rawMsgs);
       json(response, 200, {
         session: {
           id,
           botId: id,
-          title: currentBot?.name ?? '白泽联调',
+          title: record?.name ?? '对话',
           model: context.model,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
@@ -665,7 +707,9 @@ async function handleChatRoute(
   const body = await readJson(request);
   const text = (readString(body.message) || readString(body.text) || '').trim();
   const list = await context.runtime.registry.list();
-  const botId = readString(body.botId) || readString(body.agentId) || list[0]?.id;
+  const requested = readString(body.botId) || readString(body.agentId) || '';
+  const found = requested ? await resolveAgent(context, requested) : undefined;
+  const botId = found?.id ?? list[0]?.id;
   const model = readString(body.model);
 
   if (!text) {
@@ -765,6 +809,34 @@ async function handleSend(
 
 function readString(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
+}
+
+/**
+ * 按 id 找智能体，找不到再按名字找。
+ *
+ * 兼容层要足够宽容：前端历史上用过 channel-xxx 这类本地 id，
+ * 也有直接拿显示名当标识的地方，按名字兜底能省掉一整类「Unknown agent」。
+ */
+async function resolveAgent(context: RouteContext, idOrName: string) {
+  const byId = await context.runtime.registry.get(idOrName);
+  if (byId) return byId;
+  const list = await context.runtime.registry.list();
+  const wanted = idOrName.trim();
+  return list.find((item) => item.name === wanted);
+}
+
+function toBotView(record: AgentRecord, busy: boolean) {
+  return {
+    id: record.id,
+    name: record.name,
+    role: record.instructions.slice(0, 30),
+    color: record.color,
+    status: busy ? 'working' : 'idle',
+    activity: '',
+    conversationCount: 1,
+    createdAt: new Date(record.createdAt).toISOString(),
+    updatedAt: new Date(record.updatedAt).toISOString(),
+  };
 }
 
 interface DisplayMessageView {

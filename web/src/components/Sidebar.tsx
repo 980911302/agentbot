@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { IconGrid, IconPlus, IconSearch } from '../icons';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { IconGrid, IconPlus, IconSearch, IconTrash } from '../icons';
 import { BotAvatar } from './BotAvatar';
 
 export interface ChannelItem {
@@ -22,7 +22,17 @@ interface SidebarProps {
   onNew: () => void;
   onOpenMarket: () => void;
   onOpenProfile: () => void;
+  onDelete: (channel: ChannelItem) => void;
 }
+
+interface MenuState {
+  x: number;
+  y: number;
+  channel: ChannelItem;
+}
+
+const MENU_WIDTH = 196;
+const MENU_HEIGHT = 104;
 
 export function Sidebar({
   channels,
@@ -31,8 +41,31 @@ export function Sidebar({
   onNew,
   onOpenMarket,
   onOpenProfile,
+  onDelete,
 }: SidebarProps) {
   const [query, setQuery] = useState('');
+  const [menu, setMenu] = useState<MenuState | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+
+  const closeMenu = useCallback(() => setMenu(null), []);
+
+  useEffect(() => {
+    if (!menu) return undefined;
+    const onPointerDown = (event: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) closeMenu();
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeMenu();
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onKey);
+    window.addEventListener('resize', closeMenu);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onKey);
+      window.removeEventListener('resize', closeMenu);
+    };
+  }, [menu, closeMenu]);
 
   const keyword = query.trim().toLowerCase();
   const visibleChannels = keyword
@@ -98,6 +131,16 @@ export function Sidebar({
                 tabIndex={0}
                 className={`channel-item${isActive ? ' active' : ''}`}
                 onClick={() => onSelect(channel.id)}
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  const maxX = window.innerWidth - MENU_WIDTH - 8;
+                  const maxY = window.innerHeight - MENU_HEIGHT - 8;
+                  setMenu({
+                    x: Math.min(event.clientX, Math.max(8, maxX)),
+                    y: Math.min(event.clientY, Math.max(8, maxY)),
+                    channel,
+                  });
+                }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault();
@@ -155,6 +198,35 @@ export function Sidebar({
           <span className="user-name">linlin zhang</span>
         </button>
       </div>
+
+      {menu ? (
+        <div
+          ref={menuRef}
+          className="context-menu"
+          style={{ left: menu.x, top: menu.y }}
+          role="menu"
+        >
+          <div className="context-menu-head">
+            <BotAvatar name={menu.channel.name} color={menu.channel.color || '#8b5cf6'} size={22} />
+            <span className="context-menu-name">{menu.channel.name}</span>
+            <span className="context-menu-kind">{menu.channel.isGroup ? '群' : '智能体'}</span>
+          </div>
+          <div className="menu-divider" />
+          <button
+            type="button"
+            className="context-menu-row danger"
+            role="menuitem"
+            onClick={() => {
+              const target = menu.channel;
+              closeMenu();
+              onDelete(target);
+            }}
+          >
+            <IconTrash size={15} />
+            <span>{menu.channel.isGroup ? '解散群' : '删除智能体'}</span>
+          </button>
+        </div>
+      ) : null}
     </aside>
   );
 }

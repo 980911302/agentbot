@@ -179,6 +179,10 @@ export async function updateRoomMembers(roomId: string, memberIds: string[]): Pr
   return data.room;
 }
 
+export async function deleteRoom(roomId: string): Promise<void> {
+  await request(`/api/rooms/${encodeURIComponent(roomId)}`, { method: 'DELETE' });
+}
+
 export interface RoomHandlers {
   onMessage?: (message: RoomMessage) => void;
   onRoundStart?: (event: { agentId: string; agentName: string }) => void;

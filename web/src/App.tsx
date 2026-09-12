@@ -5,6 +5,7 @@ import { ChatView } from './components/ChatView';
 import { Composer } from './components/Composer';
 import { SettingsDialog } from './components/SettingsDialog';
 import { CreateDialog } from './components/CreateDialog';
+import { ConfirmDialog } from './components/ConfirmDialog';
 import { MemberPanel } from './components/MemberPanel';
 import { MemoryPanel } from './components/MemoryPanel';
 import { InteractionCard } from './components/InteractionCard';
@@ -186,6 +187,9 @@ export default function App() {
   const [interactions, setInteractions] = useState<InteractionRequest[]>([]);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [newBotOpen, setNewBotOpen] = useState(false);
+  /** 右键菜单选中的待删对象，确认后才真正动手 */
+  const [pendingDelete, setPendingDelete] = useState<ChannelItem | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [model, setModel] = useState('');
   const abortRef = useRef<AbortController | null>(null);
 
@@ -446,6 +450,47 @@ export default function App() {
     const timer = window.setInterval(() => void syncWorkspace(), 15000);
     return () => window.clearInterval(timer);
   }, [syncWorkspace]);
+
+  /**
+   * 右键删除。
+   *
+   * 群是解散，智能体是删除（连带它的消息与记忆）。
+   * 先请求后端，成功了才从界面上摘掉——失败时频道还在，错误直接写进它的时间线。
+   */
+  const confirmDelete = useCallback(async () => {
+    const target = pendingDelete;
+    if (!target || deleting) return;
+    setDeleting(true);
+
+    try {
+      if (target.kind === 'room') await api.deleteRoom(target.id);
+      else await api.deleteBot(target.id);
+
+      setChannels((current) => {
+        const next = current.filter((item) => item.id !== target.id);
+        setActiveChannelId((active) =>
+          active === target.id ? (next[0]?.id ?? '') : active,
+        );
+        return next;
+      });
+      setChannelHistories((prev) => {
+        const next = { ...prev };
+        delete next[target.id];
+        return next;
+      });
+      setPendingDelete(null);
+      await syncWorkspace();
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      setChannelHistories((prev) => ({
+        ...prev,
+        [target.id]: [...(prev[target.id] ?? []), errorMessage(target, `删除失败：${reason}`)],
+      }));
+      setPendingDelete(null);
+    } finally {
+      setDeleting(false);
+    }
+  }, [deleting, pendingDelete, syncWorkspace]);
 
   const send = useCallback(
     async (text: string) => {
@@ -766,6 +811,10 @@ export default function App() {
         onNew={() => setNewBotOpen(true)}
         onOpenMarket={() => setSettingsOpen(true)}
         onOpenProfile={() => setSettingsOpen(true)}
+        onDelete={(channel) => {
+          if (busy) return;
+          setPendingDelete(channel);
+        }}
       />
 
       {/* 2. 主消息区 */}
@@ -905,6 +954,20 @@ export default function App() {
       />
 
       {!online ? <div className="offline">后端服务未连接 · 当前展示本地联调视图</div> : null}
+
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        danger
+        title={pendingDelete?.isGroup ? '解散这个群？' : '删除这个智能体？'}
+        message={
+          pendingDelete?.isGroup
+            ? `「${pendingDelete.name}」的成员表与群时间线会一起删掉，成员各自的记忆不受影响。解散后无法恢复。`
+            : `「${pendingDelete?.name ?? ''}」的对话记录和它的长期记忆会一起删掉，无法恢复。`
+        }
+        confirmLabel={deleting ? '删除中…' : pendingDelete?.isGroup ? '解散' : '删除'}
+        onConfirm={() => void confirmDelete()}
+        onCancel={() => setPendingDelete(null)}
+      />
     </div>
   );
 }
