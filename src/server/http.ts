@@ -5,6 +5,7 @@ import { MemoryStore } from '../memory/store.js';
 import { InteractionBroker } from '../interaction/broker.js';
 import { SecretStore } from '../secret/store.js';
 import { OpenAIProvider } from '../llm/openai-provider.js';
+import type { LLMProvider } from '../llm/provider.js';
 import { AgentRuntime } from './runtime.js';
 import { SEED_AGENTS, SEED_ROOMS } from './seed.js';
 import { createAgentTools } from './tools.js';
@@ -22,6 +23,7 @@ import { handleRoomRoute, handleRoomsCollection } from './routes/rooms.js';
 import { handleInteractionItem, handleInteractionsCollection } from './routes/interactions.js';
 import { handleSecretsCollection } from './routes/secrets.js';
 import { handleHealthRoute } from './routes/health.js';
+import { handleEventsRoute } from './routes/events.js';
 
 export interface AgentServerOptions {
   port?: number;
@@ -29,6 +31,10 @@ export interface AgentServerOptions {
   staticDir?: string;
   rootDir?: string;
   dataDir?: string;
+  /** 测试注入：不传则按配置建 OpenAIProvider */
+  createProvider?: (model: string) => LLMProvider;
+  /** 配合 createProvider 的无 Key 启动（测试用） */
+  allowMissingKey?: boolean;
 }
 
 export interface AgentServerHandle {
@@ -41,7 +47,7 @@ export interface AgentServerHandle {
 
 export async function createAgentServer(options: AgentServerOptions = {}): Promise<AgentServerHandle> {
   const rootDir = resolve(options.rootDir ?? process.cwd());
-  const config = resolveConfig({ env: process.env, rootDir });
+  const config = resolveConfig({ env: process.env, rootDir, allowMissingKey: options.allowMissingKey });
   const models = AVAILABLE_MODELS.some((item) => item.id === config.model)
     ? AVAILABLE_MODELS
     : [{ id: config.model, label: config.model, hint: '来自环境变量配置' }, ...AVAILABLE_MODELS];
@@ -60,8 +66,9 @@ export async function createAgentServer(options: AgentServerOptions = {}): Promi
 
   const runtime = new AgentRuntime({
     tools,
-    createProvider: (model) =>
-      new OpenAIProvider({ apiKey: config.apiKey, model, baseURL: config.baseURL }),
+    createProvider:
+      options.createProvider ??
+      ((model) => new OpenAIProvider({ apiKey: config.apiKey, model, baseURL: config.baseURL })),
     dataDir,
     defaultModel: config.model,
     knownModels: models.map((item) => item.id),
@@ -147,6 +154,12 @@ async function handleRequest(
 
   if (path === '/api/health') {
     handleHealthRoute(response, context);
+    return;
+  }
+
+  // 界面事件的独立订阅（E3.4）：发送与订阅分离，断线只断订阅
+  if (path === '/api/events' && method === 'GET') {
+    handleEventsRoute(request, response, context);
     return;
   }
 

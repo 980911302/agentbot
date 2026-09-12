@@ -79,6 +79,25 @@ export type RuntimeTurn = RunTurnRecord;
 /** 一轮派生出去的任务树（4.2）：停止令按这张表往下走；执行句柄在账本的内存支路 */
 export type TaskTree = RunTreeRecord;
 
+/**
+ * 收信回执（E3.4 第二步）：HTTP 立刻 202 返回这个，回合在后台继续跑。
+ * receiptSeq 是受理时的日志游标——客户端从这里往后订阅就不会漏事件。
+ */
+export interface Receipt {
+  /** 已落盘的用户消息（私聊）；群消息的 id 由 room_message 事件带回 */
+  messageId?: string;
+  agentId?: string;
+  roomId?: string;
+  receiptSeq: number;
+  duplicate: boolean;
+}
+
+/** 已受理、待执行的回合：execute 由调用方决定何时跑（HTTP 后台；CLI/测试立刻） */
+export interface AcceptedRun<T> {
+  receipt: Receipt;
+  execute: () => Promise<T>;
+}
+
 /** 撞上用户回合被挂起的停止令（运行时内部） */
 export interface PendingStop {
   text: string;

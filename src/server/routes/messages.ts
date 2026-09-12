@@ -1,8 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { collectArtifacts, toDisplayMessages } from '../presenters.js';
-import { isKnownAgentEvent, parseSendMessageInput } from '../../shared/contracts/index.js';
-import { json, PING_INTERVAL_MS, readJson, sse } from '../transport/index.js';
-import { AgentBusyError } from '../runtime.js';
+import { parseSendMessageInput } from '../../shared/contracts/index.js';
+import { json, readJson } from '../transport/index.js';
 import { readString, resolveAgent, type RouteContext } from './context.js';
 
 /** /api/sessions：GET 列表（当前只有一个固定会话）/ POST 新建 */
@@ -76,7 +75,11 @@ export async function handleSessionItem(
   });
 }
 
-/** /api/chat：私聊发送（SSE）。忙不拒——新句插队开新回合，旧的挂起欠账 */
+/**
+ * /api/chat：私聊发送。
+ * E3.4 第二步起只做「接收」：202 立刻返回回执（messageId + 受理游标），
+ * 回合在后台继续跑；进度与结果走 `GET /api/events` 订阅，断线只断订阅。
+ */
 export async function handleChatRoute(
   request: IncomingMessage,
   response: ServerResponse,
@@ -97,33 +100,13 @@ export async function handleChatRoute(
     return;
   }
 
-  openSse(response);
-
-  const ping = ssePing(response);
-  const controller = new AbortController();
-  response.on('close', () => controller.abort());
-
-  try {
-    const result = await context.runtime.send(botId, text, {
-      model,
-      clientMessageId,
-      signal: controller.signal,
-      onEvent: (event) => {
-        if (isKnownAgentEvent(event)) sse(response, 'event', event);
-      },
-      onDelta: (text) => sse(response, 'event', { type: 'delta', text }),
-    });
-    sse(response, 'done', result);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    sse(response, 'error', { message });
-  } finally {
-    clearInterval(ping);
-    if (!response.writableEnded && !response.destroyed) response.end();
-  }
+  const accepted = await context.runtime.acceptMessage(botId, text, { model, clientMessageId });
+  json(response, 202, accepted.receipt);
+  // 已受理的回执发出去后，执行在后台跑；失败会以 run error 事件到达订阅方
+  void accepted.execute().catch(() => undefined);
 }
 
-/** /api/sessions/:id/messages：同一份发送契约的会话入口（SSE） */
+/** /api/sessions/:id/messages：同一份发送契约的会话入口（202 回执 + 后台执行） */
 export async function handleSend(
   request: IncomingMessage,
   response: ServerResponse,
@@ -135,50 +118,11 @@ export async function handleSend(
     json(response, 400, { error: parsed.error });
     return;
   }
-  const text = parsed.value.text;
-  const model = parsed.value.model;
-  const clientMessageId = parsed.value.clientMessageId;
 
-  openSse(response);
-
-  const ping = ssePing(response);
-  const controller = new AbortController();
-  response.on('close', () => controller.abort());
-
-  try {
-    const result = await context.runtime.send(agentId, text, {
-      model,
-      clientMessageId,
-      signal: controller.signal,
-      onEvent: (event) => {
-        if (isKnownAgentEvent(event)) sse(response, 'event', event);
-      },
-      onDelta: (text) => sse(response, 'event', { type: 'delta', text }),
-    });
-    sse(response, 'done', result);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    sse(response, 'error', {
-      message,
-      status: error instanceof AgentBusyError ? 409 : 500,
-    });
-  } finally {
-    clearInterval(ping);
-    if (!response.writableEnded && !response.destroyed) response.end();
-  }
-}
-
-function openSse(response: ServerResponse): void {
-  response.writeHead(200, {
-    'content-type': 'text/event-stream; charset=utf-8',
-    'cache-control': 'no-cache, no-transform',
-    connection: 'keep-alive',
-    'x-accel-buffering': 'no',
+  const accepted = await context.runtime.acceptMessage(agentId, parsed.value.text, {
+    model: parsed.value.model,
+    clientMessageId: parsed.value.clientMessageId,
   });
-}
-
-function ssePing(response: ServerResponse): NodeJS.Timeout {
-  return setInterval(() => {
-    if (!response.writableEnded && !response.destroyed) response.write(': ping\n\n');
-  }, PING_INTERVAL_MS);
+  json(response, 202, accepted.receipt);
+  void accepted.execute().catch(() => undefined);
 }

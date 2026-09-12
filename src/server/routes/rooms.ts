@@ -1,8 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Room } from '../../room/types.js';
 import { ROOM_MEMBER_LIMIT } from '../../room/types.js';
-import { json, PING_INTERVAL_MS, readJson, sse } from '../transport/index.js';
-import { isKnownAgentEvent } from '../../shared/contracts/index.js';
+import { json, readJson } from '../transport/index.js';
 import { messageOf, readString, readStringArray, type RouteContext } from './context.js';
 
 async function roomView(runtime: RouteContext['runtime'], room: Room) {
@@ -110,6 +109,7 @@ export async function handleRoomRoute(
   }
 
   // 往群里说一句 → 扇出给全体成员；每个成员各自决定开口还是沉默
+  // E3.4 第二步：202 立刻回执，扇出在后台跑，进度走 `GET /api/events` 订阅
   if (rest === '/messages' && method === 'POST') {
     const body = await readJson(request);
     const text = (readString(body.text) ?? readString(body.message) ?? '').trim();
@@ -120,38 +120,13 @@ export async function handleRoomRoute(
       return;
     }
 
-    response.writeHead(200, {
-      'content-type': 'text/event-stream; charset=utf-8',
-      'cache-control': 'no-cache, no-transform',
-      connection: 'keep-alive',
-      'x-accel-buffering': 'no',
+    const accepted = await runtime.acceptRoomMessage(roomId, text, {
+      model,
+      clientMessageId,
+      ownerName: readString(body.ownerName) ?? context.ownerName,
     });
-
-    const ping = setInterval(() => {
-      if (!response.writableEnded && !response.destroyed) response.write(': ping\n\n');
-    }, PING_INTERVAL_MS);
-
-    const controller = new AbortController();
-    response.on('close', () => controller.abort());
-
-    try {
-      const summary = await runtime.postToRoom(roomId, text, {
-        model,
-        clientMessageId,
-        ownerName: readString(body.ownerName) ?? context.ownerName,
-        signal: controller.signal,
-        onEvent: (event) => {
-          if (isKnownAgentEvent(event)) sse(response, 'event', event);
-        },
-        onRoomEvent: (event) => sse(response, 'room', event),
-      });
-      sse(response, 'done', summary);
-    } catch (error) {
-      sse(response, 'error', { message: messageOf(error) });
-    } finally {
-      clearInterval(ping);
-      if (!response.writableEnded && !response.destroyed) response.end();
-    }
+    json(response, 202, accepted.receipt);
+    void accepted.execute().catch(() => undefined);
     return;
   }
 

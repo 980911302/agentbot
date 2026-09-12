@@ -40,6 +40,7 @@ import type { Tool, TurnState } from '../tools/tool.js';
 
 // 类型与错误定义已抽到 ./types（E2.2 第一步）；这里按原名 re-export 保持兼容
 import {
+  type AcceptedRun,
   type AgentRuntimeOptions,
   type PendingStop,
   type RoomRoundSummary,
@@ -55,6 +56,7 @@ import { RunExecutor } from './runtime/run-executor.js';
 import { RoomDispatcher } from './runtime/room-dispatcher.js';
 import { ReceivedStore } from '../storage/received-store.js';
 import { InMemoryRunLedger } from '../storage/run-ledger.js';
+import { EventJournal } from './events/journal.js';
 export * from './runtime/types.js';
 
 const DEFAULT_MAX_AGENT_DEPTH = 3;
@@ -114,6 +116,8 @@ export class AgentRuntime {
 
   /** 回合与任务树账本（E3.3 接线；见 docs/架构设计.md「插话、停止和等待」） */
   private readonly ledger = new InMemoryRunLedger();
+  /** 事件日志（E3.4）：发送与订阅分离的基础；断线只断订阅，不牵动执行 */
+  readonly events = new EventJournal();
   /** 撞上正在跑的用户回合的停止令：回合结束立刻处理 */
   private readonly pendingStops = new Map<string, PendingStop[]>();
 
@@ -354,37 +358,93 @@ export class AgentRuntime {
     return this.builder.build(agent, task);
   }
 
-  // ── 私聊回合 ────────────────────────────────────────
+  // ── 事件日志（E3.4：发送与订阅分离）───────────────
 
-  async send(agentId: string, text: string, options: SendOptions = {}): Promise<SendResult> {
+  /**
+   * 把事件先写进事件日志，再交给本次调用的监听者。
+   * 订阅方拿到与调用方同源的事件（带 seq，可补发、可去重）。
+   */
+  private journaling(
+    options: SendOptions,
+    channel: { agentId?: string; roomId?: string },
+  ): SendOptions {
+    return {
+      ...options,
+      onEvent: (event) => {
+        this.events.publish({ kind: 'agent', ...channel, payload: event });
+        options.onEvent?.(event);
+      },
+      onDelta: (text) => {
+        // 流式增量是短暂事件：订阅方实时看到打字，落盘仍以最终消息为准
+        this.events.publish({ kind: 'agent', ...channel, payload: { type: 'delta', text } });
+        options.onDelta?.(text);
+      },
+      onRoomEvent: (event) => {
+        this.events.publish({ kind: 'room', ...channel, payload: event });
+        options.onRoomEvent?.(event);
+      },
+    };
+  }
+
+  private publishRunError(channel: { agentId?: string; roomId?: string }, error: unknown): void {
+    this.events.publish({
+      kind: 'run',
+      ...channel,
+      payload: {
+        phase: 'error',
+        busy: error instanceof AgentBusyError,
+        message: error instanceof Error ? error.message : String(error),
+      },
+    });
+  }
+
+  /** 回合执行的事件收尾：done / error 都写进事件日志，订阅方据此收掉「忙」 */
+  private async runJournaled<T>(
+    channel: { agentId?: string; roomId?: string },
+    run: () => Promise<T>,
+    done: (result: T) => Record<string, unknown>,
+  ): Promise<T> {
+    try {
+      const result = await run();
+      this.events.publish({ kind: 'run', ...channel, payload: done(result) });
+      return result;
+    } catch (error) {
+      this.publishRunError(channel, error);
+      throw error;
+    }
+  }
+
+  // ── 收信与执行分离（E3.4 第二步）────────────────────
+
+  /**
+   * 先持久接收：去重 → 落消息、写事件日志 → 回执。
+   * 返回的 execute 由调用方决定何时执行：HTTP 立刻回 202，回合在后台继续跑，
+   * 事件全部走 EventJournal（断线只断订阅）。
+   */
+  async acceptMessage(
+    agentId: string,
+    text: string,
+    options: SendOptions = {},
+  ): Promise<AcceptedRun<SendResult>> {
+    const opts = this.journaling(options, { agentId });
     const clientMessageId = options.clientMessageId;
+
     if (clientMessageId) {
       const existing = this.receivedStore.find(clientMessageId);
       if (existing) {
-        // E3.2：重复提交返回原消息，不开新回合
         const original = (await this.messages.list(agentId)).find(
           (message) => message.id === existing.messageId,
         );
         if (original) {
-          options.onEvent?.({ type: 'message', message: original });
-          const record = await this.registry.get(agentId);
+          // E3.2：重复提交返回原消息，不开新回合
           return {
-            content: original.content.type === 'text' ? original.content.text : '',
-            iterations: 0,
-            stopReason: 'duplicate',
-            agentId,
-            agentName: record?.name ?? agentId,
-            context: {
+            receipt: {
+              messageId: original.id,
               agentId,
-              system: '',
-              messages: [],
-              stats: { sections: [], totalTokens: 0, budgetTokens: 0, generatedAt: Date.now() },
-              surfaced: [],
-              droppedRecent: 0,
-              droppedGroups: 0,
+              receiptSeq: this.events.latestSeq,
+              duplicate: true,
             },
-            posts: [],
-            status: 'silent',
+            execute: () => this.duplicateRun(agentId, original, opts),
           };
         }
       }
@@ -392,11 +452,24 @@ export class AgentRuntime {
 
     // 见 docs/架构设计.md「插话、停止和等待」：认停止词是运行时的事，不让模型「想起来去通知别人」
     if (this.stopCoordinator.isStopSentence(text)) {
-      return this.stopCoordinator.stopFromUser(agentId, text, options);
+      return {
+        receipt: {
+          messageId: `stop-${randomUUID()}`,
+          agentId,
+          receiptSeq: this.events.latestSeq,
+          duplicate: false,
+        },
+        execute: () =>
+          this.runJournaled(
+            { agentId },
+            () => this.stopCoordinator.stopFromUser(agentId, text, opts),
+            (result) => ({ phase: 'done', stopReason: result.stopReason }),
+          ),
+      };
     }
 
     // 用户新句作废还没回答的选项卡——不当答案（§2）
-    this.stopCoordinator.voidPendingInteractions(agentId, options.onEvent);
+    this.stopCoordinator.voidPendingInteractions(agentId, opts.onEvent);
 
     const task: Message = {
       id: randomUUID(),
@@ -407,10 +480,53 @@ export class AgentRuntime {
       source: 'user',
       ...(clientMessageId ? { clientMessageId } : {}),
     };
+    // 先落盘再回执：客户端拿到 messageId 时消息已经在库里（E3.2/E3.4）
+    await this.messages.append(task);
+    opts.onEvent?.({ type: 'message', message: task });
     if (clientMessageId) {
       this.receivedStore.record(clientMessageId, { messageId: task.id, agentId });
     }
-    return this.runTurn(agentId, task, { brief: undefined, onDelta: options.onDelta }, options);
+
+    return {
+      receipt: { messageId: task.id, agentId, receiptSeq: this.events.latestSeq, duplicate: false },
+      execute: () =>
+        this.runJournaled(
+          { agentId },
+          () =>
+            this.runTurn(agentId, task, { brief: undefined, skipPersist: true, onDelta: opts.onDelta }, opts),
+          (result) => ({ phase: 'done', stopReason: result.stopReason }),
+        ),
+    };
+  }
+
+  /** 兼容入口：接了就执行（CLI、测试与内部调用都用它） */
+  async send(agentId: string, text: string, options: SendOptions = {}): Promise<SendResult> {
+    const accepted = await this.acceptMessage(agentId, text, options);
+    return accepted.execute();
+  }
+
+  /** 重复提交的重放：原消息再报一次（客户端按 id 去重），不再开回合 */
+  private async duplicateRun(agentId: string, original: Message, options: SendOptions): Promise<SendResult> {
+    options.onEvent?.({ type: 'message', message: original });
+    const record = await this.registry.get(agentId);
+    return {
+      content: original.content.type === 'text' ? original.content.text : '',
+      iterations: 0,
+      stopReason: 'duplicate',
+      agentId,
+      agentName: record?.name ?? agentId,
+      context: {
+        agentId,
+        system: '',
+        messages: [],
+        stats: { sections: [], totalTokens: 0, budgetTokens: 0, generatedAt: Date.now() },
+        surfaced: [],
+        droppedRecent: 0,
+        droppedGroups: 0,
+      },
+      posts: [],
+      status: 'silent',
+    };
   }
 
   // ── 群回合：扇出叫醒（搬至 RoomDispatcher，此处保持兼容入口）──
@@ -423,6 +539,47 @@ export class AgentRuntime {
     roomId: string,
     text: string,
     options: SendOptions = {},
+  ): Promise<RoomRoundSummary> {
+    const accepted = await this.acceptRoomMessage(roomId, text, options);
+    return accepted.execute();
+  }
+
+  /**
+   * 群消息的收信回执：这里只确认「已受理」（房间存在、幂等键未见），
+   * 入站消息与扇出都在 execute 里跑，进度走事件日志。
+   * 群消息的 messageId 由 room_message 事件带回来（客户端按内容/幂等键校正占位）。
+   */
+  async acceptRoomMessage(
+    roomId: string,
+    text: string,
+    options: SendOptions = {},
+  ): Promise<AcceptedRun<RoomRoundSummary>> {
+    const opts = this.journaling(options, { roomId });
+    const clientMessageId = options.clientMessageId;
+    const duplicate = clientMessageId ? this.receivedStore.find(clientMessageId) !== undefined : false;
+    return {
+      receipt: { roomId, receiptSeq: this.events.latestSeq, duplicate },
+      execute: () =>
+        this.runJournaled(
+          { roomId },
+          () => this.postToRoomInner(roomId, text, opts),
+          (summary) => {
+            const spoke = summary.outcomes.filter((outcome) => outcome.status === 'spoke').length;
+            return {
+              phase: 'done',
+              spoke,
+              silent: summary.outcomes.length - spoke,
+              skipped: summary.skipped.length,
+            };
+          },
+        ),
+    };
+  }
+
+  private async postToRoomInner(
+    roomId: string,
+    text: string,
+    options: SendOptions,
   ): Promise<RoomRoundSummary> {
     const clientMessageId = options.clientMessageId;
     if (clientMessageId) {
@@ -485,7 +642,17 @@ export class AgentRuntime {
 
   /** 消费积压的同事来信（领取 → 处理 → 确认；搬至 InboxProcessor，此处保持兼容入口） */
   async drainInbox(agentId: string, options: SendOptions = {}): Promise<TurnResult | null> {
-    return this.inboxProcessor.process(agentId, options);
+    const opts = this.journaling(options, { agentId });
+    const result = await this.inboxProcessor.process(agentId, opts);
+    if (result) {
+      // 有活才干：空转不写事件日志
+      this.events.publish({
+        kind: 'run',
+        agentId,
+        payload: { phase: 'done', stopReason: result.stopReason },
+      });
+    }
+    return result;
   }
 
   /** 未处理的来信数（含领取中，不含 failed） */
