@@ -132,7 +132,7 @@ export function useWorkspace(deps: {
         // 保持现有内容
       }
     },
-    [rooms, setChannelHistories],
+    [deps.rooms, deps.setChannelHistories],
   );
 
   const sidebarChannels = useMemo(
