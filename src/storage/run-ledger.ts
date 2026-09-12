@@ -27,6 +27,8 @@ export class InMemoryRunLedger implements RunLedger {
   private readonly turns = new Map<string, RunTurnRecord>();
   private readonly trees = new Map<string, RunTreeRecord>();
   private readonly running = new Map<string, string>();
+  /** 每次开始执行 +1：旧执行迟到写回时凭它被拒（E3.6） */
+  private readonly epochs = new Map<string, number>();
   private readonly jobs = new Map<string, TreeJobHandle[]>();
 
   putTurn(turn: RunTurnRecord): void {
@@ -47,6 +49,21 @@ export class InMemoryRunLedger implements RunLedger {
 
   listTrees(): RunTreeRecord[] {
     return [...this.trees.values()];
+  }
+
+  /**
+   * 开始一次执行：取得执行位 + epoch 前进。
+   * 旧执行被抢占后（park/新句）再写回时，runningTurnOf 已不是它，写入被拒。
+   */
+  beginRun(agentId: string, turnId: string): number {
+    const next = (this.epochs.get(agentId) ?? 0) + 1;
+    this.epochs.set(agentId, next);
+    this.running.set(agentId, turnId);
+    return next;
+  }
+
+  epochOf(agentId: string): number {
+    return this.epochs.get(agentId) ?? 0;
   }
 
   runningTurnOf(agentId: string): string | undefined {

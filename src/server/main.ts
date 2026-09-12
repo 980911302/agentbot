@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DEFAULT_PORT, MissingApiKeyError } from '../config.js';
+import { InstanceLockError } from '../storage/instance-lock.js';
 import { createAgentServer } from './http.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -17,6 +18,8 @@ try {
 } catch (error) {
   // 配置类错误给出可操作的提示，而不是堆栈
   if (error instanceof MissingApiKeyError) {
+    console.error(`\n✗ ${error.message}\n`);
+  } else if (error instanceof InstanceLockError) {
     console.error(`\n✗ ${error.message}\n`);
   } else {
     console.error(error instanceof Error ? (error.stack ?? error.message) : error);

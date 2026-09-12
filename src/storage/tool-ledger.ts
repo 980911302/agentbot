@@ -58,9 +58,10 @@ export class JsonToolInvocationLedger implements ToolInvocationPort {
     return record;
   }
 
+  /** 没有结果的调用（started=本进程在飞；unknown=上次进程退出留下的） */
   async unfinished(): Promise<ToolInvocationRecord[]> {
     await this.load();
-    return this.records.filter((item) => item.status === 'started');
+    return this.records.filter((item) => item.status === 'started' || item.status === 'unknown');
   }
 
   async attemptsOf(operationKey: string): Promise<ToolInvocationRecord[]> {

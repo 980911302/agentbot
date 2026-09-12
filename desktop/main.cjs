@@ -41,6 +41,12 @@ async function startBackend() {
       app.exit(1);
       throw error;
     }
+    // 同一份数据已经有一个后端在跑（单实例锁，E3.6）
+    if (error && error.name === 'InstanceLockError') {
+      dialog.showErrorBox('AgentBot 已经在运行', String(error.message));
+      app.exit(1);
+      throw error;
+    }
     throw error;
   }
   console.log(`[agentbot-desktop] backend ready at ${serverHandle.url}`);

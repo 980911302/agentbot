@@ -38,6 +38,11 @@ export interface AgentLoopDeps {
   /** 记账归属：哪次回合（Run） */
   runId?: string;
   treeId?: string;
+  /**
+   * 执行位检查（E3.6）：被抢占的旧执行返回 false。
+   * 迟到写入不再进对话线、不再发事件；工具结果仍然回填账本，供恢复核对。
+   */
+  isCurrent?: () => boolean;
 }
 
 const DEFAULT_MAX_ITERATIONS = 12;
@@ -62,7 +67,8 @@ export class AgentLoop {
       });
 
       const text = (response.content ?? '').trim();
-      if (text && persistText) {
+      // E3.6：被抢占的旧执行不再写对话线（迟到结果只留在工具账本里供核对）
+      if (text && persistText && !this.stale()) {
         const message = await this.persist(agent, 'assistant', { type: 'text', text });
         this.emit({ type: 'message', message });
       }
@@ -73,7 +79,7 @@ export class AgentLoop {
       }
 
       const persistent = response.toolCalls.filter((call) => !registry.isEphemeral(call.name));
-      if (persistent.length > 0) {
+      if (persistent.length > 0 && !this.stale()) {
         const callMessage = await this.persist(agent, 'assistant', {
           type: 'tool_calls',
           calls: persistent,
@@ -108,7 +114,7 @@ export class AgentLoop {
           Date.now() - startedAt,
         );
 
-        if (!registry.isEphemeral(call.name)) {
+        if (!registry.isEphemeral(call.name) && !this.stale()) {
           const resultMessage = await this.persist(agent, 'tool', {
             type: 'tool_result',
             callId: call.id,
@@ -147,7 +153,13 @@ export class AgentLoop {
   }
 
   private emit(event: AgentEvent): void {
+    if (this.stale()) return;
     this.deps.onEvent?.(event);
+  }
+
+  /** 执行位还在自己手里吗（E3.6）：被抢占后不再对外写、不再发事件 */
+  private stale(): boolean {
+    return this.deps.isCurrent ? !this.deps.isCurrent() : false;
   }
 
   /** 执行前先落一条意图；账本故障不能拖垮回合（这次调用就没有核对依据） */

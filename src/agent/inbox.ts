@@ -226,6 +226,29 @@ export class AgentInbox implements DeliveryPort {
     return retried;
   }
 
+  /**
+   * 启动恢复（E3.6）：上次进程留下的 claimed 一律作废重投（启动即独享，不需要等租约到期）。
+   * 按一次失败尝试计，超限进 failed。
+   */
+  async reclaimAll(agentId: string, input: { maxAttempts: number; now?: number }): Promise<number> {
+    const state = await this.load(agentId);
+    const now = input.now ?? Date.now();
+    let reclaimed = 0;
+    for (const item of state.items) {
+      if (item.status !== 'claimed') continue;
+      reclaimed += 1;
+      item.status = 'pending';
+      item.attempts = (item.attempts ?? 0) + 1;
+      item.availableAt = now;
+      item.lastError = '进程退出时未确认，启动恢复重投';
+      delete item.leaseOwner;
+      delete item.leaseUntil;
+      if ((item.attempts ?? 0) >= input.maxAttempts) item.status = 'failed';
+    }
+    if (reclaimed > 0) await this.save(agentId, state);
+    return reclaimed;
+  }
+
   /** 取出（含领取中）未处理的信；failed 单独用 failedCount 读，不在这里混着展示 */
   async peek(agentId: string): Promise<InboxItem[]> {
     const state = await this.load(agentId);

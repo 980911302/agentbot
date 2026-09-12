@@ -142,6 +142,11 @@ export interface DeliveryPort {
   ): Promise<void>;
   /** 人工重试 failed：重置尝试预算 */
   retryFailed(agentId: string): Promise<number>;
+  /**
+   * 启动恢复（E3.6）：把 claimed（上次进程的领取）一律打回 pending 可再领。
+   * 每次按一次失败尝试计（重启不重置预算），达到上限进 failed。
+   */
+  reclaimAll(agentId: string, input: { maxAttempts: number; now?: number }): Promise<number>;
   /** 未处理的投递（pending + claimed，不含 failed） */
   peek(agentId: string): Promise<DeliveryItem[]>;
   take(agentId: string, predicate: (item: DeliveryItem) => boolean): Promise<DeliveryItem[]>;
@@ -203,7 +208,10 @@ export interface ToolInvocationPort {
     id: string,
     result: { status: 'ok' | 'error' | 'unknown'; summary?: string; error?: string; durationMs?: number },
   ): Promise<ToolInvocationRecord | undefined>;
-  /** 有意图、没结果的调用：恢复前必须先核对（E3.6 启动扫描的输入） */
+  /**
+   * 没有结果的调用（started=本进程在飞；unknown=上次进程退出留下的）：
+   * 恢复前必须先核对（E3.6 启动扫描的输入），不自动重放。
+   */
   unfinished(): Promise<ToolInvocationRecord[]>;
   /** 同一业务键的历史尝试：判断「这件事是不是已经做过」 */
   attemptsOf(operationKey: string): Promise<ToolInvocationRecord[]>;
@@ -219,6 +227,8 @@ export interface RunTurnRecord {
   text: string;
   treeId: string;
   status: 'running' | 'parked' | 'done' | 'cancelled';
+  /** 开始执行时取得的 epoch（E3.6）：旧执行的迟到写入凭它被拒 */
+  leaseEpoch?: number;
   createdAt: number;
 }
 
@@ -240,6 +250,13 @@ export interface RunLedgerPort {
   getTree(id: string): RunTreeRecord | undefined;
   /** 全部任务树（停止按树遍历、续跑按树筛选） */
   listTrees(): RunTreeRecord[];
+  /**
+   * 开始一次执行：取得执行位 + 让 epoch 前进，返回本次 epoch。
+   * 旧执行被抢占后再写回，凭 epoch/执行位不符被拒（E3.6 防迟到写入）。
+   */
+  beginRun(agentId: string, turnId: string): number;
+  /** 当前的执行 epoch（没跑过是 0） */
+  epochOf(agentId: string): number;
   /** 当前占着执行位的回合 id；没有则 undefined */
   runningTurnOf(agentId: string): string | undefined;
   releaseRunning(agentId: string, turnId: string): void;

@@ -14,7 +14,8 @@ export async function tempDataDir(prefix: string): Promise<{ dir: string; cleanu
   const dir = await mkdtemp(join(tmpdir(), `${prefix}-`));
   return {
     dir,
-    cleanup: () => rm(dir, { recursive: true, force: true }),
+    // 后台回合可能还在收尾写文件：带重试，避免清理竞态把测试带崩
+    cleanup: () => rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }),
   };
 }
 

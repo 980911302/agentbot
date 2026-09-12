@@ -122,7 +122,8 @@ export class RunExecutor {
     };
     this.ledger.putTurn(runtimeTurn);
     this.ledger.putTree(tree);
-    this.ledger.acquireRunning(agentId, turnId);
+    // E3.6：取得执行位并让 epoch 前进；旧执行（被抢占的那次）迟到写回时凭执行位不符被拦
+    runtimeTurn.leaseEpoch = this.ledger.beginRun(agentId, turnId);
     this.locks.add(agentId);
 
     // 本回合自己的 abort 控制器：挂起（park）就掐这里；外部 close 信号并行生效
@@ -208,6 +209,8 @@ export class RunExecutor {
         invocations: this.deps.toolLedger,
         runId: turnId,
         treeId,
+        // E3.6：执行位是否还是自己——被抢占后不再写对话线、不再发事件（迟到结果只留账本）
+        isCurrent: () => this.ledger.runningTurnOf(agentId) === turnId,
       });
 
       let result: RunResult;
@@ -222,6 +225,13 @@ export class RunExecutor {
         } else {
           throw error;
         }
+      }
+
+      // 被抢占的旧执行（执行位已经不在自己手里）不算完成：
+      // 写入已被执行位栅栏拦住（E3.6），这里只如实收场（不进记忆抽取）
+      const stillCurrent = this.ledger.runningTurnOf(agentId) === turnId;
+      if (!stillCurrent && result.stopReason !== 'parked' && result.stopReason !== 'cancelled') {
+        result = { content: '', iterations: result.iterations, stopReason: 'parked' };
       }
 
       // 挂起/中止的回合不再抽记忆——半截对话不值得记

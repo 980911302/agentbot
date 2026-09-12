@@ -7,7 +7,8 @@ import type { LLMProvider } from '../../llm/provider.js';
 import type { MemoryStore } from '../../memory/store.js';
 import type { RoomEventHandler, RoundOutcome, RoundStatus } from '../../room/types.js';
 import type { SecretStore } from '../../secret/store.js';
-import type { RunTreeRecord, RunTurnRecord } from '../../storage/ports.js';
+import type { RunTreeRecord, RunTurnRecord, ToolInvocationRecord } from '../../storage/ports.js';
+import type { RecoveryPlan } from '../../tools/policy.js';
 import type { Tool } from '../../tools/tool.js';
 
 /** 种子智能体（首次启动时落进注册表） */
@@ -96,6 +97,20 @@ export interface Receipt {
 export interface AcceptedRun<T> {
   receipt: Receipt;
   execute: () => Promise<T>;
+}
+
+/** 启动扫描报告（E3.6）：只汇报与拉起，不自动重放中断的工具调用 */
+export interface StartupReport {
+  /** 上次进程留下、没有结果的工具调用：先核对再决定（planRecovery） */
+  unresolvedInvocations: Array<{ record: ToolInvocationRecord; plan: RecoveryPlan }>;
+  /** 重启后有待处理投递的同事（可领取/在飞/失败） */
+  pendingDeliveries: Array<{
+    agentId: string;
+    agentName: string;
+    claimable: number;
+    claimed: number;
+    failed: number;
+  }>;
 }
 
 /** 撞上用户回合被挂起的停止令（运行时内部） */

@@ -46,12 +46,14 @@ import {
   type RoomRoundSummary,
   type SendOptions,
   type SendResult,
+  type StartupReport,
   type TurnResult,
   AgentBusyError,
 } from './runtime/types.js';
 import { AgentService } from './runtime/agent-service.js';
 import { StopCoordinator } from './runtime/stop-coordinator.js';
-import { InboxProcessor } from './runtime/inbox-processor.js';
+import { DELIVERY_DEFAULTS, InboxProcessor } from './runtime/inbox-processor.js';
+import { planRecovery } from '../tools/policy.js';
 import { RunExecutor } from './runtime/run-executor.js';
 import { RoomDispatcher } from './runtime/room-dispatcher.js';
 import { ReceivedStore } from '../storage/received-store.js';
@@ -600,6 +602,47 @@ export class AgentRuntime {
       this.receivedStore.record(clientMessageId, { messageId: summary.roundId, agentId: roomId });
     }
     return summary;
+  }
+
+  // ── 启动恢复（E3.6）─────────────────────────────────
+
+  /**
+   * 启动扫描：只在「已独享数据目录」时调用（服务端取得单实例锁之后）。
+   *   1) 上次进程留下、没有结果的工具调用 → 标 unknown 并给出核对计划（不自动重放）；
+   *   2) 上次进程领走却没确认的来信 → 一律作废重投（重启不重置尝试预算）；
+   *   3) 有待处理来信的同事 → 立刻排一次消费，重启后接着办。
+   */
+  async recover(): Promise<StartupReport> {
+    const unresolvedInvocations: StartupReport['unresolvedInvocations'] = [];
+    for (const record of await this.toolLedger.unfinished()) {
+      if (record.status !== 'started') {
+        unresolvedInvocations.push({ record, plan: planRecovery(record) });
+        continue;
+      }
+      const marked = await this.toolLedger
+        .finish(record.id, { status: 'unknown', error: '进程退出时未回填结果（启动扫描）' })
+        .catch(() => undefined);
+      if (marked) unresolvedInvocations.push({ record: marked, plan: planRecovery(marked) });
+    }
+
+    const pendingDeliveries: StartupReport['pendingDeliveries'] = [];
+    for (const agent of await this.registry.list()) {
+      await this.inbox
+        .reclaimAll(agent.id, { maxAttempts: this.options.deliveryMaxAttempts ?? DELIVERY_DEFAULTS.maxAttempts })
+        .catch(() => 0);
+      const items = await this.inbox.peek(agent.id).catch(() => []);
+      const claimable = await this.inbox.claimableCount(agent.id).catch(() => 0);
+      const claimed = items.filter((item) => item.status === 'claimed').length;
+      const failed = await this.inbox.failedCount(agent.id).catch(() => 0);
+      if (claimable === 0 && items.length === 0 && failed === 0) continue;
+      pendingDeliveries.push({ agentId: agent.id, agentName: agent.name, claimable, claimed, failed });
+      if (claimable > 0) {
+        // 投递是「至少一次」：重启后接着办，重复处理由幂等键与检查点兜底
+        void this.drainInbox(agent.id).catch(() => undefined);
+      }
+    }
+
+    return { unresolvedInvocations, pendingDeliveries };
   }
 
   // ── 智能体 1:1 ──────────────────────────────────────

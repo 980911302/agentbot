@@ -7,6 +7,7 @@ import { SecretStore } from '../secret/store.js';
 import { OpenAIProvider } from '../llm/openai-provider.js';
 import type { LLMProvider } from '../llm/provider.js';
 import { AgentRuntime } from './runtime.js';
+import { DataDirLock } from '../storage/instance-lock.js';
 import { SEED_AGENTS, SEED_ROOMS } from './seed.js';
 import { createAgentTools } from './tools.js';
 import { json, serveStatic } from './transport/index.js';
@@ -53,6 +54,9 @@ export async function createAgentServer(options: AgentServerOptions = {}): Promi
     : [{ id: config.model, label: config.model, hint: '来自环境变量配置' }, ...AVAILABLE_MODELS];
 
   const dataDir = options.dataDir ?? config.dataDir;
+  // E3.6：同一份数据只允许一个调度器；崩溃留下的锁会被接管
+  const lock = new DataDirLock(dataDir);
+  await lock.acquire();
   const memoryStore = new MemoryStore(dataDir);
   const broker = new InteractionBroker();
   const secrets = new SecretStore(dataDir);
@@ -93,6 +97,20 @@ export async function createAgentServer(options: AgentServerOptions = {}): Promi
   const toolDefs = runtime.tools.map((tool) => ({ name: tool.name, description: tool.description }));
   await runtime.ensureDefaultAgent();
   await runtime.ensureSeedRooms();
+
+  // E3.6 启动扫描：核对上次进程留下的中断调用、把没确认的来信重投并接着办
+  const report = await runtime.recover();
+  if (report.unresolvedInvocations.length > 0) {
+    console.warn(`启动扫描：${report.unresolvedInvocations.length} 个中断的工具调用待核对（不会自动重放）`);
+    for (const item of report.unresolvedInvocations.slice(0, 5)) {
+      console.warn(`  - ${item.record.tool}（${item.plan.action}）：${item.plan.reason}`);
+    }
+  }
+  for (const item of report.pendingDeliveries) {
+    console.log(
+      `启动扫描：${item.agentName} 有待处理来信（可领取 ${item.claimable} / 在飞 ${item.claimed} / 失败 ${item.failed}）`,
+    );
+  }
 
   const context: RouteContext = {
     runtime,
@@ -137,7 +155,10 @@ export async function createAgentServer(options: AgentServerOptions = {}): Promi
     close: () =>
       new Promise<void>((done) => {
         server.closeAllConnections();
-        server.close(() => done());
+        server.close(() => {
+          // 退出前放掉单实例锁（E3.6）：不放的话下次启动要等进程被判定为死掉
+          void lock.release().finally(done);
+        });
       }),
   };
 }

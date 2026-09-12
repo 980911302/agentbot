@@ -7,12 +7,15 @@ import type { StopCoordinator } from './stop-coordinator.js';
 import { AgentBusyError } from './types.js';
 import type { SendOptions, TurnResult } from './types.js';
 
-/** 领取期限：到期未确认视为处理中断，可回收重做 */
-const DEFAULT_LEASE_MS = 300_000;
-/** 同一封信最多处理几次；到顶进 failed，等人工重试 */
-const DEFAULT_MAX_ATTEMPTS = 3;
-/** 失败退避基数：第 n 次失败等 base * 2^(n-1) */
-const DEFAULT_BASE_DELAY_MS = 1_000;
+/** 投递默认参数：InboxProcessor 与启动恢复（runtime.recover）共用同一份预算 */
+export const DELIVERY_DEFAULTS = {
+  /** 领取期限：到期未确认视为处理中断，可回收重做 */
+  leaseMs: 300_000,
+  /** 同一封信最多处理几次；到顶进 failed，等人工重试（重启不重置） */
+  maxAttempts: 3,
+  /** 失败退避基数：第 n 次失败等 base * 2^(n-1) */
+  baseDelayMs: 1_000,
+} as const;
 
 /**
  * InboxProcessor（E2.2 拆出，E3.3 改为领取-确认）：
@@ -47,8 +50,8 @@ export class InboxProcessor {
   async process(agentId: string, options: SendOptions = {}): Promise<TurnResult | null> {
     const claimed = await this.deps.inbox.claim(agentId, {
       owner: `inbox:${randomUUID()}`,
-      leaseMs: this.deps.leaseMs ?? DEFAULT_LEASE_MS,
-      maxAttempts: this.deps.maxAttempts ?? DEFAULT_MAX_ATTEMPTS,
+      leaseMs: this.deps.leaseMs ?? DELIVERY_DEFAULTS.leaseMs,
+      maxAttempts: this.deps.maxAttempts ?? DELIVERY_DEFAULTS.maxAttempts,
     });
     if (claimed.length === 0) return null;
 
@@ -137,8 +140,8 @@ export class InboxProcessor {
 
   private failureInput() {
     return {
-      maxAttempts: this.deps.maxAttempts ?? DEFAULT_MAX_ATTEMPTS,
-      baseDelayMs: this.deps.baseDelayMs ?? DEFAULT_BASE_DELAY_MS,
+      maxAttempts: this.deps.maxAttempts ?? DELIVERY_DEFAULTS.maxAttempts,
+      baseDelayMs: this.deps.baseDelayMs ?? DELIVERY_DEFAULTS.baseDelayMs,
     };
   }
 }
