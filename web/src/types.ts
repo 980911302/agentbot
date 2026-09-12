@@ -9,38 +9,27 @@ export interface ToolCallView {
   status: 'running' | 'ok' | 'error';
 }
 
-export interface ToolCall {
-  id: string;
-  name: string;
-  arguments: string;
-}
+// 线上契约的唯一来源：src/shared/contracts（纯类型，编译期擦除，不引入后端运行模块）
+import type {
+  MessageContent,
+  MessageRole,
+  ToolCall,
+} from '../../src/shared/contracts/sse.js';
+import type { AgentEvent as WireAgentEvent } from '../../src/shared/contracts/sse.js';
+import type { Message as WireMessageShape } from '../../src/shared/contracts/sse.js';
+import type { RunResult as WireRunResult } from '../../src/shared/contracts/sse.js';
+import type {
+  InteractionKind,
+  InteractionOption,
+  InteractionRequest,
+} from '../../src/shared/contracts/sse.js';
+export type { InteractionKind, InteractionOption, InteractionRequest };
 
-export type MessageRole = 'user' | 'assistant' | 'tool';
+export type AgentEvent = WireAgentEvent;
 
-/** 后端 MessageContent：文本 / 一次工具调用 / 一条工具结果 */
-export type MessageContent =
-  | { type: 'text'; text: string }
-  | { type: 'tool_calls'; calls: ToolCall[] }
-  | {
-      type: 'tool_result';
-      callId: string;
-      name: string;
-      result: string;
-      durationMs: number;
-      ok: boolean;
-    };
+export type WireMessage = WireMessageShape;
 
-export interface WireMessage {
-  id: string;
-  agentId: string;
-  role: MessageRole;
-  content: MessageContent;
-  createdAt: number;
-  roomId?: string;
-  roomName?: string;
-  speaker?: string;
-  source?: 'user' | 'room' | 'agent';
-}
+export type RunResult = WireRunResult;
 
 export interface ArtifactView {
   path: string;
@@ -61,7 +50,6 @@ export interface DisplayMessage {
   senderColor?: string;
   senderAvatar?: string;
 }
-
 
 export interface SessionSummary {
   id: string;
@@ -111,6 +99,7 @@ export interface HealthInfo {
 }
 
 export type MemoryScope = 'self' | 'user' | 'project';
+
 export type MemoryTier = 'portrait' | 'log' | 'scratch';
 
 export interface MemoryEntryView {
@@ -214,41 +203,4 @@ export interface ContextStats {
   generatedAt: number;
 }
 
-export type InteractionKind = 'choice' | 'secret';
-
-export interface InteractionOption {
-  id: string;
-  label: string;
-  description?: string;
-}
-
-export interface InteractionRequest {
-  id: string;
-  kind: InteractionKind;
-  question: string;
-  detail?: string;
-  options?: InteractionOption[];
-  name?: string;
-  agentId: string;
-  agentName: string;
-  createdAt: number;
-  expiresAt: number;
-}
-
-/** 与后端 src/agent/types.ts 的 AgentEvent 保持一致 */
-export type AgentEvent =
-  | { type: 'context'; stats: ContextStats }
-  | { type: 'interaction'; request: InteractionRequest }
-  | { type: 'interaction_closed'; id: string; answered: boolean }
-  | { type: 'message'; message: WireMessage }
-  | { type: 'delta'; text: string }
-  | { type: 'iteration'; index: number }
-  | { type: 'compacted'; coversUpTo: number; messageCount: number }
-  | { type: 'memory'; added: Array<{ entry: { id: string; text: string } }>; merged: number }
-  | { type: 'final'; content: string };
-
-export interface RunResult {
-  content: string;
-  iterations: number;
-  stopReason: string;
-}
+// AgentEvent 已从契约导入（见文件头）

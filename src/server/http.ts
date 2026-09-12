@@ -16,6 +16,7 @@ import type { Room } from '../room/types.js';
 import { ROOM_MEMBER_LIMIT } from '../room/types.js';
 import type { Message } from '../agent/types.js';
 import { createAgentTools } from './tools.js';
+import { isKnownAgentEvent, parseSendMessageInput } from '../shared/contracts/index.js';
 
 const MAX_BODY_BYTES = 1024 * 1024;
 const PING_INTERVAL_MS = 15_000;
@@ -509,7 +510,7 @@ async function handleRoomRoute(
         model,
         ownerName: readString(body.ownerName) ?? context.ownerName,
         signal: controller.signal,
-        onEvent: (event) => sse(response, 'event', event),
+        onEvent: (event) => { if (isKnownAgentEvent(event)) sse(response, 'event', event); },
         onRoomEvent: (event) => sse(response, 'room', event),
       });
       sse(response, 'done', summary);
@@ -687,16 +688,18 @@ async function handleChatRoute(
   response: ServerResponse,
   context: RouteContext,
 ): Promise<void> {
-  const body = await readJson(request);
-  const text = (readString(body.message) || readString(body.text) || '').trim();
+  const parsed = parseSendMessageInput(await readJson(request));
+  if (!parsed.ok) {
+    json(response, 400, { error: parsed.error });
+    return;
+  }
+  const { text, botId: requestedBotId, model } = parsed.value;
   const list = await context.runtime.registry.list();
-  const requested = readString(body.botId) || readString(body.agentId) || '';
-  const found = requested ? await resolveAgent(context, requested) : undefined;
+  const found = requestedBotId ? await resolveAgent(context, requestedBotId) : undefined;
   const botId = found?.id ?? list[0]?.id;
-  const model = readString(body.model);
 
-  if (!text) {
-    json(response, 400, { error: 'message is required' });
+  if (!botId) {
+    json(response, 400, { error: 'botId is required' });
     return;
   }
   if (!botId) {
@@ -723,7 +726,7 @@ async function handleChatRoute(
     const result = await context.runtime.send(botId, text, {
       model,
       signal: controller.signal,
-      onEvent: (event) => sse(response, 'event', event),
+      onEvent: (event) => { if (isKnownAgentEvent(event)) sse(response, 'event', event); },
       onDelta: (text) => sse(response, 'event', { type: 'delta', text }),
     });
     sse(response, 'done', result);
@@ -743,13 +746,13 @@ async function handleSend(
   agentId: string,
 ): Promise<void> {
 
-  const body = await readJson(request);
-  const text = readString(body.text)?.trim() ?? '';
-  const model = readString(body.model);
-  if (!text) {
-    json(response, 400, { error: 'text is required' });
+  const parsed = parseSendMessageInput(await readJson(request));
+  if (!parsed.ok) {
+    json(response, 400, { error: parsed.error });
     return;
   }
+  const text = parsed.value.text;
+  const model = parsed.value.model;
   // 忙不拒：新句插队（同 handleChatRoute）
 
   response.writeHead(200, {
@@ -770,7 +773,7 @@ async function handleSend(
     const result = await context.runtime.send(agentId, text, {
       model,
       signal: controller.signal,
-      onEvent: (event) => sse(response, 'event', event),
+      onEvent: (event) => { if (isKnownAgentEvent(event)) sse(response, 'event', event); },
       onDelta: (text) => sse(response, 'event', { type: 'delta', text }),
     });
     sse(response, 'done', result);

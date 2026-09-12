@@ -2,40 +2,17 @@ import type { Tool } from '../tools/tool.js';
 import type { MemoryEntry, MemoryScope } from '../memory/types.js';
 import type { InteractionRequest } from '../interaction/types.js';
 
-export type MessageRole = 'user' | 'assistant' | 'tool';
-
-export interface ToolCall {
-  id: string;
-  name: string;
-  arguments: string;
-}
-
-export type MessageContent =
-  | { type: 'text'; text: string }
-  | { type: 'tool_calls'; calls: ToolCall[] }
-  | {
-      type: 'tool_result';
-      callId: string;
-      name: string;
-      result: string;
-      durationMs: number;
-      ok: boolean;
-    };
-
-export interface Message {
-  id: string;
-  agentId: string;
-  role: MessageRole;
-  content: MessageContent;
-  createdAt: number;
-  /** 这一轮来自哪个房间；私聊为空 */
-  roomId?: string;
-  roomName?: string;
-  /** 谁说的：用户 / 某个同事 / 自己的主人 */
-  speaker?: string;
-  /** 这一轮是由什么触发的 */
-  source?: 'user' | 'room' | 'agent';
-}
+// 线上契约（消息/事件/结果）的唯一来源在 shared/contracts；这里按原名 re-export，
+// 后端内部代码继续从这里 import，避免逐个文件改 import 路径。
+import type {
+  ToolCall,
+  MessageRole,
+  MessageContent,
+  Message,
+  StopReason,
+  RunResult,
+} from '../shared/contracts/sse.js';
+export type { ToolCall, MessageRole, MessageContent, Message, StopReason, RunResult };
 
 export interface MemoryRef {
   entry: MemoryEntry;
@@ -157,20 +134,6 @@ export type AgentEvent =
 
 export type AgentEventHandler = (event: AgentEvent) => void;
 
-/**
- * 回合怎么收的场：
- * parked = 被用户新句插队挂起（旧树仍 open 欠着）；
- * stopped = 被停止令作废；
- * cancelled = 连接断开等外部中止。
- */
-export type StopReason = 'final_answer' | 'max_iterations' | 'parked' | 'stopped' | 'cancelled';
-
-export interface RunResult {
-  content: string;
-  iterations: number;
-  stopReason: StopReason;
-  usedTools?: string[];
-}
 
 export function messageText(message: Message): string {
   const content = message.content;

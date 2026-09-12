@@ -12,31 +12,8 @@
  *     → broker.resolve() → 工具拿到答案 → 回合继续
  */
 
-export type InteractionKind = 'choice' | 'secret';
-
-export interface InteractionOption {
-  id: string;
-  label: string;
-  description?: string;
-}
-
-export interface InteractionRequest {
-  id: string;
-  kind: InteractionKind;
-  /** 问题本身 */
-  question: string;
-  /** 补充说明 */
-  detail?: string;
-  /** choice 专用 */
-  options?: InteractionOption[];
-  /** secret 专用：存起来之后用什么名字引用 */
-  name?: string;
-  agentId: string;
-  agentName: string;
-  createdAt: number;
-  /** 过期时间；到点自动按「用户没答」处理 */
-  expiresAt: number;
-}
+import type { InteractionKind, InteractionOption, InteractionRequest } from '../shared/contracts/sse.js';
+export type { InteractionKind, InteractionOption, InteractionRequest };
 
 export interface InteractionAnswer {
   id: string;
