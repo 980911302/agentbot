@@ -53,6 +53,7 @@ import {
 import { AgentService } from './runtime/agent-service.js';
 import { StopCoordinator } from './runtime/stop-coordinator.js';
 import { InboxProcessor } from './runtime/inbox-processor.js';
+import { RunExecutor } from './runtime/run-executor.js';
 import { RoomDispatcher } from './runtime/room-dispatcher.js';
 export * from './runtime/types.js';
 
@@ -103,6 +104,8 @@ export class AgentRuntime {
   private readonly stopCoordinator: StopCoordinator;
   /** 同事来信的消费（E2.2 拆出） */
   private readonly inboxProcessor: InboxProcessor;
+  /** 回合执行核心（E2.2 拆出）：调度/记账/模型循环/记忆收尾 */
+  private readonly executor: RunExecutor;
   /** 群三波扇出（E2.2 拆出） */
   private readonly roomDispatcher: RoomDispatcher;
   private readonly locks = new Set<string>();
@@ -151,16 +154,21 @@ export class AgentRuntime {
       },
     });
 
-    this.agentService = new AgentService({
+
+
+
+    this.roomDispatcher = new RoomDispatcher({
       registry: this.registry,
-      memory: this.memory,
-      compaction: this.compaction,
-      createProvider: options.createProvider,
-      defaultModel: options.defaultModel,
-      knownModels: options.knownModels,
-      budget: options.budget,
-      tools: () => this.tools,
+      rooms: this.rooms,
+      messages: this.messages,
+      locks: this.locks,
+      membersOf: (roomId) => this.membersOf(roomId),
+      ownerNameFallback: options.ownerName ?? DEFAULT_OWNER_NAME,
+      stopWords: options.stopWords ?? DEFAULT_STOP_WORDS,
+      runTurn: (agentId, task, turn, options) =>
+        this.runTurn(agentId, task, turn, options),
     });
+
 
     this.stopCoordinator = new StopCoordinator({
       registry: this.registry,
@@ -185,16 +193,34 @@ export class AgentRuntime {
         this.runTurn(agentId, task, { extraTools: [], ...turn }, options),
     });
 
-    this.roomDispatcher = new RoomDispatcher({
+    this.agentService = new AgentService({
       registry: this.registry,
-      rooms: this.rooms,
+      memory: this.memory,
+      compaction: this.compaction,
+      createProvider: options.createProvider,
+      defaultModel: options.defaultModel,
+      knownModels: options.knownModels,
+      budget: options.budget,
+      tools: () => this.tools,
+    });
+
+    this.executor = new RunExecutor({
+      registry: this.registry,
       messages: this.messages,
+      memory: this.memory,
+      inbox: this.inbox,
+      builder: this.builder,
+      compactor: this.compactor,
+      compaction: this.compaction,
+      extractor: this.extractor,
+      agentService: this.agentService,
+      stopCoordinator: this.stopCoordinator,
+      drainInbox: (agentId, options) => this.drainInbox(agentId, options),
       locks: this.locks,
-      membersOf: (roomId) => this.membersOf(roomId),
-      ownerNameFallback: options.ownerName ?? DEFAULT_OWNER_NAME,
-      stopWords: options.stopWords ?? DEFAULT_STOP_WORDS,
-      runTurn: (agentId, task, turn, options) =>
-        this.runTurn(agentId, task, turn, options),
+      turnsMap: this.turns,
+      treesMap: this.trees,
+      runningTurnByAgentMap: this.runningTurnByAgent,
+      maxIterations: options.maxIterations,
     });
 
     this.tools = [
@@ -202,7 +228,7 @@ export class AgentRuntime {
       ...createWorkbenchTools(this.workbench),
       this.createSendToAgentTool(),
       ...createTaskTools({
-        provider: this.providerFor(this.options.defaultModel),
+        provider: this.agentService.providerFor(this.options.defaultModel),
         messages: this.messages,
         workerTools: () => this.tools.filter((tool) => tool.name !== 'SendToUser'),
         maxIterations: this.options.maxIterations,
@@ -420,290 +446,16 @@ export class AgentRuntime {
     return this.locks.has(agentId);
   }
 
-  // ── 回合执行 ────────────────────────────────────────
+  // ── 回合执行（搬至 RunExecutor，此处保持兼容入口）──
 
-  private async runTurn(
+  private runTurn(
     agentId: string,
     task: Message,
-    turn: {
-      brief?: string;
-      extraTools?: Tool<any>[];
-      toolContext?: TurnInput['toolContext'];
-      persistAssistantText?: boolean;
-      skipPersist?: boolean;
-      posts?: string[];
-      model?: string;
-      onEvent?: AgentEventHandler;
-      /** 仅私聊传入：模型增量文本透传成 delta 事件 */
-      onDelta?: (text: string) => void;
-      /** 内部续跑回合（欠账补跑）：不算用户来源，忙时退避 */
-      resume?: boolean;
-      signal?: AbortSignal;
-    },
+    turn: Parameters<RunExecutor['runTurn']>[2],
     options: SendOptions = {},
   ): Promise<TurnResult> {
-    const source: RuntimeTurn['source'] = turn.resume
-      ? 'resume'
-      : task.source === 'room'
-        ? 'room'
-        : task.source === 'agent'
-          ? 'agent'
-          : 'user';
-
-    // 见 docs/架构设计.md「插话、停止和等待」：用户的新句永远能开新回合——旧的断流挂起、树记欠；
-    // 同事信/群/续跑撞上忙智能体维持退避，不打扰正在进行的用户回合。
-    const existingTurnId = this.runningTurnByAgent.get(agentId);
-    if (existingTurnId) {
-      if (source === 'user') {
-        this.parkTurn(agentId, existingTurnId);
-      } else {
-        throw new AgentBusyError();
-      }
-    }
-
-    const turnId = randomUUID();
-    const treeId = randomUUID();
-    const runtimeTurn: RuntimeTurn = {
-      id: turnId,
-      agentId,
-      source,
-      kind: 'normal',
-      text: task.content.type === 'text' ? task.content.text : '',
-      treeId,
-      status: 'running',
-      createdAt: Date.now(),
-    };
-    const tree: TaskTree = {
-      id: treeId,
-      rootTurnId: turnId,
-      agentId,
-      jobs: [],
-      children: [],
-      status: 'open',
-      resumeCount: 0,
-      createdAt: runtimeTurn.createdAt,
-    };
-    this.turns.set(turnId, runtimeTurn);
-    this.trees.set(treeId, tree);
-    this.runningTurnByAgent.set(agentId, turnId);
-    this.locks.add(agentId);
-
-    // 本回合自己的 abort 控制器：挂起（park）就掐这里；外部 close 信号并行生效
-    const controller = new AbortController();
-    tree.jobs.push({ abort: () => controller.abort(), label: 'turn' });
-    const externalSignal = turn.signal ?? options.signal;
-    const signal = externalSignal
-      ? AbortSignal.any([controller.signal, externalSignal])
-      : controller.signal;
-
-    try {
-      const record = await this.registry.get(agentId);
-      if (!record) throw new Error(`Unknown agent: ${agentId}`);
-
-      const model = this.resolveModel(turn.model ?? options.model);
-      const provider = this.providerFor(model);
-
-      if (!turn.skipPersist) {
-        await this.messages.append(task);
-        options.onEvent?.({ type: 'message', message: task });
-      }
-
-      let agent = await this.buildAgent(record);
-
-      const compaction = await this.compactor.maybeCompact(agent, provider).catch(() => null);
-      if (compaction) {
-        options.onEvent?.({
-          type: 'compacted',
-          coversUpTo: compaction.state.coversUpTo,
-          messageCount: compaction.state.messageCount,
-        });
-        agent = await this.buildAgent(record);
-      }
-
-      const buildOptions: BuildOptions = { turnBrief: turn.brief };
-      const built = await this.builder.build(agent, task, buildOptions);
-      options.onEvent?.({ type: 'context', stats: built.stats });
-      await this.touchSurfaced(built.surfaced);
-
-      const registry = turn.extraTools
-        ? ToolRegistry.from([...agent.tools, ...turn.extraTools])
-        : ToolRegistry.from(agent.tools);
-
-      // 本轮配额：工作台工具建多少同事/群，回合结束即失效；树记账挂同一份状态
-      const turnState: TurnState = {
-        workbench: { agentsCreated: 0, roomsCreated: 0 },
-        treeId,
-        registerChild: (child) => {
-          if (!tree.children.some((item) => item.agentId === child.agentId && item.via === child.via)) {
-            tree.children.push(child);
-          }
-        },
-        registerJob: (abort, label) => tree.jobs.push({ abort, label }),
-        persistOutgoing: async (text) => {
-          const message: Message = {
-            id: randomUUID(),
-            agentId,
-            role: 'assistant',
-            content: { type: 'text', text },
-            createdAt: Date.now(),
-            source: 'agent',
-          };
-          await this.messages.append(message);
-          options.onEvent?.({ type: 'message', message });
-        },
-      };
-
-      const loop = new AgentLoop({
-        provider,
-        messages: this.messages,
-        maxIterations: this.options.maxIterations,
-        onEvent: options.onEvent,
-        onDelta: turn.onDelta,
-        signal,
-        toolsOverride: registry,
-        toolContext: { ...(turn.toolContext ?? {}), turnState, emit: options.onEvent },
-        persistAssistantText: turn.persistAssistantText,
-        stamp: task.roomId
-          ? { roomId: task.roomId, roomName: task.roomName, speaker: task.speaker, source: 'room' }
-          : { source: task.source },
-      });
-
-      let result: RunResult;
-      try {
-        result = await loop.run(agent, built);
-      } catch (error) {
-        if (runtimeTurn.status === 'parked') {
-          // 被新句插队：这不是故障，安静挂起，让位给新回合
-          result = { content: '', iterations: 0, stopReason: 'parked' };
-        } else if (controller.signal.aborted) {
-          result = { content: '', iterations: 0, stopReason: 'cancelled' };
-        } else {
-          throw error;
-        }
-      }
-
-      // 挂起/中止的回合不再抽记忆——半截对话不值得记
-      if (result.stopReason === 'final_answer' || result.stopReason === 'max_iterations') {
-        await this.registry.update(agentId, {});
-        const exchange = await this.messages.recent(agentId, 12, task.id);
-        const extracted = await this.extractor
-          .extract(await this.buildAgent(record), provider, [...exchange, task])
-          .catch(() => ({ refs: [] as MemoryRef[], merged: 0 }));
-        if (extracted.refs.length > 0 || extracted.merged > 0) {
-          options.onEvent?.({ type: 'memory', added: extracted.refs, merged: extracted.merged });
-        }
-      }
-
-      return {
-        ...result,
-        agentId,
-        agentName: record.name,
-        context: built,
-        posts: turn.posts ?? [],
-        status: (turn.posts?.length ?? 0) > 0 ? 'spoke' : 'silent',
-      };
-    } finally {
-      // 只有自己还占着坑才清；被插队时新回合已经接管了锁
-      if (this.runningTurnByAgent.get(agentId) === turnId) {
-        this.runningTurnByAgent.delete(agentId);
-        this.locks.delete(agentId);
-      }
-      if (runtimeTurn.status === 'running') runtimeTurn.status = 'done';
-      tree.jobs = tree.jobs.filter((job) => job.label !== 'turn');
-
-      // 收尾顺序（见 docs/架构设计.md「插话、停止和等待」 优先级）：停止令 → 欠账续跑 → 同事来信
-      await this.stopCoordinator.processPendingStops(agentId).catch(() => undefined);
-      void this.resumeOwed(agentId).catch(() => undefined);
-      const pending = await this.inbox.count(agentId).catch(() => 0);
-      if (pending > 0) {
-        this.drainInbox(agentId, { model: turn.model ?? options.model }).catch(() => undefined);
-      }
-    }
-  }
-
-  /** 把正在跑的回合断流挂起：旧树保持 open 记欠，等新回合结束再补跑 */
-  private parkTurn(agentId: string, turnId: string): void {
-    const rt = this.turns.get(turnId);
-    if (!rt || rt.status !== 'running') return;
-    rt.status = 'parked';
-    const tree = this.trees.get(rt.treeId);
-    if (tree) {
-      for (const job of tree.jobs) job.abort();
-    }
-  }
-
-  /** 欠账补跑：最早的、还没续过 3 次的 parked 树，接回去继续做 */
-  private async resumeOwed(agentId: string): Promise<void> {
-    if (this.runningTurnByAgent.has(agentId)) return;
-    const tree = [...this.trees.values()]
-      .filter(
-        (item) =>
-          item.agentId === agentId &&
-          item.status === 'open' &&
-          item.resumeCount < 3 &&
-          this.turns.get(item.rootTurnId)?.status === 'parked',
-      )
-      .sort((left, right) => left.createdAt - right.createdAt)[0];
-    if (!tree) return;
-    tree.resumeCount += 1;
-    const root = this.turns.get(tree.rootTurnId);
-    // 先了结再跑：续跑回合自己的 finally 会再触发 resumeOwed，不改状态会立即再续一轮
-    if (root && root.status === 'parked') root.status = 'done';
-
-    const task: Message = {
-      id: randomUUID(),
-      agentId,
-      role: 'user',
-      content: {
-        type: 'text',
-        text: `（续）回到之前被打断的任务：${root?.text ?? ''}`,
-      },
-      createdAt: Date.now(),
-      source: 'user',
-    };
-    try {
-      const result = await this.runTurn(
-        agentId,
-        task,
-        {
-          resume: true,
-          skipPersist: true,
-          brief:
-            '你之前有一件事被主人的新指令打断了，现在接着做。上面「续」的消息就是那件事的原文。先把旧事做完；如果情况已经变化做不下去了，用一句话说明原因即可。',
-        },
-        {},
-      );
-      // 续跑本身又被插队 → 这笔账重新记欠
-      if (result.stopReason === 'parked' && root && root.status === 'done') {
-        root.status = 'parked';
-      }
-    } catch {
-      if (root && root.status === 'done') root.status = 'parked';
-    }
-  }
-
-
-  private async touchSurfaced(refs: MemoryRef[]): Promise<void> {
-    const byScope = new Map<string, { scope: MemoryScope; ownerId: string; ids: string[] }>();
-    for (const ref of refs) {
-      const key = `${ref.scope}:${ref.ownerId}`;
-      const bucket = byScope.get(key) ?? { scope: ref.scope, ownerId: ref.ownerId, ids: [] };
-      bucket.ids.push(ref.entry.id);
-      byScope.set(key, bucket);
-    }
-    for (const bucket of byScope.values()) {
-      await this.memory.touch(bucket.scope, bucket.ownerId, bucket.ids).catch(() => undefined);
-    }
-  }
-
-  private resolveModel(model?: string): string {
-    return this.agentService.resolveModel(model);
-  }
-
-  private providerFor(model: string): LLMProvider {
-    return this.agentService.providerFor(model);
+    return this.executor.runTurn(agentId, task, turn, options);
   }
 }
-
 
 export type { AgentEvent, RoomEvent, RoundOutcome };
