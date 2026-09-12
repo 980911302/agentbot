@@ -208,11 +208,12 @@ export async function streamRoom(
   signal?: AbortSignal,
   model?: string,
   ownerName?: string,
+  clientMessageId?: string,
 ): Promise<void> {
   const response = await fetch(`/api/rooms/${encodeURIComponent(roomId)}/messages`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ text, model, ownerName }),
+    body: JSON.stringify({ text, model, ownerName, clientMessageId }),
     signal,
   });
 

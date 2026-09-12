@@ -114,6 +114,7 @@ export async function handleRoomRoute(
     const body = await readJson(request);
     const text = (readString(body.text) ?? readString(body.message) ?? '').trim();
     const model = readString(body.model);
+    const clientMessageId = readString(body.clientMessageId);
     if (!text) {
       json(response, 400, { error: 'text is required' });
       return;
@@ -136,6 +137,7 @@ export async function handleRoomRoute(
     try {
       const summary = await runtime.postToRoom(roomId, text, {
         model,
+        clientMessageId,
         ownerName: readString(body.ownerName) ?? context.ownerName,
         signal: controller.signal,
         onEvent: (event) => {

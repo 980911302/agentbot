@@ -59,6 +59,8 @@ export interface SendOptions {
   ownerName?: string;
   /** 这些成员跳过这一轮（工作台代发时排除调用者自己） */
   excludeAgentIds?: string[];
+  /** 幂等键（E3.2）：重复提交返回原消息 */
+  clientMessageId?: string;
 }
 
 /** 一次回合的记账（见 docs/架构设计.md「插话、停止和等待」） */

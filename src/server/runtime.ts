@@ -55,6 +55,7 @@ import { StopCoordinator } from './runtime/stop-coordinator.js';
 import { InboxProcessor } from './runtime/inbox-processor.js';
 import { RunExecutor } from './runtime/run-executor.js';
 import { RoomDispatcher } from './runtime/room-dispatcher.js';
+import { ReceivedStore } from '../storage/received-store.js';
 export * from './runtime/types.js';
 
 const DEFAULT_MAX_AGENT_DEPTH = 3;
@@ -106,6 +107,8 @@ export class AgentRuntime {
   private readonly inboxProcessor: InboxProcessor;
   /** 回合执行核心（E2.2 拆出）：调度/记账/模型循环/记忆收尾 */
   private readonly executor: RunExecutor;
+  /** 接收幂等日志（E3.2） */
+  private readonly receivedStore: ReceivedStore;
   /** 群三波扇出（E2.2 拆出） */
   private readonly roomDispatcher: RoomDispatcher;
   private readonly locks = new Set<string>();
@@ -203,6 +206,8 @@ export class AgentRuntime {
       budget: options.budget,
       tools: () => this.tools,
     });
+
+    this.receivedStore = new ReceivedStore(options.dataDir);
 
     this.executor = new RunExecutor({
       registry: this.registry,
@@ -356,6 +361,37 @@ export class AgentRuntime {
   // ── 私聊回合 ────────────────────────────────────────
 
   async send(agentId: string, text: string, options: SendOptions = {}): Promise<SendResult> {
+    const clientMessageId = options.clientMessageId;
+    if (clientMessageId) {
+      const existing = this.receivedStore.find(clientMessageId);
+      if (existing) {
+        // E3.2：重复提交返回原消息，不开新回合
+        const original = (await this.messages.list(agentId)).find((m) => m.id === existing.messageId);
+        if (original) {
+          options.onEvent?.({ type: 'message', message: original });
+          const record = await this.registry.get(agentId);
+          return {
+            content: original.content.type === 'text' ? original.content.text : '',
+            iterations: 0,
+            stopReason: 'duplicate',
+            agentId,
+            agentName: record?.name ?? agentId,
+            context: {
+              agentId,
+              system: '',
+              messages: [],
+              stats: { sections: [], totalTokens: 0, budgetTokens: 0, generatedAt: Date.now() },
+              surfaced: [],
+              droppedRecent: 0,
+              droppedGroups: 0,
+            },
+            posts: [],
+            status: 'silent',
+          };
+        }
+      }
+    }
+
     // 见 docs/架构设计.md「插话、停止和等待」：认停止词是运行时的事，不让模型「想起来去通知别人」
     if (this.stopCoordinator.isStopSentence(text)) {
       return this.stopCoordinator.stopFromUser(agentId, text, options);
@@ -371,7 +407,11 @@ export class AgentRuntime {
       content: { type: 'text', text },
       createdAt: Date.now(),
       source: 'user',
+      ...(clientMessageId ? { clientMessageId } : {}),
     };
+    if (clientMessageId) {
+      this.receivedStore.record(clientMessageId, { messageId: task.id, agentId });
+    }
     return this.runTurn(agentId, task, { brief: undefined, onDelta: options.onDelta }, options);
   }
 
@@ -386,7 +426,19 @@ export class AgentRuntime {
     text: string,
     options: SendOptions = {},
   ): Promise<RoomRoundSummary> {
-    return this.roomDispatcher.postToRoom(roomId, text, options);
+    const clientMessageId = options.clientMessageId;
+    if (clientMessageId) {
+      const existing = this.receivedStore.find(clientMessageId);
+      if (existing) {
+        // E3.2：重复提交不再扇出，直接按已处理返回
+        return { roundId: '', roomId, roomName: roomId, outcomes: [], skipped: [] };
+      }
+    }
+    const summary = await this.roomDispatcher.postToRoom(roomId, text, options);
+    if (clientMessageId) {
+      this.receivedStore.record(clientMessageId, { messageId: summary.roundId, agentId: roomId });
+    }
+    return summary;
   }
 
   // ── 智能体 1:1 ──────────────────────────────────────

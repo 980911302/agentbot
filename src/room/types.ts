@@ -40,6 +40,8 @@ export interface RoomMessage {
   mentions: string[];
   everyone: boolean;
   createdAt: number;
+  /** 幂等键（E3.2） */
+  clientMessageId?: string;
 }
 
 /** 一个成员在这一轮里的结局：开口还是闭嘴 */

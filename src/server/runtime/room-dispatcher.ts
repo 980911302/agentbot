@@ -100,6 +100,7 @@ export class RoomDispatcher {
       senderId: 'owner',
       senderName: ownerName,
       text,
+      ...(options.clientMessageId ? { clientMessageId: options.clientMessageId } : {}),
       mentions: mentions.ids,
       everyone: mentions.everyone,
       createdAt: Date.now(),

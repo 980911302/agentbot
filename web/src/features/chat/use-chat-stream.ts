@@ -55,7 +55,7 @@ export function useChatStream(input: {
       }
 
       const userMsg = {
-        id: `pending-${Math.random().toString(36).slice(2, 10)}`,
+        id: `pending-${clientMessageId}`,
         role: 'user' as const,
         senderName: ownerName,
         content: trimmed,
@@ -67,6 +67,8 @@ export function useChatStream(input: {
         [activeChannelId]: [...(prev[activeChannelId] ?? []), userMsg],
       }));
 
+      // 幂等键：同一键重复提交，服务端返回原消息（E3.2）
+      const clientMessageId = crypto.randomUUID();
       busyCountRef.current += 1;
       setBusy(true);
       setLiveText('');
@@ -87,7 +89,9 @@ export function useChatStream(input: {
                   const list = prev[activeChannelId] ?? [];
                   if (message.senderKind === 'user') {
                     const index = list.findIndex(
-                      (item) => item.id.startsWith('pending-') && item.content === message.text,
+                      (item) =>
+                        item.id === `pending-${clientMessageId}` ||
+                        (item.id.startsWith('pending-') && item.content === message.text),
                     );
                     if (index >= 0) {
                       const next = [...list];
@@ -157,6 +161,7 @@ export function useChatStream(input: {
             controller.signal,
             model || undefined,
             ownerName,
+            clientMessageId,
           );
         } catch (error) {
           const aborted = error instanceof DOMException && error.name === 'AbortError';
@@ -185,7 +190,7 @@ export function useChatStream(input: {
 
       try {
         await api.streamChat(
-          { botId: activeAgentId, message: trimmed, model: model || undefined },
+          { botId: activeAgentId, message: trimmed, model: model || undefined, clientMessageId },
           {
             onEvent: (event) => {
               if (event.type === 'delta') {

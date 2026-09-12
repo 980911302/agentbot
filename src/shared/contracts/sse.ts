@@ -41,6 +41,8 @@ export interface Message {
   speaker?: string;
   /** 这一轮是由什么触发的 */
   source?: 'user' | 'room' | 'agent';
+  /** 客户端幂等键（E3.2：重复提交返回原消息） */
+  clientMessageId?: string;
 }
 
 export interface ContextSectionStat {
@@ -100,7 +102,13 @@ export type AgentEvent =
   | { type: 'memory'; added: MemoryAddedRef[]; merged: number }
   | { type: 'final'; content: string };
 
-export type StopReason = 'final_answer' | 'max_iterations' | 'parked' | 'stopped' | 'cancelled';
+export type StopReason =
+  | 'final_answer'
+  | 'max_iterations'
+  | 'parked'
+  | 'stopped'
+  | 'cancelled'
+  | 'duplicate';
 
 /** `event: done` 帧的载荷 */
 export interface RunResult {

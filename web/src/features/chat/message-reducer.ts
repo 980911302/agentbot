@@ -70,14 +70,20 @@ export function applyEvent(messages: DisplayMessage[], event: AgentEvent): Displ
   if (wire.role === 'user') {
     if (wire.content.type !== 'text') return messages;
     const text = wire.content.text;
-    const index = messages.findIndex(
-      (item) => item.id.startsWith('pending-') && item.content === text,
-    );
+    // E3.2：优先用幂等键定位占位（重复提交时同键不产生第二条）
+    const pendingId = wire.clientMessageId ? `pending-${wire.clientMessageId}` : null;
+    const index = pendingId
+      ? messages.findIndex((item) => item.id === pendingId)
+      : messages.findIndex(
+          (item) => item.id.startsWith('pending-') && item.content === text,
+        );
     if (index >= 0) {
       const next = [...messages];
       next[index] = { ...next[index]!, id: wire.id };
       return next;
     }
+    // 同 id 已存在（服务端重发原消息）→ 不重复渲染
+    if (messages.some((item) => item.id === wire.id)) return messages;
     return messages;
   }
 
@@ -85,6 +91,8 @@ export function applyEvent(messages: DisplayMessage[], event: AgentEvent): Displ
     if (wire.content.type === 'text') {
       const text = wire.content.text;
       if (!text.trim()) return messages;
+      // 幂等：同 id 重发不再追加（E3.2 重复提交返回原消息）
+      if (messages.some((item) => item.id === wire.id)) return messages;
       return [
         ...messages,
         {

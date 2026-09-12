@@ -87,7 +87,7 @@ export async function handleChatRoute(
     json(response, 400, { error: parsed.error });
     return;
   }
-  const { text, botId: requestedBotId, model } = parsed.value;
+  const { text, botId: requestedBotId, model, clientMessageId } = parsed.value;
   const list = await context.runtime.registry.list();
   const found = requestedBotId ? await resolveAgent(context, requestedBotId) : undefined;
   const botId = found?.id ?? list[0]?.id;
@@ -106,6 +106,7 @@ export async function handleChatRoute(
   try {
     const result = await context.runtime.send(botId, text, {
       model,
+      clientMessageId,
       signal: controller.signal,
       onEvent: (event) => {
         if (isKnownAgentEvent(event)) sse(response, 'event', event);
@@ -136,6 +137,7 @@ export async function handleSend(
   }
   const text = parsed.value.text;
   const model = parsed.value.model;
+  const clientMessageId = parsed.value.clientMessageId;
 
   openSse(response);
 
@@ -146,6 +148,7 @@ export async function handleSend(
   try {
     const result = await context.runtime.send(agentId, text, {
       model,
+      clientMessageId,
       signal: controller.signal,
       onEvent: (event) => {
         if (isKnownAgentEvent(event)) sse(response, 'event', event);
