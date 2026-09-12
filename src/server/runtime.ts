@@ -52,6 +52,7 @@ import {
 } from './runtime/types.js';
 import { AgentService } from './runtime/agent-service.js';
 import { StopCoordinator } from './runtime/stop-coordinator.js';
+import { InboxProcessor } from './runtime/inbox-processor.js';
 export * from './runtime/types.js';
 
 const DEFAULT_MAX_AGENT_DEPTH = 3;
@@ -99,6 +100,8 @@ export class AgentRuntime {
   private readonly agentService: AgentService;
   /** 停止令的认词、排队与执行（E2.2 拆出） */
   private readonly stopCoordinator: StopCoordinator;
+  /** 同事来信的消费（E2.2 拆出） */
+  private readonly inboxProcessor: InboxProcessor;
   private readonly locks = new Set<string>();
 
   /** 回合与任务树（见 docs/架构设计.md「插话、停止和等待」）：当前存于内存，消息本身已落盘 */
@@ -168,6 +171,15 @@ export class AgentRuntime {
       pendingStops: this.pendingStops,
       stopWords: options.stopWords ?? DEFAULT_STOP_WORDS,
       stopAckTimeoutMs: options.stopAckTimeoutMs ?? 30_000,
+    });
+
+    this.inboxProcessor = new InboxProcessor({
+      inbox: this.inbox,
+      registry: this.registry,
+      maxAgentChainDepth: this.options.maxAgentChainDepth ?? DEFAULT_MAX_AGENT_DEPTH,
+      stopCoordinator: this.stopCoordinator,
+      runTurn: (agentId, task, turn, options) =>
+        this.runTurn(agentId, task, { extraTools: [], ...turn }, options),
     });
 
     this.tools = [
@@ -671,55 +683,9 @@ export class AgentRuntime {
   }
 
   /** 把积压的同事来信合并成一个回合处理 */
+  /** 把积压的同事来信合并成一个回合处理（搬至 InboxProcessor，此处保持兼容入口） */
   async drainInbox(agentId: string, options: SendOptions & { depth?: number } = {}): Promise<TurnResult | null> {
-    const items = await this.inbox.drain(agentId);
-    if (items.length === 0) return null;
-
-    const record = await this.registry.get(agentId);
-    if (!record) return null;
-
-    // 停止令优先处理（§4.3）：先砍自己这棵再回报；普通信照旧
-    const stops = items.filter((item) => item.kind === 'stop');
-    for (const stop of stops) {
-      await this.stopCoordinator.stopFromParent(
-        agentId,
-        { text: stop.text, createdAt: stop.createdAt },
-        { agentId: stop.fromAgentId, name: stop.fromName },
-      );
-    }
-
-    const letters = items.filter((item) => item.kind !== 'stop' && item.kind !== 'stop-ack');
-    if (letters.length === 0) return null;
-
-    const depth = Math.max(...letters.map((item) => item.depth));
-    const fromName = letters[0]?.fromName ?? '同事';
-    const text = letters.map((item) => item.text).join('\n\n');
-
-    const task: Message = {
-      id: randomUUID(),
-      agentId,
-      role: 'user',
-      content: { type: 'text', text },
-      createdAt: Date.now(),
-      speaker: fromName,
-      source: 'agent',
-    };
-
-    const result = await this.runTurn(agentId, task, {
-      brief: buildAgentBrief({
-        fromName,
-        depth,
-        maxDepth: this.options.maxAgentChainDepth ?? DEFAULT_MAX_AGENT_DEPTH,
-      }),
-      extraTools: [],
-      toolContext: { agentChainDepth: depth },
-    }, options);
-
-    // 处理完这批，继续往下走（受深度上限约束）
-    const deeper = await this.drainInbox(agentId, { ...options, depth: depth + 1 });
-    void deeper;
-
-    return result;
+    return this.inboxProcessor.drain(agentId, options);
   }
 
   async pendingMail(agentId: string): Promise<number> {
