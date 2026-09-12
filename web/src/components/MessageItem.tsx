@@ -1,7 +1,6 @@
 import { RichText } from '../markdown';
 import type { BotSummary, DisplayMessage } from '../types';
 import { BotAvatar } from './BotAvatar';
-import { ToolCallCard } from './ToolCallCard';
 
 function getInitials(name: string): string {
   const trimmed = name.trim();
@@ -63,14 +62,6 @@ export function MessageItem({ message, bot }: { message: DisplayMessage; bot: Bo
 
         <div className={`msg-bubble-box assistant-bubble${message.error ? ' error' : ''}`}>
           {message.content ? <RichText text={message.content} /> : null}
-
-          {message.toolCalls && message.toolCalls.length > 0 ? (
-            <div className="tools-container">
-              {message.toolCalls.map((call) => (
-                <ToolCallCard key={call.id} call={call} />
-              ))}
-            </div>
-          ) : null}
         </div>
       </div>
     </div>

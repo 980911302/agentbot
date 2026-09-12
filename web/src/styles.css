@@ -2593,3 +2593,31 @@ button {
   line-height: 1.6;
   color: var(--fg-muted);
 }
+
+/* ── 流式打字 ─────────────────────────────────────────── */
+
+.live-bubble {
+  white-space: pre-wrap;
+}
+
+.type-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: -0.15em;
+  background: currentColor;
+  opacity: 0.7;
+  animation: caret-blink 0.9s steps(1) infinite;
+}
+
+@keyframes caret-blink {
+  0%,
+  55% {
+    opacity: 0.7;
+  }
+  56%,
+  100% {
+    opacity: 0;
+  }
+}

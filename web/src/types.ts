@@ -237,6 +237,7 @@ export type AgentEvent =
   | { type: 'interaction'; request: InteractionRequest }
   | { type: 'interaction_closed'; id: string; answered: boolean }
   | { type: 'message'; message: WireMessage }
+  | { type: 'delta'; text: string }
   | { type: 'iteration'; index: number }
   | { type: 'compacted'; coversUpTo: number; messageCount: number }
   | { type: 'memory'; added: Array<{ entry: { id: string; text: string } }>; merged: number }

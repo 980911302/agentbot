@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ReactNode, WheelEvent as ReactWheelEvent } from 'react';
 import type { ArtifactView, BotSummary, DisplayMessage, InteractionRequest } from '../types';
+import { RichText } from '../markdown';
 import { BotAvatar } from './BotAvatar';
 import { IconChevronDown, IconInfo } from '../icons';
 import { MessageItem } from './MessageItem';
@@ -11,6 +12,8 @@ interface ChatViewProps {
   messages: DisplayMessage[];
   artifacts: ArtifactView[];
   busy: boolean;
+  /** 私聊流式：正在生成的增量文本（空 = 没有正在打字） */
+  liveText?: string;
   composer: ReactNode;
   channelTitle?: string;
   onToggleInfo?: () => void;
@@ -35,6 +38,7 @@ export function ChatView({
   messages,
   artifacts,
   busy,
+  liveText,
   composer,
   channelTitle,
   onToggleInfo,
@@ -94,7 +98,7 @@ export function ChatView({
       if (stickToBottom.current) scroller.scrollTop = scroller.scrollHeight;
     });
     return () => cancelAnimationFrame(raf);
-  }, [messages, busy, artifacts, roundActive]);
+  }, [messages, busy, artifacts, roundActive, liveText]);
 
   // 脱离跟随期间累计新消息
   useEffect(() => {
@@ -192,7 +196,25 @@ export function ChatView({
               ))
             : null}
 
-          {busy && !isGroup ? (
+          {/* 正在打字：增量文本实时渲染；还没出字时退回三个点 */}
+          {busy && !isGroup && liveText ? (
+            <div className="msg-group-item assistant streaming-indicator">
+              <div className="msg-avatar-col">
+                <BotAvatar name={bot?.name || '助手'} color={bot?.color || '#94a3b8'} size={34} />
+              </div>
+              <div className="msg-content-col">
+                <div className="msg-sender-header" style={{ color: bot?.color || '#94a3b8' }}>
+                  {bot?.name || '助手'}
+                </div>
+                <div className="msg-bubble-box assistant-bubble live-bubble">
+                  <RichText text={liveText} />
+                  <span className="type-caret" />
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          {busy && !isGroup && !liveText ? (
             <div className="msg-group-item assistant thinking-indicator">
               <div className="msg-avatar-col">
                 <BotAvatar name={bot?.name || '助手'} color={bot?.color || '#94a3b8'} size={34} />

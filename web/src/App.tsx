@@ -175,6 +175,8 @@ export default function App() {
 
   const [artifacts, setArtifacts] = useState<ArtifactView[]>([]);
   const [busy, setBusy] = useState(false);
+  /** 私聊流式：正在生成的增量文本；收到完整消息即清空 */
+  const [liveText, setLiveText] = useState('');
   const [screenOpen, setScreenOpen] = useState(false);
   const [screenFull, setScreenFull] = useState(false);
   /** 抽屉卸载前先播完退出动画 */
@@ -531,6 +533,7 @@ export default function App() {
       }));
 
       setBusy(true);
+      setLiveText('');
       const controller = new AbortController();
       abortRef.current = controller;
 
@@ -635,6 +638,10 @@ export default function App() {
           },
           {
             onEvent: (event) => {
+              if (event.type === 'delta') {
+                setLiveText((current) => current + event.text);
+                return;
+              }
               if (event.type === 'interaction') {
                 setInteractions((current) =>
                   current.some((item) => item.id === event.request.id)
@@ -646,6 +653,11 @@ export default function App() {
               if (event.type === 'interaction_closed') {
                 setInteractions((current) => current.filter((item) => item.id !== event.id));
                 return;
+              }
+
+              if (event.type === 'message' && event.message.role === 'assistant') {
+                // 完整消息落地，清掉正在打字的增量
+                if (event.message.content.type === 'text') setLiveText('');
               }
 
               setChannelHistories((prev) => ({
@@ -672,6 +684,7 @@ export default function App() {
               }
             },
             onError: (err) => {
+              setLiveText('');
               setChannelHistories((prev) => ({
                 ...prev,
                 [activeChannelId]: [
@@ -715,6 +728,7 @@ export default function App() {
       } finally {
         abortRef.current = null;
         setBusy(false);
+        setLiveText('');
         setMemoryToken((token) => token + 1);
         // 工作台工具可能改了同事 / 群，同步一次
         void syncWorkspace();
@@ -741,6 +755,7 @@ export default function App() {
     abortRef.current?.abort();
     abortRef.current = null;
     setBusy(false);
+    setLiveText('');
   }, []);
 
   const models = health?.models ?? [];
@@ -826,6 +841,7 @@ export default function App() {
         messages={currentMessages}
         artifacts={artifacts}
         busy={busy}
+        liveText={liveText}
         composer={composer}
         onToggleInfo={() => setScreenOpen((prev) => !prev)}
         isGroup={activeChannel.kind === 'room'}
