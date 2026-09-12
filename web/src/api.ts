@@ -15,21 +15,7 @@ import type {
   SessionSummary,
 } from './types';
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, init);
-  if (!response.ok) throw new Error(await errorMessage(response));
-  return (await response.json()) as T;
-}
-
-async function errorMessage(response: Response): Promise<string> {
-  try {
-    const body = (await response.json()) as { error?: string };
-    if (body.error) return body.error;
-  } catch {
-    // fall through to the status line
-  }
-  return `${response.status} ${response.statusText}`;
-}
+import { errorMessage, readSseFrames, request } from './shared/transport';
 
 export function fetchHealth(): Promise<HealthInfo> {
   return request('/api/health');
@@ -239,22 +225,7 @@ export async function streamRoom(
     return;
   }
 
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    let boundary = buffer.indexOf('\n\n');
-    while (boundary !== -1) {
-      const chunk = buffer.slice(0, boundary);
-      buffer = buffer.slice(boundary + 2);
-      dispatchRoomChunk(chunk, handlers);
-      boundary = buffer.indexOf('\n\n');
-    }
-  }
+  await readSseFrames(response, (frame) => dispatchRoomChunk(frame, handlers));
 }
 
 function dispatchRoomChunk(raw: string, handlers: RoomHandlers): void {
@@ -330,22 +301,7 @@ export async function streamChat(
     return;
   }
 
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    let boundary = buffer.indexOf('\n\n');
-    while (boundary !== -1) {
-      const chunk = buffer.slice(0, boundary);
-      buffer = buffer.slice(boundary + 2);
-      dispatchChunk(chunk, handlers);
-      boundary = buffer.indexOf('\n\n');
-    }
-  }
+  await readSseFrames(response, (frame) => dispatchChunk(frame, handlers));
 }
 
 function dispatchChunk(raw: string, handlers: ChatHandlers): void {
