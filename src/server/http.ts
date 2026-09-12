@@ -1,26 +1,27 @@
-import { existsSync } from 'node:fs';
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { resolve } from 'node:path';
-import { AVAILABLE_MODELS, resolveConfig, type AppConfig, type ModelOption } from '../config.js';
-import type { AgentRecord } from '../agent/types.js';
-import { OpenAIProvider } from '../llm/openai-provider.js';
+import { AVAILABLE_MODELS, resolveConfig } from '../config.js';
 import { MemoryStore } from '../memory/store.js';
 import { InteractionBroker } from '../interaction/broker.js';
 import { SecretStore } from '../secret/store.js';
-import type { MemoryScope, MemoryTier } from '../memory/types.js';
-import { AgentBusyError, AgentRuntime } from './runtime.js';
+import { OpenAIProvider } from '../llm/openai-provider.js';
+import { AgentRuntime } from './runtime.js';
 import { SEED_AGENTS, SEED_ROOMS } from './seed.js';
-import { RoomError } from '../room/store.js';
-
-import type { Room } from '../room/types.js';
-import { ROOM_MEMBER_LIMIT } from '../room/types.js';
-import type { Message } from '../agent/types.js';
 import { createAgentTools } from './tools.js';
-import { json, readJson } from './transport/json.js';
-import { PING_INTERVAL_MS, sse } from './transport/sse.js';
-import { serveStatic } from './transport/static.js';
-import { collectArtifacts, toBotView, toDisplayMessages } from './presenters.js';
-import { isKnownAgentEvent, parseSendMessageInput } from '../shared/contracts/index.js';
+import { json, serveStatic } from './transport/index.js';
+import type { RouteContext } from './routes/context.js';
+import { handleBotsCollection, handleBotItem } from './routes/bots.js';
+import {
+  handleChatRoute,
+  handleSend,
+  handleSessionItem,
+  handleSessionsCollection,
+} from './routes/messages.js';
+import { handleAgentRoute } from './routes/agents.js';
+import { handleRoomRoute, handleRoomsCollection } from './routes/rooms.js';
+import { handleInteractionItem, handleInteractionsCollection } from './routes/interactions.js';
+import { handleSecretsCollection } from './routes/secrets.js';
+import { handleHealthRoute } from './routes/health.js';
 
 export interface AgentServerOptions {
   port?: number;
@@ -31,21 +32,11 @@ export interface AgentServerOptions {
 }
 
 export interface AgentServerHandle {
-  server: Server;
+  server: import('node:http').Server;
   port: number;
   url: string;
   runtime: AgentRuntime;
-  close(): Promise<void>;
-}
-
-interface RouteContext {
-  runtime: AgentRuntime;
-  staticDir?: string;
-  model: string;
-  models: ModelOption[];
-  tools: Array<{ name: string; description: string }>;
-  budget: AppConfig['budget'];
-  ownerName: string;
+  close: () => Promise<void>;
 }
 
 /** 工具里要反查同事名；用软引用避免构造顺序上的循环依赖 */
@@ -148,6 +139,7 @@ export async function createAgentServer(options: AgentServerOptions = {}): Promi
   };
 }
 
+/** 分发：只做路径匹配与解码，业务在各 routes/ 模块里（顺序与拆分前完全一致） */
 async function handleRequest(
   request: IncomingMessage,
   response: ServerResponse,
@@ -156,160 +148,31 @@ async function handleRequest(
   const url = new URL(request.url ?? '/', 'http://localhost');
   const path = url.pathname;
   const method = request.method ?? 'GET';
-  const { runtime } = context;
 
   if (path === '/api/health') {
-    json(response, 200, {
-      ok: true,
-      service: 'agentbot',
-      model: context.model,
-      models: context.models,
-      tools: context.tools,
-      budget: context.budget,
-      ownerName: context.ownerName,
-    });
+    handleHealthRoute(response, context);
     return;
   }
 
-  if ((path === '/api/bots' || path === '/api/agents') && method === 'GET') {
-    const list = await runtime.registry.list();
-    const bots = await Promise.all(
-      list.map(async (record) =>
-        toBotView(record, {
-          busy: runtime.isBusy(record.id),
-          conversationCount: await runtime.messages.count(record.id),
-        }),
-      ),
-    );
-    json(response, 200, { bots, agents: list });
-    return;
-  }
-
-  if ((path === '/api/bots' || path === '/api/agents') && method === 'POST') {
-    const body = await readJson(request);
-    const record = await runtime.registry.create({
-      name: readString(body.name),
-      instructions: readString(body.instructions) ?? readString(body.role),
-      color: readString(body.color),
-    });
-    json(response, 201, {
-      agent: record,
-      bot: toBotView(record, { busy: false, conversationCount: 0 }),
-    });
+  if (path === '/api/bots' || path === '/api/agents') {
+    await handleBotsCollection(request, response, context, method);
     return;
   }
 
   const botMatch = /^\/api\/bots\/([^/]+)$/.exec(path);
-  if (botMatch) {
-    const raw = decodeURIComponent(botMatch[1] ?? '');
-    const record = await resolveAgent(context, raw);
-    if (!record) {
-      json(response, 404, { error: `unknown bot: ${raw}` });
-      return;
-    }
-
-    if (method === 'GET') {
-      json(response, 200, {
-      bot: toBotView(record, {
-        busy: context.runtime.isBusy(record.id),
-        conversationCount: await context.runtime.messages.count(record.id),
-      }),
-    });
-      return;
-    }
-
-    if (method === 'PATCH') {
-      const body = await readJson(request);
-      const updated = await context.runtime.registry.update(record.id, {
-        name: readString(body.name),
-        instructions: readString(body.instructions) ?? readString(body.role),
-        color: readString(body.color),
-      });
-      json(response, 200, {
-        bot: updated
-          ? toBotView(updated, {
-              busy: context.runtime.isBusy(updated.id),
-              conversationCount: await context.runtime.messages.count(updated.id),
-            })
-          : null,
-      });
-      return;
-    }
-
-    if (method === 'DELETE') {
-      if (context.runtime.isBusy(record.id)) {
-        json(response, 409, { error: '这个智能体正在跑任务，等它结束后再删' });
-        return;
-      }
-      await context.runtime.messages.clear(record.id);
-      await context.runtime.memory.clear('self', record.id);
-      await context.runtime.compaction.clear(record.id);
-      const ok = await context.runtime.registry.remove(record.id);
-      json(response, 200, { ok, removed: record.name });
-      return;
-    }
-  }
-
-  if (path === '/api/sessions' && method === 'GET') {
-    const botId = url.searchParams.get('botId') ?? '';
-    const list = await runtime.registry.list();
-    const currentBot = list.find((item) => item.id === botId) || list[0];
-    const sessions = [
-      {
-        id: currentBot ? currentBot.id : 'session-default',
-        botId: currentBot ? currentBot.id : 'bot-default',
-        title: currentBot ? currentBot.name : '白泽联调',
-        model: context.model,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        messageCount: 6,
-      },
-    ];
-    json(response, 200, { sessions });
+  if (botMatch && (await handleBotItem(request, response, context, decodeURIComponent(botMatch[1] ?? ''), method))) {
     return;
   }
 
-  if (path === '/api/sessions' && method === 'POST') {
-    const body = await readJson(request);
-    const botId = readString(body.botId) ?? '';
-    const list = await runtime.registry.list();
-    const currentBot = list.find((item) => item.id === botId) || list[0];
-    const session = {
-      id: botId || 'session-' + Date.now(),
-      botId: botId,
-      title: currentBot?.name ?? '新对话',
-      model: readString(body.model) ?? context.model,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      messageCount: 0,
-    };
-    json(response, 201, { session });
+  if (path === '/api/sessions') {
+    await handleSessionsCollection(request, response, context, method);
     return;
   }
 
   const sessionMatch = /^\/api\/sessions\/([^/]+)$/.exec(path);
-  if (sessionMatch) {
-    const raw = decodeURIComponent(sessionMatch[1] ?? '');
-    const record = await resolveAgent(context, raw);
-    const id = record?.id ?? raw;
-    if (method === 'GET') {
-      const rawMsgs = await runtime.messages.list(id);
-      const messages = toDisplayMessages(rawMsgs);
-      json(response, 200, {
-        session: {
-          id,
-          botId: id,
-          title: record?.name ?? '对话',
-          model: context.model,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-          messageCount: messages.length,
-        },
-        messages,
-        artifacts: collectArtifacts(rawMsgs),
-      });
-      return;
-    }
+  if (sessionMatch && method === 'GET') {
+    await handleSessionItem(response, context, decodeURIComponent(sessionMatch[1] ?? ''));
+    return;
   }
 
   if (path === '/api/chat' && method === 'POST') {
@@ -325,76 +188,38 @@ async function handleRequest(
     return;
   }
 
-
   // ── 交互：等用户回答的卡片 ────────────────────────
   if (path === '/api/interactions' && method === 'GET') {
-    const agentId = url.searchParams.get('agentId') ?? undefined;
-    json(response, 200, { interactions: runtime.broker.list(agentId ? { agentId } : undefined) });
+    await handleInteractionsCollection(request, response, context);
     return;
   }
 
   const interactionMatch = /^\/api\/interactions\/([^/]+)$/.exec(path);
   if (interactionMatch && method === 'POST') {
-    const id = decodeURIComponent(interactionMatch[1] ?? '');
-    const body = await readJson(request);
-
-    if (body.cancelled === true) {
-      json(response, 200, { ok: runtime.broker.cancel(id) });
-      return;
-    }
-
-    const value = readString(body.value);
-    const secret = readString(body.secret);
-    if (value === undefined && secret === undefined) {
-      json(response, 400, { error: '需要 value（选项）或 secret（密钥）' });
-      return;
-    }
-
-    const ok = runtime.broker.resolve(id, { value, secret });
-    json(response, ok ? 200 : 404, ok ? { ok: true } : { error: '这个交互已经结束或不存在' });
+    await handleInteractionItem(request, response, context, decodeURIComponent(interactionMatch[1] ?? ''));
     return;
   }
 
   // ── 密钥：只暴露名字，永远不回传值 ────────────────
   if (path === '/api/secrets' && method === 'GET') {
-    json(response, 200, { names: await runtime.secrets.names() });
+    handleSecretsCollection(response, context);
     return;
   }
 
   const secretMatch = /^\/api\/secrets\/([^/]+)$/.exec(path);
   if (secretMatch && method === 'DELETE') {
-    const name = decodeURIComponent(secretMatch[1] ?? '');
-    json(response, 200, { ok: await runtime.secrets.remove(name) });
+    json(response, 200, { ok: await context.runtime.secrets.remove(decodeURIComponent(secretMatch[1] ?? '')) });
     return;
   }
 
   // ── 房间：名字 + 成员表 + 共享时间线 ──────────────
   if (path === '/api/rooms' && method === 'GET') {
-    const list = await runtime.rooms.list();
-    const views = await Promise.all(
-      list.map(async (room) => {
-        const { members } = await runtime.membersOf(room.id);
-        return runtime.rooms.view(
-          room,
-          members.map((record) => ({ id: record.id, name: record.name, color: record.color })),
-        );
-      }),
-    );
-    json(response, 200, { rooms: views, memberLimit: ROOM_MEMBER_LIMIT });
+    await handleRoomsCollection(request, response, context, method);
     return;
   }
 
   if (path === '/api/rooms' && method === 'POST') {
-    const body = await readJson(request);
-    try {
-      const room = await runtime.rooms.create({
-        name: readString(body.name) ?? '',
-        memberIds: readStringArray(body.memberIds),
-      });
-      json(response, 201, { room: await roomView(runtime, room) });
-    } catch (error) {
-      json(response, 400, { error: messageOf(error) });
-    }
+    await handleRoomsCollection(request, response, context, method);
     return;
   }
 
@@ -418,415 +243,3 @@ async function handleRequest(
 
   json(response, 405, { error: 'method not allowed' });
 }
-
-async function roomView(runtime: AgentRuntime, room: Room) {
-  const { members } = await runtime.membersOf(room.id);
-  return runtime.rooms.view(
-    room,
-    members.map((record) => ({ id: record.id, name: record.name, color: record.color })),
-  );
-}
-
-async function handleRoomRoute(
-  request: IncomingMessage,
-  response: ServerResponse,
-  context: RouteContext,
-  roomId: string,
-  rest: string,
-): Promise<void> {
-  const method = request.method ?? 'GET';
-  const { runtime } = context;
-  const { room, members } = await runtime.membersOf(roomId);
-  if (!room) {
-    json(response, 404, { error: 'unknown room' });
-    return;
-  }
-  const memberInfo = members.map((record) => ({
-    id: record.id,
-    name: record.name,
-    color: record.color,
-  }));
-
-  if (rest === '/' && method === 'GET') {
-    json(response, 200, { room: await runtime.rooms.view(room, memberInfo) });
-    return;
-  }
-
-  if (rest === '/' && method === 'PATCH') {
-    const body = await readJson(request);
-    try {
-      if (typeof body.name === 'string') await runtime.rooms.rename(roomId, body.name);
-      if (Array.isArray(body.memberIds)) {
-        await runtime.rooms.setMembers(roomId, readStringArray(body.memberIds));
-      }
-      const updated = await runtime.rooms.get(roomId);
-      json(response, 200, { room: updated ? await roomView(runtime, updated) : null });
-    } catch (error) {
-      json(response, 400, { error: messageOf(error) });
-    }
-    return;
-  }
-
-  if (rest === '/' && method === 'DELETE') {
-    await runtime.rooms.remove(roomId);
-    json(response, 200, { ok: true });
-    return;
-  }
-
-  if (rest === '/messages' && method === 'GET') {
-    const limit = Number.parseInt(
-      new URL(request.url ?? '/', 'http://x').searchParams.get('limit') ?? '',
-      10,
-    );
-    json(response, 200, {
-      messages: await runtime.rooms.messages(roomId, Number.isFinite(limit) ? limit : undefined),
-    });
-    return;
-  }
-
-  // 往群里说一句 → 扇出给全体成员；每个成员各自决定开口还是沉默
-  if (rest === '/messages' && method === 'POST') {
-    const body = await readJson(request);
-    const text = (readString(body.text) ?? readString(body.message) ?? '').trim();
-    const model = readString(body.model);
-    if (!text) {
-      json(response, 400, { error: 'text is required' });
-      return;
-    }
-
-    response.writeHead(200, {
-      'content-type': 'text/event-stream; charset=utf-8',
-      'cache-control': 'no-cache, no-transform',
-      connection: 'keep-alive',
-      'x-accel-buffering': 'no',
-    });
-
-    const ping = setInterval(() => {
-      if (!response.writableEnded && !response.destroyed) response.write(': ping\n\n');
-    }, PING_INTERVAL_MS);
-
-    const controller = new AbortController();
-    response.on('close', () => controller.abort());
-
-    try {
-      const summary = await runtime.postToRoom(roomId, text, {
-        model,
-        ownerName: readString(body.ownerName) ?? context.ownerName,
-        signal: controller.signal,
-        onEvent: (event) => { if (isKnownAgentEvent(event)) sse(response, 'event', event); },
-        onRoomEvent: (event) => sse(response, 'room', event),
-      });
-      sse(response, 'done', summary);
-    } catch (error) {
-      sse(response, 'error', { message: messageOf(error) });
-    } finally {
-      clearInterval(ping);
-      if (!response.writableEnded && !response.destroyed) response.end();
-    }
-    return;
-  }
-
-  json(response, 404, { error: `no route for ${method} /api/rooms/:id${rest}` });
-}
-
-async function handleAgentRoute(
-  request: IncomingMessage,
-  response: ServerResponse,
-  context: RouteContext,
-  agentId: string,
-  rest: string,
-): Promise<void> {
-  const method = request.method ?? 'GET';
-  const { runtime } = context;
-  const record = await runtime.registry.get(agentId);
-  if (!record) {
-    json(response, 404, { error: 'unknown agent' });
-    return;
-  }
-
-  if (rest === '/' && method === 'GET') {
-    const memory = await runtime.snapshotMemory(agentId);
-    json(response, 200, {
-      agent: record,
-      memory,
-      messageCount: await runtime.messages.count(agentId),
-      busy: runtime.isBusy(agentId),
-    });
-    return;
-  }
-
-  if (rest === '/' && method === 'PATCH') {
-    const body = await readJson(request);
-    const updated = await runtime.registry.update(agentId, {
-      name: readString(body.name),
-      instructions: readString(body.instructions),
-      toolNames: Array.isArray(body.toolNames)
-        ? body.toolNames.filter((item): item is string => typeof item === 'string')
-        : undefined,
-      projectIds: Array.isArray(body.projectIds)
-        ? body.projectIds.filter((item): item is string => typeof item === 'string')
-        : undefined,
-    });
-    json(response, 200, { agent: updated });
-    return;
-  }
-
-  if (rest === '/' && method === 'DELETE') {
-    await runtime.messages.clear(agentId);
-    await runtime.memory.clear('self', agentId);
-    await runtime.compaction.clear(agentId);
-    json(response, 200, { ok: await runtime.registry.remove(agentId) });
-    return;
-  }
-
-  if (rest === '/messages' && method === 'GET') {
-    const limit = Number.parseInt(new URL(request.url ?? '/', 'http://x').searchParams.get('limit') ?? '', 10);
-    json(response, 200, {
-      messages: await runtime.messages.list(agentId, Number.isFinite(limit) ? limit : undefined),
-    });
-    return;
-  }
-
-  // 同事私发进来的积压消息（1:1 队列）
-  if (rest === '/inbox' && method === 'GET') {
-    json(response, 200, { items: await runtime.inbox.peek(agentId) });
-    return;
-  }
-
-  if (rest === '/inbox' && method === 'POST') {
-    await runtime.drainInbox(agentId);
-    json(response, 200, { ok: true });
-    return;
-  }
-
-  if (rest === '/messages' && method === 'POST') {
-    await handleSend(request, response, context, agentId);
-    return;
-  }
-
-  // 记忆快照：三层 × 三作用域，直接喂给 UI
-  if (rest === '/memory' && method === 'GET') {
-    const snapshot = await runtime.snapshotMemory(agentId);
-    if (!snapshot) {
-      json(response, 404, { error: 'unknown agent' });
-      return;
-    }
-    json(response, 200, snapshot);
-    return;
-  }
-
-  if (rest === '/memory' && method === 'POST') {
-    const body = await readJson(request);
-    const text = readString(body.text)?.trim();
-    if (!text) {
-      json(response, 400, { error: 'text is required' });
-      return;
-    }
-    try {
-      const ref = await runtime.remember(agentId, {
-        text,
-        scope: parseScope(body.scope),
-        tier: parseTier(body.tier),
-        projectId: readString(body.projectId),
-        tags: Array.isArray(body.tags)
-          ? body.tags.filter((item): item is string => typeof item === 'string')
-          : [],
-      });
-      json(response, 201, { ref });
-    } catch (error) {
-      json(response, 400, { error: messageOf(error) });
-    }
-    return;
-  }
-
-  const memoryMatch = /^\/memory\/([^/]+)\/([^/]+)\/([^/]+)$/.exec(rest);
-  if (memoryMatch) {
-    const scope = parseScope(decodeURIComponent(memoryMatch[1] ?? ''));
-    const ownerId = decodeURIComponent(memoryMatch[2] ?? '');
-    const entryId = decodeURIComponent(memoryMatch[3] ?? '');
-    if (method === 'DELETE') {
-      json(response, 200, { ok: await runtime.memory.remove(scope, ownerId, entryId) });
-      return;
-    }
-    if (method === 'PATCH') {
-      const body = await readJson(request);
-      const updated = await runtime.memory.update(scope, ownerId, entryId, {
-        tier: parseTier(body.tier),
-        text: readString(body.text),
-        tags: Array.isArray(body.tags)
-          ? body.tags.filter((item): item is string => typeof item === 'string')
-          : undefined,
-      });
-      json(response, updated ? 200 : 404, updated ? { entry: updated } : { error: 'not found' });
-      return;
-    }
-  }
-
-  if (rest === '/context' && method === 'GET') {
-    const built = await runtime.previewContext(agentId);
-    if (!built) {
-      json(response, 404, { error: 'unknown agent' });
-      return;
-    }
-    json(response, 200, {
-      stats: built.stats,
-      system: built.system,
-      droppedRecent: built.droppedRecent,
-      droppedGroups: built.droppedGroups,
-      surfaced: built.surfaced.map((ref) => ({
-        id: ref.entry.id,
-        scope: ref.scope,
-        tier: ref.entry.tier,
-        text: ref.entry.text,
-      })),
-    });
-    return;
-  }
-
-  json(response, 404, { error: `no route for ${method} /api/agents/:id${rest}` });
-}
-
-async function handleChatRoute(
-  request: IncomingMessage,
-  response: ServerResponse,
-  context: RouteContext,
-): Promise<void> {
-  const parsed = parseSendMessageInput(await readJson(request));
-  if (!parsed.ok) {
-    json(response, 400, { error: parsed.error });
-    return;
-  }
-  const { text, botId: requestedBotId, model } = parsed.value;
-  const list = await context.runtime.registry.list();
-  const found = requestedBotId ? await resolveAgent(context, requestedBotId) : undefined;
-  const botId = found?.id ?? list[0]?.id;
-
-  if (!botId) {
-    json(response, 400, { error: 'botId is required' });
-    return;
-  }
-  if (!botId) {
-    json(response, 400, { error: 'botId is required' });
-    return;
-  }
-  // 忙不拒：见 docs/架构设计.md「插话、停止和等待」——新句插队开新回合，旧的挂起欠账
-
-  response.writeHead(200, {
-    'content-type': 'text/event-stream; charset=utf-8',
-    'cache-control': 'no-cache, no-transform',
-    connection: 'keep-alive',
-    'x-accel-buffering': 'no',
-  });
-
-  const ping = setInterval(() => {
-    if (!response.writableEnded && !response.destroyed) response.write(': ping\n\n');
-  }, PING_INTERVAL_MS);
-
-  const controller = new AbortController();
-  response.on('close', () => controller.abort());
-
-  try {
-    const result = await context.runtime.send(botId, text, {
-      model,
-      signal: controller.signal,
-      onEvent: (event) => { if (isKnownAgentEvent(event)) sse(response, 'event', event); },
-      onDelta: (text) => sse(response, 'event', { type: 'delta', text }),
-    });
-    sse(response, 'done', result);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    sse(response, 'error', { message });
-  } finally {
-    clearInterval(ping);
-    if (!response.writableEnded && !response.destroyed) response.end();
-  }
-}
-
-async function handleSend(
-  request: IncomingMessage,
-  response: ServerResponse,
-  context: RouteContext,
-  agentId: string,
-): Promise<void> {
-
-  const parsed = parseSendMessageInput(await readJson(request));
-  if (!parsed.ok) {
-    json(response, 400, { error: parsed.error });
-    return;
-  }
-  const text = parsed.value.text;
-  const model = parsed.value.model;
-  // 忙不拒：新句插队（同 handleChatRoute）
-
-  response.writeHead(200, {
-    'content-type': 'text/event-stream; charset=utf-8',
-    'cache-control': 'no-cache, no-transform',
-    connection: 'keep-alive',
-    'x-accel-buffering': 'no',
-  });
-
-  const ping = setInterval(() => {
-    if (!response.writableEnded && !response.destroyed) response.write(': ping\n\n');
-  }, PING_INTERVAL_MS);
-
-  const controller = new AbortController();
-  response.on('close', () => controller.abort());
-
-  try {
-    const result = await context.runtime.send(agentId, text, {
-      model,
-      signal: controller.signal,
-      onEvent: (event) => { if (isKnownAgentEvent(event)) sse(response, 'event', event); },
-      onDelta: (text) => sse(response, 'event', { type: 'delta', text }),
-    });
-    sse(response, 'done', result);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    sse(response, 'error', {
-      message,
-      status: error instanceof AgentBusyError ? 409 : 500,
-    });
-  } finally {
-    clearInterval(ping);
-    if (!response.writableEnded && !response.destroyed) response.end();
-  }
-}
-
-function readString(value: unknown): string | undefined {
-  return typeof value === 'string' ? value : undefined;
-}
-
-/**
- * 按 id 找智能体，找不到再按名字找。
- *
- * 兼容层要足够宽容：前端历史上用过 channel-xxx 这类本地 id，
- * 也有直接拿显示名当标识的地方，按名字兜底能省掉一整类「Unknown agent」。
- */
-async function resolveAgent(context: RouteContext, idOrName: string) {
-  const byId = await context.runtime.registry.get(idOrName);
-  if (byId) return byId;
-  const list = await context.runtime.registry.list();
-  const wanted = idOrName.trim();
-  return list.find((item) => item.name === wanted);
-}
-
-function readStringArray(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return value.filter((item): item is string => typeof item === 'string');
-}
-
-function messageOf(error: unknown): string {
-  if (error instanceof RoomError) return error.message;
-  return error instanceof Error ? error.message : String(error);
-}
-
-function parseScope(value: unknown): MemoryScope {
-  if (value === 'user' || value === 'project') return value;
-  return 'self';
-}
-
-function parseTier(value: unknown): MemoryTier {
-  if (value === 'portrait' || value === 'scratch') return value;
-  return 'log';
-}
-
