@@ -19,6 +19,7 @@ import { createAgentTools } from './tools.js';
 import { json, readJson } from './transport/json.js';
 import { PING_INTERVAL_MS, sse } from './transport/sse.js';
 import { serveStatic } from './transport/static.js';
+import { collectArtifacts, toBotView, toDisplayMessages } from './presenters.js';
 import { isKnownAgentEvent, parseSendMessageInput } from '../shared/contracts/index.js';
 
 export interface AgentServerOptions {
@@ -172,7 +173,14 @@ async function handleRequest(
 
   if ((path === '/api/bots' || path === '/api/agents') && method === 'GET') {
     const list = await runtime.registry.list();
-    const bots = await Promise.all(list.map((record) => toBotView(runtime, record)));
+    const bots = await Promise.all(
+      list.map(async (record) =>
+        toBotView(record, {
+          busy: runtime.isBusy(record.id),
+          conversationCount: await runtime.messages.count(record.id),
+        }),
+      ),
+    );
     json(response, 200, { bots, agents: list });
     return;
   }
@@ -184,7 +192,10 @@ async function handleRequest(
       instructions: readString(body.instructions) ?? readString(body.role),
       color: readString(body.color),
     });
-    json(response, 201, { agent: record, bot: await toBotView(runtime, record) });
+    json(response, 201, {
+      agent: record,
+      bot: toBotView(record, { busy: false, conversationCount: 0 }),
+    });
     return;
   }
 
@@ -198,7 +209,12 @@ async function handleRequest(
     }
 
     if (method === 'GET') {
-      json(response, 200, { bot: await toBotView(context.runtime, record) });
+      json(response, 200, {
+      bot: toBotView(record, {
+        busy: context.runtime.isBusy(record.id),
+        conversationCount: await context.runtime.messages.count(record.id),
+      }),
+    });
       return;
     }
 
@@ -210,7 +226,12 @@ async function handleRequest(
         color: readString(body.color),
       });
       json(response, 200, {
-        bot: updated ? await toBotView(context.runtime, updated) : null,
+        bot: updated
+          ? toBotView(updated, {
+              busy: context.runtime.isBusy(updated.id),
+              conversationCount: await context.runtime.messages.count(updated.id),
+            })
+          : null,
       });
       return;
     }
@@ -787,119 +808,6 @@ async function resolveAgent(context: RouteContext, idOrName: string) {
   const list = await context.runtime.registry.list();
   const wanted = idOrName.trim();
   return list.find((item) => item.name === wanted);
-}
-
-/** 智能体的界面视图：状态与计数一律来自真实数据源，不放假数 */
-async function toBotView(runtime: AgentRuntime, record: AgentRecord) {
-  return {
-    id: record.id,
-    name: record.name,
-    title: record.title,
-    role: record.title || record.instructions.slice(0, 30),
-    /** 完整职责文本，资料编辑要用；role 只是展示截断 */
-    instructions: record.instructions,
-    color: record.color,
-    status: runtime.isBusy(record.id) ? 'working' : 'idle',
-    activity: '',
-    conversationCount: await runtime.messages.count(record.id),
-    createdAt: new Date(record.createdAt).toISOString(),
-    updatedAt: new Date(record.updatedAt).toISOString(),
-  };
-}
-
-interface DisplayMessageView {
-  id: string;
-  role: 'user' | 'assistant';
-  content: string;
-  senderName?: string;
-  senderColor?: string;
-  toolCalls: Array<{
-    id: string;
-    name: string;
-    arguments: string;
-    result?: string;
-    durationMs?: number;
-    status: 'running' | 'ok' | 'error';
-  }>;
-  createdAt: string;
-  error?: boolean;
-}
-
-/**
- * 把存下来的消息折成界面用的形状。
- * 一次工具调用 + 它的结果是两条消息，这里合并回一张卡片。
- */
-function toDisplayMessages(raw: Message[]): DisplayMessageView[] {
-  const out: DisplayMessageView[] = [];
-
-  for (const message of raw) {
-    const content = message.content;
-
-    if (content.type === 'text') {
-      const text = content.text.trim();
-      if (!text) continue;
-      out.push({
-        id: message.id,
-        role: message.role === 'user' ? 'user' : 'assistant',
-        content: text,
-        senderName: message.speaker,
-        toolCalls: [],
-        createdAt: new Date(message.createdAt).toISOString(),
-      });
-      continue;
-    }
-
-    if (content.type === 'tool_calls') {
-      out.push({
-        id: message.id,
-        role: 'assistant',
-        content: '',
-        toolCalls: content.calls.map((call) => ({
-          id: call.id,
-          name: call.name,
-          arguments: call.arguments,
-          status: 'running' as const,
-        })),
-        createdAt: new Date(message.createdAt).toISOString(),
-      });
-      continue;
-    }
-
-    // tool_result → 回填到对应卡片
-    for (let index = out.length - 1; index >= 0; index -= 1) {
-      const target = out[index];
-      const call = target?.toolCalls.find((item) => item.id === content.callId);
-      if (!call) continue;
-      call.result = content.result;
-      call.durationMs = content.durationMs;
-      call.status = content.ok ? 'ok' : 'error';
-      break;
-    }
-  }
-
-  return out;
-}
-
-function collectArtifacts(raw: Message[]): Array<{ path: string; tool: string; createdAt: string }> {
-  const seen = new Map<string, { path: string; tool: string; createdAt: string }>();
-  for (const message of raw) {
-    if (message.content.type !== 'tool_calls') continue;
-    for (const call of message.content.calls) {
-      let path: unknown;
-      try {
-        path = (JSON.parse(call.arguments || '{}') as { path?: unknown }).path;
-      } catch {
-        continue;
-      }
-      if (typeof path !== 'string' || !path || seen.has(path)) continue;
-      seen.set(path, {
-        path,
-        tool: call.name,
-        createdAt: new Date(message.createdAt).toISOString(),
-      });
-    }
-  }
-  return [...seen.values()];
 }
 
 function readStringArray(value: unknown): string[] {
