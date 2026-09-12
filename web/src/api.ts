@@ -1,5 +1,4 @@
 import type {
-  AgentEvent,
   ArtifactView,
   BotSummary,
   DisplayMessage,
@@ -8,10 +7,8 @@ import type {
   MemoryScope,
   MemorySnapshot,
   MemoryTier,
-  RoomEvent,
   RoomMessage,
   RoomView,
-  RunResult,
   SessionSummary,
 } from './types';
 
@@ -190,149 +187,89 @@ export async function renameRoom(roomId: string, name: string): Promise<void> {
   });
 }
 
-export interface RoomHandlers {
-  onMessage?: (message: RoomMessage) => void;
-  onRoundStart?: (event: { agentId: string; agentName: string }) => void;
-  onRoundEnd?: (outcome: import('./types').RoundOutcome) => void;
-  onFanoutDone?: (event: { spoke: number; silent: number }) => void;
-  /** 群回合里智能体发出的 AgentEvent（主要是 interaction：ask_user 卡片） */
-  onAgentEvent?: (event: AgentEvent) => void;
-  onError?: (message: string) => void;
+// ── 发送与订阅（E3.4 第二步：发送只回执，事件走订阅）──
+
+/** 收信回执：受理成功就返回，回合在后台跑，结果从事件订阅看 */
+export interface Receipt {
+  messageId?: string;
+  agentId?: string;
+  roomId?: string;
+  receiptSeq: number;
+  duplicate: boolean;
 }
 
-/** 往群里发一句 → 后端扇出给全体成员（SSE 实时回报谁开口、谁沉默） */
-export async function streamRoom(
-  roomId: string,
-  text: string,
-  handlers: RoomHandlers,
-  signal?: AbortSignal,
-  model?: string,
-  ownerName?: string,
-  clientMessageId?: string,
-): Promise<void> {
-  const response = await fetch(`/api/rooms/${encodeURIComponent(roomId)}/messages`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ text, model, ownerName, clientMessageId }),
-    signal,
-  });
-
-  if (!response.ok) {
-    handlers.onError?.(await errorMessage(response));
-    return;
-  }
-  if (!response.body) {
-    handlers.onError?.('当前环境不支持流式响应');
-    return;
-  }
-
-  await readSseFrames(response, (frame) => dispatchRoomChunk(frame, handlers));
+/** 一条界面事件（GET /api/events 的 entry 帧） */
+export interface JournalEntry {
+  seq: number;
+  at: number;
+  agentId?: string;
+  roomId?: string;
+  kind: 'agent' | 'room' | 'run';
+  payload: unknown;
 }
 
-function dispatchRoomChunk(raw: string, handlers: RoomHandlers): void {
-  let event = 'message';
-  const dataLines: string[] = [];
-  for (const line of raw.split('\n')) {
-    if (line.startsWith('event:')) event = line.slice(6).trim();
-    else if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart());
-  }
-  if (dataLines.length === 0) return;
-
-  let data: unknown;
-  try {
-    data = JSON.parse(dataLines.join('\n'));
-  } catch {
-    return;
-  }
-
-  if (event === 'room') {
-    const roomEvent = data as RoomEvent;
-    switch (roomEvent.type) {
-      case 'room_message':
-        handlers.onMessage?.(roomEvent.message);
-        break;
-      case 'round_start':
-        handlers.onRoundStart?.({ agentId: roomEvent.agentId, agentName: roomEvent.agentName });
-        break;
-      case 'round_end':
-        handlers.onRoundEnd?.(roomEvent.outcome);
-        break;
-      case 'fanout_done':
-        handlers.onFanoutDone?.({ spoke: roomEvent.spoke, silent: roomEvent.silent });
-        break;
-    }
-    return;
-  }
-
-  if (event === 'event') {
-    handlers.onAgentEvent?.(data as AgentEvent);
-    return;
-  }
-
-  if (event === 'error') {
-    handlers.onError?.((data as { message?: string }).message ?? '未知错误');
-  }
-}
-
-export interface ChatHandlers {
-  onSession?: (sessionId: string) => void;
-  onEvent?: (event: AgentEvent) => void;
-  onDone?: (result: RunResult) => void;
-  onError?: (message: string) => void;
-}
-
-export async function streamChat(
-  body: { sessionId?: string; botId?: string; message: string; model?: string; clientMessageId?: string },
-  handlers: ChatHandlers,
-  signal?: AbortSignal,
-): Promise<void> {
-  const response = await fetch('/api/chat', {
+/** 私聊发送：202 回执（messageId 已落盘）；回合照跑，事件走订阅 */
+export async function sendChat(body: {
+  botId: string;
+  message: string;
+  model?: string;
+  clientMessageId?: string;
+}): Promise<Receipt> {
+  return request<Receipt>('/api/chat', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
-    signal,
   });
-
-  if (!response.ok) {
-    handlers.onError?.(await errorMessage(response));
-    return;
-  }
-  if (!response.body) {
-    handlers.onError?.('当前环境不支持流式响应');
-    return;
-  }
-
-  await readSseFrames(response, (frame) => dispatchChunk(frame, handlers));
 }
 
-function dispatchChunk(raw: string, handlers: ChatHandlers): void {
-  let event = 'message';
-  const dataLines: string[] = [];
-  for (const line of raw.split('\n')) {
-    if (line.startsWith('event:')) event = line.slice(6).trim();
-    else if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart());
-  }
-  if (dataLines.length === 0) return;
-
-  let data: unknown;
-  try {
-    data = JSON.parse(dataLines.join('\n'));
-  } catch {
-    return;
-  }
-
-  switch (event) {
-    case 'session':
-      handlers.onSession?.((data as { sessionId: string }).sessionId);
-      break;
-    case 'event':
-      handlers.onEvent?.(data as AgentEvent);
-      break;
-    case 'done':
-      handlers.onDone?.(data as RunResult);
-      break;
-    case 'error':
-      handlers.onError?.((data as { message?: string }).message ?? '未知错误');
-      break;
-  }
+/** 群发送：202 受理回执；扇出在后台，谁开口走事件订阅 */
+export async function sendRoomMessage(
+  roomId: string,
+  body: { text: string; model?: string; ownerName?: string; clientMessageId?: string },
+): Promise<Receipt> {
+  return request<Receipt>(`/api/rooms/${encodeURIComponent(roomId)}/messages`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
 }
+
+/**
+ * 独立订阅界面事件（E3.4 第二步）。
+ * ready 帧带当前游标与 resync 信号；之后按 seq 升序收 entry。
+ * 断开由调用方负责重连（带上最后一条 seq 补发）。
+ */
+export async function readEvents(
+  handlers: {
+    onReady?: (info: { latestSeq: number; resync: boolean }) => void;
+    onEntry: (entry: JournalEntry) => void;
+  },
+  options: { after?: number; signal?: AbortSignal } = {},
+): Promise<void> {
+  const suffix = options.after === undefined ? '' : `?after=${options.after}`;
+  const response = await fetch(`/api/events${suffix}`, { signal: options.signal });
+  if (!response.ok) throw new Error(await errorMessage(response));
+  if (!response.body) throw new Error('当前环境不支持流式响应');
+
+  await readSseFrames(response, (raw) => {
+    let event = 'message';
+    const dataLines: string[] = [];
+    for (const line of raw.split('\n')) {
+      if (line.startsWith('event:')) event = line.slice(6).trim();
+      else if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart());
+    }
+    if (dataLines.length === 0) return;
+    let data: unknown;
+    try {
+      data = JSON.parse(dataLines.join('\n'));
+    } catch {
+      return;
+    }
+    if (event === 'ready') {
+      handlers.onReady?.(data as { latestSeq: number; resync: boolean });
+      return;
+    }
+    if (event === 'entry') handlers.onEntry(data as JournalEntry);
+  });
+}
+

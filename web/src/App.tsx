@@ -16,10 +16,11 @@ import { usePresence } from './motion';
 import { useTheme } from './theme';
 import * as api from './api';
 import { formatClock } from './format';
-import { applyEvent, errorMessage, now, uid } from './features/chat/message-reducer';
-import { ensureNotifyPermission, notifyIfHidden } from './notify';
+import { errorMessage, uid } from './features/chat/message-reducer';
+import { ensureNotifyPermission } from './notify';
 import { useInteractions } from './features/interactions/use-interactions';
 import { useChatStream } from './features/chat/use-chat-stream';
+import { useEventStream } from './features/events/use-event-stream';
 import { useWorkspace } from './features/workspace/use-workspace';
 import type {
   AgentEvent,
@@ -78,7 +79,7 @@ export default function App() {
   /** 正在等用户回答的卡片（E2.5b 拆出） */
   const { interactions, handleRequest, handleClose: closeInteraction, answer: answerRequest } = useInteractions();
 
-  const { send, busy, liveText, liveChannelId } = useChatStream({
+  const { send, handleEntry, busy, liveText, liveChannelId } = useChatStream({
     getSession: () => ({
       activeAgentId,
       activeChannel,
@@ -86,6 +87,7 @@ export default function App() {
       model,
       ownerName,
     }),
+    getChannel: (channelId) => channels.find((item) => item.id === channelId),
     setChannelHistories,
     setArtifacts,
     setNotices,
@@ -97,6 +99,15 @@ export default function App() {
     onMemoryBump: () => setMemoryToken((token) => token + 1),
     syncWorkspace,
     reloadChannel,
+  });
+  // 独立事件订阅（E3.4 第二步）：发送只收回执，回合进度与结果都从这里来
+  useEventStream({
+    onEntry: handleEntry,
+    onResync: () => {
+      // 游标太旧/后端重启过：先重新取快照，再继续收事件
+      void reloadChannel(activeChannelId);
+      void syncWorkspace();
+    },
   });
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [newBotOpen, setNewBotOpen] = useState(false);

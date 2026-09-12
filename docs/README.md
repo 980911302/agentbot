@@ -67,45 +67,52 @@ npm run dev -- "读一下 package.json"
 - 信息抽屉提供过程、记忆和群成员；用户可查看、调整记忆及群成员。
 - 忙碌时可以继续发新句，旧执行挂起；发送整句“停”等停止词走停止流程。当前没有输入框停止按钮。
 - SendToUser 可显示选项卡或密钥框；交互目前有超时，用户新句会作废旧问题卡。密钥值不进入普通聊天或模型结果。
-- 当前群调度会跳过忙碌成员，收件箱和任务恢复也存在限制。可靠排队和跨重启持续工作是 E3/E4 目标。
-- 当前 SSE 断线会中止对应请求；关闭全部桌面窗口会退出后端。后台独立执行、重连补发和托盘常驻尚未实施。
+- 当前群调度会跳过忙碌成员。收件箱已改为「领取-确认」（失败有限退避，超限进 failed 等人工重试）；群可靠排队是 E3.7 目标。
+- 发送只返回回执，回合在后台跑；界面变化走 `GET /api/events` 订阅，断线只断订阅（重连凭游标补发）。关闭全部桌面窗口仍会退出后端。
 
 具体工具及限制见[工具参考](./工具参考.md)。当前不提供云电脑，也不把本机 Read/Shell 描述为受项目级文件沙箱约束。
 
 ## 5. 当前 API 概览
 
-基础地址是后端的 `http://127.0.0.1:<port>`。源码入口 `src/server/http.ts`；表格只列当前存在的路由，新架构中 202 收信和统一事件订阅属于提案。
+基础地址是后端的 `http://127.0.0.1:<port>`。源码入口 `src/server/http.ts`；发送类接口只回 202 回执，界面变化统一走 `/api/events` 订阅。
 
 | 路由 | 方法与作用 |
 | --- | --- |
 | `/api/health` | GET：模型、工具、预算、服务状态 |
+| `/api/events` | GET：SSE 事件订阅，`?after=<seq>` 补发；ready 帧带 `{latestSeq, resync}` |
 | `/api/agents` | GET/POST：列出/创建同事 |
 | `/api/agents/:id` | GET/PATCH/DELETE：详情/修改/删除 |
-| `/api/agents/:id/messages` | GET：原始消息；POST：以 SSE 执行一轮，正文含 text、可选 model |
+| `/api/agents/:id/messages` | GET：原始消息；POST：202 回执（`{messageId, agentId, receiptSeq, duplicate}`），正文含 text、可选 model/clientMessageId |
 | `/api/agents/:id/memory` | GET/POST：记忆快照/手动写入 |
 | `/api/agents/:id/memory/:scope/:owner/:entryId` | PATCH/DELETE：改记忆/遗忘 |
 | `/api/agents/:id/context` | GET：当前上下文预览和预算统计 |
-| `/api/agents/:id/inbox` | GET：积压；POST：触发消费 |
+| `/api/agents/:id/inbox` | GET：积压与 failed 数；POST：触发消费；`POST /inbox/retry`：人工重试 failed |
 | `/api/rooms` | GET/POST：群列表/创建 |
 | `/api/rooms/:id` | GET/PATCH/DELETE：详情/修改/解散 |
-| `/api/rooms/:id/messages` | GET：群时间线；POST：SSE 群回合，含 text、可选 model/ownerName |
+| `/api/rooms/:id/messages` | GET：群时间线；POST：202 受理回执，扇出在后台跑（含 text、可选 model/ownerName） |
 | `/api/interactions` | GET：待答卡，可按 agentId 筛选 |
 | `/api/interactions/:id` | POST：value/secret/cancelled 等答案或取消 |
 | `/api/secrets` | GET：已存密钥名字，不含值 |
 | `/api/secrets/:name` | DELETE：删除对应密钥 |
 | `/api/bots`、`/api/bots/:id` | 兼容前端使用的同事视图与编辑入口 |
 | `/api/sessions`、`/api/sessions/:id` | 兼容对话概要和展示消息入口 |
-| `/api/chat` | 兼容私聊 SSE 发送入口 |
+| `/api/chat` | 兼容私聊发送入口（202 回执） |
 
 agents 和 bots 当前并非字段完全一致的别名。例如 agents PATCH 只处理 name/instructions/toolNames/projectIds，而 bots 编辑入口可处理部分展示资料；E1/E2/E5 将统一契约。调用前以对应路由校验字段为准。
 
 记忆 API 中 scope 为 self/user/project，工具层 agent 映射 self；项目写入需明确 projectId。响应中的原始 Message 和前端展示消息形态不同，不直接混用。
 
-### SSE
+### 事件订阅（SSE）
 
-事件名称为 `event`（AgentEvent）、`room`（RoomEvent）、`done`、`error`，另有心跳注释。私聊增量为 `event` 中的 `type: delta`；最终文本、工具调用及结果为 message 事件；交互用 interaction/interaction_closed。
+发送与订阅是分开的：发送接口回 202 后，回合的事件都写进进程内事件日志（`EventJournal`，单调 seq）。
 
-群事件包含 room_message、round_start、round_end、fanout_done。未公开的收尾文本不作为群增量输出。当前前端消费在 api.ts 与 App.tsx，拆分计划在 E2。
+订阅 `GET /api/events?after=<seq>` 的帧：
+
+- `ready`：`{ latestSeq, resync }`；`resync=true` 表示游标太旧（被保留窗口挤掉）或后端重启过，客户端要先重新取快照，再从 `latestSeq` 往后订阅；
+- `entry`：一条 JournalEntry `{ seq, at, kind, agentId?, roomId?, payload }`；`kind` 为 `agent`（AgentEvent：delta/message/interaction 等）、`room`（RoomEvent：room_message/round_start/round_end/fanout_done）、`run`（回合收尾 `{phase:'done'|'error', ...}`）；
+- 心跳是 SSE 注释行；断线只断订阅，重连带上最后一条 `seq` 即可补齐。
+
+前端消费在 `web/src/features/events/use-event-stream.ts`（重连与游标）与 `web/src/features/chat/use-chat-stream.ts`（按 agentId/roomId 路由到频道）。
 
 ## 6. 数据、产物与备份
 
@@ -118,7 +125,7 @@ agents 和 bots 当前并非字段完全一致的别名。例如 agents PATCH �
 | messages/*.jsonl | 每个同事的经历 |
 | memory/user.json、memory/agents/、memory/projects/ | 三作用域记忆 |
 | compaction/*.json | 压缩摘要 |
-| inbox/*.json | 同事来信 |
+| inbox/*.json | 同事来信（含领取/期限/尝试次数/检查点；failed 可人工重试） |
 | secrets.json | 本机明文密钥文件，权限 0600；不要复制到诊断日志 |
 
 密钥实现见 `src/secret/store.ts`。Run、任务树、待答 Promise、shell/worker 索引和 Todo 当前仍在内存，备份文件不能恢复这些进程句柄。
@@ -133,7 +140,8 @@ agents 和 bots 当前并非字段完全一致的别名。例如 agents PATCH �
 | 前端接口失败 | `/api/health`、Vite 代理、API 错误响应 |
 | 工具调用出现模型 400 | tool_calls 与 tool_result 是否成组；context 裁剪及 provider 输入 |
 | 群成员没回 | 是否忙碌被跳过、是否被点名、是否有公开 posts、round_end 状态 |
-| 插话后显示异常 | 旧流与新流 ID、busy 计数、收尾历史重拉、AbortSignal |
+| 界面不更新 | `/api/events` 订阅是否连上（ready 帧的 resync）、游标是否停住、浏览器控制台报错 |
+| 插话后显示异常 | 事件 seq 是否乱序、busy 计数、忙完重拉历史、旧回合是否已 parked |
 | 卡片点击无效 | `/api/interactions` 中是否还存在；是否超时或被新句作废 |
 | 找不到旧信息 | 原消息是否存在、来源标记、压缩覆盖范围、记忆容量与检索词 |
 | 工具卸载后又回来 | ensureDefaultAgent 会补工具；E5.3 修复 |
