@@ -13,6 +13,7 @@ import type { MessageStore } from '../../store/messages.js';
 import type { MemoryStore } from '../../memory/store.js';
 import type { AgentInbox } from '../../agent/inbox.js';
 import type { RunLedger } from '../../storage/run-ledger.js';
+import type { ToolInvocationPort } from '../../storage/ports.js';
 import type { AgentService } from './agent-service.js';
 import type { StopCoordinator } from './stop-coordinator.js';
 import { AgentBusyError } from './types.js';
@@ -49,6 +50,8 @@ export class RunExecutor {
       drainInbox: (agentId: string, options: SendOptions) => Promise<unknown>;
       locks: Set<string>;
       ledger: RunLedger;
+      /** 工具执行账本（E3.5）：先记意图再执行再记结果 */
+      toolLedger: ToolInvocationPort;
       maxIterations?: number;
     },
   ) {
@@ -201,6 +204,10 @@ export class RunExecutor {
         stamp: task.roomId
           ? { roomId: task.roomId, roomName: task.roomName, speaker: task.speaker, source: 'room' }
           : { source: task.source },
+        // E3.5：工具执行账本——先记意图，执行后回填结果，中断的留着给恢复核对
+        invocations: this.deps.toolLedger,
+        runId: turnId,
+        treeId,
       });
 
       let result: RunResult;

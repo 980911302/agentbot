@@ -18,12 +18,15 @@ export function createTaskTools(input: {
   workerTools: () => import('../../tools/tool.js').Tool<any>[];
   maxIterations?: number;
   maxWorkers?: number;
+  /** 工具执行账本（E3.5）：工人的工具调用同样要留核对依据 */
+  invocations?: import('../../storage/ports.js').ToolInvocationPort;
 }) {
   const manager = new WorkerManager({
     provider: input.provider,
     messages: input.messages,
     workerTools: input.workerTools,
     maxIterations: input.maxIterations,
+    invocations: input.invocations,
   });
   const todos = new TodoStore();
 

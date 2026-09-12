@@ -69,6 +69,7 @@ npm run dev -- "读一下 package.json"
 - SendToUser 可显示选项卡或密钥框；交互目前有超时，用户新句会作废旧问题卡。密钥值不进入普通聊天或模型结果。
 - 当前群调度会跳过忙碌成员。收件箱已改为「领取-确认」（失败有限退避，超限进 failed 等人工重试）；群可靠排队是 E3.7 目标。
 - 发送只返回回执，回合在后台跑；界面变化走 `GET /api/events` 订阅，断线只断订阅（重连凭游标补发）。关闭全部桌面窗口仍会退出后端。
+- 工具调用会记账（执行前记意图、执行后记结果）；中断的调用要按策略先核对，shell 这类不会自动重跑（自动恢复尚未开启）。
 
 具体工具及限制见[工具参考](./工具参考.md)。当前不提供云电脑，也不把本机 Read/Shell 描述为受项目级文件沙箱约束。
 
@@ -126,6 +127,7 @@ agents 和 bots 当前并非字段完全一致的别名。例如 agents PATCH �
 | memory/user.json、memory/agents/、memory/projects/ | 三作用域记忆 |
 | compaction/*.json | 压缩摘要 |
 | inbox/*.json | 同事来信（含领取/期限/尝试次数/检查点；failed 可人工重试） |
+| tools/invocations.json | 工具执行账本（意图/结果/恢复分类；有意图没结果的调用是恢复时的核对依据） |
 | secrets.json | 本机明文密钥文件，权限 0600；不要复制到诊断日志 |
 
 密钥实现见 `src/secret/store.ts`。Run、任务树、待答 Promise、shell/worker 索引和 Todo 当前仍在内存，备份文件不能恢复这些进程句柄。

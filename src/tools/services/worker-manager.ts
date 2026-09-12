@@ -59,6 +59,8 @@ export class WorkerManager {
       workerTools: () => Tool<any>[];
       maxIterations?: number;
       maxWorkers?: number;
+      /** 工具执行账本（E3.5）：工人的工具调用同样先记意图再执行 */
+      invocations?: import('../../storage/ports.js').ToolInvocationPort;
     },
   ) {}
 
@@ -161,6 +163,9 @@ export class WorkerManager {
           maxIterations: this.deps.maxIterations,
           signal: controller.signal,
           stamp: { source: 'agent' },
+          // E3.5：工人的工具调用也记账（runId 用工人 id）
+          invocations: this.deps.invocations,
+          runId: worker.id,
         });
         const workerAgent = {
           id: worker.id,

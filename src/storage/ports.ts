@@ -153,6 +153,63 @@ export interface DeliveryPort {
   clear(agentId: string): Promise<void>;
 }
 
+// ── 工具执行账本：先记意图，再执行，再记结果（E3.5） ──
+/**
+ * 中断后的恢复分类（见 docs/架构设计.md §7.3）：
+ *   rerun     纯读取/搜索：可以重读，只需注明时间变化
+ *   idempotent 支持业务幂等键：用同一 operationKey 重试
+ *   verify    文件/资料写入：先核对产物，再决定是否重做
+ *   manual    任意 shell、无幂等支持的外发：先查产物与外部状态，无法判断就问用户
+ */
+export type ReplayPolicy = 'rerun' | 'idempotent' | 'verify' | 'manual';
+
+/** started = 有意图没结果（中断），恢复前必须先核对 */
+export type ToolInvocationStatus = 'started' | 'ok' | 'error' | 'unknown';
+
+export interface ToolInvocationRecord {
+  id: string;
+  agentId: string;
+  /** 哪次回合（Run）：恢复扫描与「谁欠的」都靠它 */
+  runId?: string;
+  treeId?: string;
+  tool: string;
+  /** 稳定业务键：同一请求跨重试不变（不含 runId/时间戳），可回填给外部幂等接口 */
+  operationKey: string;
+  /** 参数摘要（截断落盘；完整参数本来就在消息历史里） */
+  args?: string;
+  status: ToolInvocationStatus;
+  replayPolicy: ReplayPolicy;
+  startedAt: number;
+  endedAt?: number;
+  durationMs?: number;
+  resultSummary?: string;
+  error?: string;
+}
+
+export interface ToolInvocationStart {
+  agentId: string;
+  runId?: string;
+  treeId?: string;
+  tool: string;
+  operationKey: string;
+  args?: string;
+  replayPolicy: ReplayPolicy;
+}
+
+export interface ToolInvocationPort {
+  /** 执行前先落一条意图；返回的 id 用于执行后回填结果 */
+  start(input: ToolInvocationStart): Promise<ToolInvocationRecord>;
+  finish(
+    id: string,
+    result: { status: 'ok' | 'error' | 'unknown'; summary?: string; error?: string; durationMs?: number },
+  ): Promise<ToolInvocationRecord | undefined>;
+  /** 有意图、没结果的调用：恢复前必须先核对（E3.6 启动扫描的输入） */
+  unfinished(): Promise<ToolInvocationRecord[]>;
+  /** 同一业务键的历史尝试：判断「这件事是不是已经做过」 */
+  attemptsOf(operationKey: string): Promise<ToolInvocationRecord[]>;
+  list(limit?: number): Promise<ToolInvocationRecord[]>;
+}
+
 // ── Run 账本：回合/任务树记账（E3.1 先以内存实现作为唯一实现） ──
 export interface RunTurnRecord {
   id: string;

@@ -56,6 +56,7 @@ import { RunExecutor } from './runtime/run-executor.js';
 import { RoomDispatcher } from './runtime/room-dispatcher.js';
 import { ReceivedStore } from '../storage/received-store.js';
 import { InMemoryRunLedger } from '../storage/run-ledger.js';
+import { JsonToolInvocationLedger } from '../storage/tool-ledger.js';
 import { EventJournal } from './events/journal.js';
 export * from './runtime/types.js';
 
@@ -118,6 +119,8 @@ export class AgentRuntime {
   private readonly ledger = new InMemoryRunLedger();
   /** 事件日志（E3.4）：发送与订阅分离的基础；断线只断订阅，不牵动执行 */
   readonly events = new EventJournal();
+  /** 工具执行账本（E3.5）：先记意图再执行再记结果；中断的调用留在这里等核对 */
+  readonly toolLedger: JsonToolInvocationLedger;
   /** 撞上正在跑的用户回合的停止令：回合结束立刻处理 */
   private readonly pendingStops = new Map<string, PendingStop[]>();
 
@@ -210,6 +213,7 @@ export class AgentRuntime {
     });
 
     this.receivedStore = new ReceivedStore(options.dataDir);
+    this.toolLedger = new JsonToolInvocationLedger(options.dataDir);
 
     this.executor = new RunExecutor({
       registry: this.registry,
@@ -225,6 +229,7 @@ export class AgentRuntime {
       drainInbox: (agentId, options) => this.drainInbox(agentId, options),
       locks: this.locks,
       ledger: this.ledger,
+      toolLedger: this.toolLedger,
       maxIterations: options.maxIterations,
     });
 
@@ -237,6 +242,7 @@ export class AgentRuntime {
         messages: this.messages,
         workerTools: () => this.tools.filter((tool) => tool.name !== 'SendToUser'),
         maxIterations: this.options.maxIterations,
+        invocations: this.toolLedger,
       }),
     ];
     // 新同事默认拿到全部工具——包括工作台那一组

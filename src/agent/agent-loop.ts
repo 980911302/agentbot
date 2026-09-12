@@ -12,7 +12,9 @@ import type { BuiltContext } from '../context/builder.js';
 import type { LLMProvider } from '../llm/provider.js';
 import type { LLMMessage } from '../llm/provider.js';
 import type { MessageStore } from '../store/messages.js';
+import type { ToolInvocationPort, ToolInvocationRecord } from '../storage/ports.js';
 import { ToolRegistry } from '../tools/registry.js';
+import { operationKeyOf, replayPolicyOf } from '../tools/policy.js';
 import type { ToolContext } from '../tools/tool.js';
 
 export interface AgentLoopDeps {
@@ -31,6 +33,11 @@ export interface AgentLoopDeps {
   persistAssistantText?: boolean;
   /** 追加到每条持久化消息上的元信息（房间标记等） */
   stamp?: Partial<Pick<Message, 'roomId' | 'roomName' | 'speaker' | 'source'>>;
+  /** 工具执行账本（E3.5）：先记意图 → 执行 → 记结果；不传则不记账 */
+  invocations?: ToolInvocationPort;
+  /** 记账归属：哪次回合（Run） */
+  runId?: string;
+  treeId?: string;
 }
 
 const DEFAULT_MAX_ITERATIONS = 12;
@@ -78,13 +85,28 @@ export class AgentLoop {
       for (const call of response.toolCalls) {
         usedTools.push(call.name);
         const startedAt = Date.now();
-        const result = await registry.execute(call, {
-          agentId: agent.id,
-          projectIds: agent.memory.projectIds,
-          signal: this.deps.signal,
-          ...(this.deps.toolContext ?? {}),
-        });
+        // E3.5：先记意图再执行——中断后才有核对依据（「有意图没结果」）
+        const invocation = await this.startInvocation(agent, call);
+        let result: string;
+        try {
+          result = await registry.execute(call, {
+            agentId: agent.id,
+            projectIds: agent.memory.projectIds,
+            signal: this.deps.signal,
+            ...(this.deps.toolContext ?? {}),
+          });
+        } catch (error) {
+          await this.finishInvocation(invocation, 'unknown', undefined, error);
+          throw error;
+        }
         const ok = !result.startsWith('Error:');
+        await this.finishInvocation(
+          invocation,
+          ok ? 'ok' : 'error',
+          ok ? result : undefined,
+          ok ? undefined : result,
+          Date.now() - startedAt,
+        );
 
         if (!registry.isEphemeral(call.name)) {
           const resultMessage = await this.persist(agent, 'tool', {
@@ -126,6 +148,45 @@ export class AgentLoop {
 
   private emit(event: AgentEvent): void {
     this.deps.onEvent?.(event);
+  }
+
+  /** 执行前先落一条意图；账本故障不能拖垮回合（这次调用就没有核对依据） */
+  private async startInvocation(agent: Agent, call: ToolCall): Promise<ToolInvocationRecord | undefined> {
+    const ledger = this.deps.invocations;
+    if (!ledger) return undefined;
+    try {
+      return await ledger.start({
+        agentId: agent.id,
+        runId: this.deps.runId,
+        treeId: this.deps.treeId,
+        tool: call.name,
+        operationKey: operationKeyOf({ agentId: agent.id, tool: call.name, args: call.arguments }),
+        args: call.arguments,
+        replayPolicy: replayPolicyOf(call.name),
+      });
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async finishInvocation(
+    invocation: ToolInvocationRecord | undefined,
+    status: 'ok' | 'error' | 'unknown',
+    summary?: string,
+    error?: unknown,
+    durationMs?: number,
+  ): Promise<void> {
+    if (!invocation) return;
+    await this.deps.invocations
+      ?.finish(invocation.id, {
+        status,
+        ...(summary ? { summary } : {}),
+        ...(error !== undefined
+          ? { error: error instanceof Error ? error.message : String(error) }
+          : {}),
+        ...(durationMs !== undefined ? { durationMs } : {}),
+      })
+      .catch(() => undefined);
   }
 }
 
