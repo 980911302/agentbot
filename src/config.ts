@@ -31,6 +31,34 @@ export interface AppConfig {
   ownerName: string;
   /** 是否启用联网工具（web_search / web_fetch） */
   web: boolean;
+  /** 停止词：私聊整句命中即视作停止令（《停止与插话.md》4.1） */
+  stopWords: string[];
+}
+
+/** 停止词默认表；AGENT_STOP_WORDS 可追加（逗号/空格分隔） */
+export const DEFAULT_STOP_WORDS = [
+  '停',
+  '停止',
+  '先别做了',
+  '取消',
+  '别做了',
+  '不用了',
+  'halt',
+  'cancel',
+  'stop',
+];
+
+/**
+ * 整句匹配：trim、去尾部标点、拉丁转小写后全等。
+ * 只认整句是刻意的——不靠模型猜「这句是不是在叫停」。
+ */
+export function isStopSentence(text: string, stopWords: string[]): boolean {
+  const cleaned = text
+    .trim()
+    .replace(/[!！?？。，,；;：:~～—–-\s]+$/g, '')
+    .toLowerCase();
+  if (!cleaned) return false;
+  return stopWords.some((word) => word.trim().toLowerCase() === cleaned);
 }
 
 export class MissingApiKeyError extends Error {
@@ -110,5 +138,14 @@ export function resolveConfig(options: ResolveConfigOptions = {}): AppConfig {
       (env.AGENT_OWNER ?? '').trim() ||
       DEFAULT_OWNER_NAME,
     web: env.AGENT_WEB !== 'off',
+    stopWords: Array.from(
+      new Set([
+        ...DEFAULT_STOP_WORDS,
+        ...(env.AGENT_STOP_WORDS ?? '')
+          .split(/[,，\s]+/)
+          .map((word) => word.trim())
+          .filter(Boolean),
+      ]),
+    ),
   };
 }
