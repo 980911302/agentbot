@@ -29,7 +29,9 @@ export type AgentPatch = Partial<
   >
 >;
 
-export class AgentRegistry {
+import type { AgentRegistryPort } from '../storage/ports.js';
+
+export class AgentRegistry implements AgentRegistryPort {
   private agents: AgentRecord[] = [];
   private loaded = false;
   private readonly file: string;

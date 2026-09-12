@@ -35,7 +35,9 @@ export function sortInboxForDrain(list: InboxItem[]): InboxItem[] {
   return [...list].sort((left, right) => rank(left) - rank(right));
 }
 
-export class AgentInbox {
+import type { DeliveryPort } from '../storage/ports.js';
+
+export class AgentInbox implements DeliveryPort {
   private readonly cache = new Map<string, InboxItem[]>();
   private readonly dir: string;
 

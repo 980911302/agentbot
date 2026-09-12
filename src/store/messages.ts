@@ -2,7 +2,9 @@ import { mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { Message } from '../agent/types.js';
 
-export class MessageStore {
+import type { MessageRepositoryPort } from '../storage/ports.js';
+
+export class MessageStore implements MessageRepositoryPort {
   private readonly cache = new Map<string, Message[]>();
   private readonly messageDir: string;
 
