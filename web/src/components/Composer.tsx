@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useClickOutside } from '../hooks';
-import { IconArrowUp, IconCheck, IconMic, IconPlus, IconStop, IconTool } from '../icons';
+import { IconArrowUp, IconCheck, IconMic, IconPlus, IconTool } from '../icons';
 import { BotAvatar } from './BotAvatar';
 import type { ModelOption, ToolInfo } from '../types';
 
@@ -19,7 +19,6 @@ interface ComposerProps {
   isGroup?: boolean;
   members?: ChannelMemberItem[];
   onSend: (text: string) => void;
-  onStop: () => void;
   onModelChange: (model: string) => void;
 }
 
@@ -32,7 +31,6 @@ export function Composer({
   isGroup = false,
   members = [],
   onSend,
-  onStop,
   onModelChange,
 }: ComposerProps) {
   const [value, setValue] = useState('');
@@ -252,16 +250,16 @@ export function Composer({
           onKeyDown={handleKeyDown}
         />
 
-        {/* Right White Circle Button (Mic / Send / Stop) */}
+        {/* Right White Circle Button (Send / Mic)——没有「停止」：它会把活干完 */}
         {busy ? (
           <button
             type="button"
-            className="capsule-action-btn stop"
-            aria-label="停止生成"
-            title="停止生成"
-            onClick={onStop}
+            className="capsule-action-btn send"
+            disabled
+            aria-label="它正在处理"
+            title="它正在处理，忙完自动恢复"
           >
-            <IconStop size={16} />
+            <IconArrowUp size={18} />
           </button>
         ) : value.trim() ? (
           <button

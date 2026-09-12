@@ -178,8 +178,9 @@ export default function App() {
 
   const [artifacts, setArtifacts] = useState<ArtifactView[]>([]);
   const [busy, setBusy] = useState(false);
-  /** 私聊流式：正在生成的增量文本；收到完整消息即清空 */
+  /** 私聊流式：正在生成的增量文本；收到完整消息即清空（记录归属频道，切走不串台） */
   const [liveText, setLiveText] = useState('');
+  const [liveChannelId, setLiveChannelId] = useState('');
   const [screenOpen, setScreenOpen] = useState(false);
   const [screenFull, setScreenFull] = useState(false);
   /** 抽屉卸载前先播完退出动画 */
@@ -638,6 +639,7 @@ export default function App() {
 
       setBusy(true);
       setLiveText('');
+      setLiveChannelId(activeChannel.kind === 'room' ? '' : activeChannelId);
       const controller = new AbortController();
       abortRef.current = controller;
 
@@ -850,6 +852,7 @@ export default function App() {
         abortRef.current = null;
         setBusy(false);
         setLiveText('');
+        setLiveChannelId('');
         setMemoryToken((token) => token + 1);
         // 工作台工具可能改了同事 / 群，同步一次
         void syncWorkspace();
@@ -871,13 +874,6 @@ export default function App() {
     },
     [],
   );
-
-  const stop = useCallback(() => {
-    abortRef.current?.abort();
-    abortRef.current = null;
-    setBusy(false);
-    setLiveText('');
-  }, []);
 
   const setOwnerName = useCallback((name: string) => {
     const trimmed = name.trim() || '主人';
@@ -933,21 +929,10 @@ export default function App() {
         models={models}
         tools={tools}
         onSend={(text) => void send(text)}
-        onStop={stop}
         onModelChange={setModel}
       />
     ),
-    [
-      activeChannel.name,
-      activeChannel.kind,
-      activeChannel.members,
-      busy,
-      model,
-      models,
-      send,
-      stop,
-      tools,
-    ],
+    [activeChannel.name, activeChannel.kind, activeChannel.members, busy, model, models, send, tools],
   );
 
   const endpoint = useMemo(() => {
@@ -962,7 +947,8 @@ export default function App() {
         channels={sidebarChannels}
         activeId={activeChannelId}
         onSelect={(id) => {
-          if (!busy) setActiveChannelId(id);
+          // 忙碌也能自由查看别的频道：事件仍会写进发起发送的那个频道
+          setActiveChannelId(id);
         }}
         onNew={() => setNewBotOpen(true)}
         onOpenMarket={() => setSettingsOpen(true)}
@@ -992,7 +978,7 @@ export default function App() {
         messages={currentMessages}
         artifacts={artifacts}
         busy={busy}
-        liveText={liveText}
+        liveText={liveChannelId === activeChannelId ? liveText : ''}
         composer={composer}
         onToggleInfo={() => setScreenOpen((prev) => !prev)}
         isGroup={activeChannel.kind === 'room'}

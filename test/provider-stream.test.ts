@@ -47,4 +47,30 @@ describe('OpenAIProvider 流式（onDelta）', () => {
     assert.equal(result.toolCalls[0]?.arguments, '{"q":"测试"}');
     assert.equal(result.usage?.totalTokens, 18);
   });
+
+  it('流中途停滞（不再吐字也不结束）→ 空闲看门狗报错而不是无限挂起', async () => {
+    const stall = createServer((request, response) => {
+      response.writeHead(200, { 'content-type': 'text/event-stream' });
+      response.write('data: {"choices":[{"delta":{"content":"开头"}}]}\n\n');
+      // 故意不 end，模拟连接挂着断气
+    });
+    await new Promise<void>((resolve) => stall.listen(0, '127.0.0.1', resolve));
+    const stallUrl = `http://127.0.0.1:${(stall.address() as AddressInfo).port}`;
+
+    try {
+      const provider = new OpenAIProvider({
+        apiKey: 'k',
+        model: 'm',
+        baseURL: stallUrl,
+        streamIdleTimeoutMs: 150,
+      });
+      await assert.rejects(
+        provider.chat([{ role: 'user', content: 'hi' }], { onDelta: () => undefined }),
+        /流空闲/,
+      );
+    } finally {
+      stall.close();
+      stall.closeAllConnections();
+    }
+  });
 });

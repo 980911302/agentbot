@@ -7,6 +7,8 @@ export interface OpenAIProviderConfig {
   baseURL?: string;
   temperature?: number;
   timeoutMs?: number;
+  /** 流式空闲超时：连续这么久没有字节视为停滞（默认 60s，单测可调短） */
+  streamIdleTimeoutMs?: number;
 }
 
 interface WireToolCall {
@@ -46,6 +48,8 @@ interface StreamChunk {
 
 const DEFAULT_BASE_URL = 'https://api.deepseek.com/v1';
 const DEFAULT_TIMEOUT_MS = 180_000;
+/** 流式途中连续这么久没有收到任何字节，视为流已停滞：报错优于无限挂起 */
+const STREAM_IDLE_TIMEOUT_MS = 60_000;
 
 export class OpenAIProvider implements LLMProvider {
   readonly name = 'openai-compatible';
@@ -55,6 +59,7 @@ export class OpenAIProvider implements LLMProvider {
   private readonly model: string;
   private readonly temperature: number | undefined;
   private readonly timeoutMs: number;
+  private readonly streamIdleMs: number;
 
   constructor(config: OpenAIProviderConfig) {
     if (!config.apiKey) throw new Error('OpenAIProvider: apiKey is required');
@@ -64,6 +69,7 @@ export class OpenAIProvider implements LLMProvider {
     this.model = config.model;
     this.temperature = config.temperature;
     this.timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.streamIdleMs = config.streamIdleTimeoutMs ?? STREAM_IDLE_TIMEOUT_MS;
   }
 
   async chat(messages: LLMMessage[], options: ChatOptions = {}): Promise<LLMResponse> {
@@ -136,7 +142,18 @@ export class OpenAIProvider implements LLMProvider {
     if (temperature !== undefined) body.temperature = temperature;
 
     const timeout = AbortSignal.timeout(this.timeoutMs);
-    const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
+    const outer = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
+    // 空闲看门狗：总超时管「整个请求太久」，这条管「流中途断气」——
+    // 停滞的连接既不吐字也不结束，60 秒就该放弃并让上层走重试。
+    const idleController = new AbortController();
+    const signal = AbortSignal.any([outer, idleController.signal]);
+    let idleTimer: NodeJS.Timeout | null = null;
+    const armIdle = () => {
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => idleController.abort(), this.streamIdleMs);
+    };
+    armIdle();
+
     const response = await fetch(`${this.baseURL}/chat/completions`, {
       method: 'POST',
       headers: {
@@ -193,18 +210,30 @@ export class OpenAIProvider implements LLMProvider {
       }
     };
 
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      let newline = buffer.indexOf('\n');
-      while (newline !== -1) {
-        handleLine(buffer.slice(0, newline));
-        buffer = buffer.slice(newline + 1);
-        newline = buffer.indexOf('\n');
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        armIdle();
+        buffer += decoder.decode(value, { stream: true });
+        let newline = buffer.indexOf('\n');
+        while (newline !== -1) {
+          handleLine(buffer.slice(0, newline));
+          buffer = buffer.slice(newline + 1);
+          newline = buffer.indexOf('\n');
+        }
       }
+      if (buffer.trim()) handleLine(buffer);
+    } catch (error) {
+      if (idleController.signal.aborted) {
+        throw new Error(
+          `LLM 流空闲超过 ${Math.round(this.streamIdleMs / 1000)} 秒，已中断（可直接重试）`,
+        );
+      }
+      throw error;
+    } finally {
+      if (idleTimer) clearTimeout(idleTimer);
     }
-    if (buffer.trim()) handleLine(buffer);
 
     const toolCalls: ToolCall[] = [...calls.entries()]
       .sort(([left], [right]) => left - right)
