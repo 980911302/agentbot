@@ -16,6 +16,7 @@ import { usePresence } from './motion';
 import { useTheme } from './theme';
 import * as api from './api';
 import { formatClock } from './format';
+import { ensureNotifyPermission, notifyIfHidden } from './notify';
 import type {
   AgentEvent,
   ArtifactView,
@@ -169,6 +170,11 @@ export default function App() {
   const [doneFlash, setDoneFlash] = useState(false);
   /** 这一轮谁沉默了（沉默是合法结果，只做轻提示，不进正文） */
   const [silentNotes, setSilentNotes] = useState<Record<string, string[]>>({});
+  /** 群频道未读数：轮询发现 lastMessage 变化且不在当前频道时累加 */
+  const [unread, setUnread] = useState<Record<string, number>>({});
+  const seenRoomsRef = useRef<Map<string, number>>(new Map());
+  const seenBaselineRef = useRef(false);
+  const activeChannelIdRef = useRef('');
 
   const [artifacts, setArtifacts] = useState<ArtifactView[]>([]);
   const [busy, setBusy] = useState(false);
@@ -215,6 +221,14 @@ export default function App() {
   useEffect(() => {
     agentsRef.current = backendAgents;
   }, [backendAgents]);
+
+  useEffect(() => {
+    activeChannelIdRef.current = activeChannelId;
+    // 切进频道就是看过了
+    setUnread((current) =>
+      current[activeChannelId] ? { ...current, [activeChannelId]: 0 } : current,
+    );
+  }, [activeChannelId]);
 
   // busy 落下时闪一个短暂的绿勾：完成了，但不用你做任何事
   useEffect(() => {
@@ -322,6 +336,8 @@ export default function App() {
   // 载入健康状态、真实房间与后台 Agent
   useEffect(() => {
     let cancelled = false;
+    // 尽早拿通知授权（Electron 静默授权；浏览器会在首次通知前再确认）
+    void ensureNotifyPermission();
     void (async () => {
       try {
         const info = await api.fetchHealth();
@@ -368,6 +384,27 @@ export default function App() {
     if (roomData) {
       setRooms(roomData.rooms);
       setRoomMemberLimit(roomData.memberLimit);
+
+      // 未读：首轮只记基线；之后 messageCount 增长且不在当前频道 → 累加差值
+      const updates: Record<string, number> = {};
+      for (const room of roomData.rooms) {
+        const seen = seenRoomsRef.current.get(room.id);
+        if (seen === undefined) {
+          seenRoomsRef.current.set(room.id, room.messageCount);
+          continue;
+        }
+        if (room.messageCount > seen) {
+          seenRoomsRef.current.set(room.id, room.messageCount);
+          if (room.id !== activeChannelIdRef.current) {
+            updates[room.id] = (updates[room.id] ?? 0) + Math.min(room.messageCount - seen, 99);
+          }
+        } else if (room.messageCount < seen) {
+          seenRoomsRef.current.set(room.id, room.messageCount);
+        }
+      }
+      if (Object.keys(updates).length > 0) {
+        setUnread((current) => ({ ...current, ...updates }));
+      }
     }
 
     setChannels((current) => {
@@ -661,6 +698,10 @@ export default function App() {
                       ? current
                       : [...current, event.request],
                   );
+                  notifyIfHidden(
+                    `「${event.request.agentName}」在等你回答`,
+                    event.request.question,
+                  );
                   return;
                 }
                 if (event.type === 'interaction_closed') {
@@ -736,6 +777,7 @@ export default function App() {
                     ? current
                     : [...current, event.request],
                 );
+                notifyIfHidden(`「${event.request.agentName}」在等你回答`, event.request.question);
                 return;
               }
               if (event.type === 'interaction_closed') {
@@ -863,6 +905,12 @@ export default function App() {
     };
   }, [activeChannel, backendAgents, busy, currentMessages, liveText]);
 
+  /** 侧边栏数据 = 频道 + 未读数合并 */
+  const sidebarChannels = useMemo(
+    () => channels.map((item) => ({ ...item, unread: unread[item.id] ?? 0 })),
+    [channels, unread],
+  );
+
   const composer = useMemo(
     () => (
       <Composer
@@ -900,7 +948,7 @@ export default function App() {
     <div className={`app${screenOpen && !screenFull ? ' with-screen' : ''}`}>
       {/* 1. 左侧导航栏 */}
       <Sidebar
-        channels={channels}
+        channels={sidebarChannels}
         activeId={activeChannelId}
         onSelect={(id) => {
           if (!busy) setActiveChannelId(id);

@@ -2728,3 +2728,17 @@ button {
   color: var(--accent, #a855f7);
   font-weight: 600;
 }
+
+/* ── 频道未读角标 ────────────────────────────────────── */
+
+.channel-unread {
+  flex: none;
+  min-width: 18px;
+  padding: 1px 6px;
+  border-radius: var(--r-full);
+  background: var(--bad, '#ef4444');
+  color: #ffffff;
+  font-size: 10.5px;
+  font-weight: 650;
+  text-align: center;
+}

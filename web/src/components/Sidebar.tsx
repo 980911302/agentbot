@@ -15,6 +15,8 @@ export interface ChannelItem {
   members?: Array<{ id: string; name: string; color: string }>;
   /** 智能体频道的在场状态（来自后端轮询） */
   status?: 'idle' | 'thinking' | 'working' | 'error';
+  /** 群未读数（非当前频道收到新消息） */
+  unread?: number;
 }
 
 interface SidebarProps {
@@ -174,7 +176,13 @@ export function Sidebar({
                         <span className="channel-tag group">群</span>
                       ) : null}
                     </div>
-                    <span className="channel-time">{channel.time}</span>
+                    {channel.unread ? (
+                      <span className="channel-unread">
+                        {channel.unread > 99 ? '99+' : channel.unread}
+                      </span>
+                    ) : (
+                      <span className="channel-time">{channel.time}</span>
+                    )}
                   </div>
                   <div className="channel-snippet-row">
                     <span className="channel-snippet">{channel.lastMessage}</span>
