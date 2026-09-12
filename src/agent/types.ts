@@ -149,6 +149,7 @@ export type AgentEvent =
   | { type: 'interaction'; request: InteractionRequest }
   | { type: 'interaction_closed'; id: string; answered: boolean }
   | { type: 'message'; message: Message }
+  | { type: 'delta'; text: string }
   | { type: 'iteration'; index: number }
   | { type: 'compacted'; coversUpTo: number; messageCount: number }
   | { type: 'memory'; added: MemoryRef[]; merged: number }

@@ -20,6 +20,8 @@ export interface AgentLoopDeps {
   messages: MessageStore;
   maxIterations?: number;
   onEvent?: AgentEventHandler;
+  /** 私聊流式：模型每吐一段增量文本就回调一次（群回合不传） */
+  onDelta?: (text: string) => void;
   signal?: AbortSignal;
   /** 覆盖这一轮可用的工具（群回合会额外挂 say / stay_silent） */
   toolsOverride?: ToolRegistry;
@@ -49,6 +51,7 @@ export class AgentLoop {
       const response = await this.deps.provider.chat(conversation, {
         tools: registry.getSchemas(),
         signal: this.deps.signal,
+        onDelta: this.deps.onDelta,
       });
 
       const text = (response.content ?? '').trim();

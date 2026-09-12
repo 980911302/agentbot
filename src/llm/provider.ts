@@ -11,6 +11,8 @@ export interface ChatOptions {
   tools?: ToolSchema[];
   temperature?: number;
   signal?: AbortSignal;
+  /** 提供即走流式；每段增量文本回调一次 */
+  onDelta?: (text: string) => void;
 }
 
 export interface LLMProvider {

@@ -30,7 +30,18 @@ interface WireChoice {
 interface WireResponse {
   choices?: WireChoice[];
   usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
-  error?: { message?: string };
+  error?: { message: string };
+}
+
+interface StreamDelta {
+  content?: string | null;
+  tool_calls?: Array<{ index: number; id?: string; function?: { name?: string; arguments?: string } }>;
+}
+
+interface StreamChunk {
+  choices?: Array<{ delta?: StreamDelta; finish_reason?: string | null }>;
+  usage?: WireResponse['usage'];
+  error?: { message: string };
 }
 
 const DEFAULT_BASE_URL = 'https://api.deepseek.com/v1';
@@ -56,6 +67,8 @@ export class OpenAIProvider implements LLMProvider {
   }
 
   async chat(messages: LLMMessage[], options: ChatOptions = {}): Promise<LLMResponse> {
+    if (options.onDelta) return this.chatStream(messages, options);
+
     const body: Record<string, unknown> = {
       model: this.model,
       messages: messages.map(toWireMessage),
@@ -104,6 +117,103 @@ export class OpenAIProvider implements LLMProvider {
       finishReason: choice.finish_reason ?? null,
       usage: toUsage(data.usage),
     };
+  }
+
+  /** 流式路径：SSE 逐段解析，增量文本回调 onDelta，tool_calls 分片按 index 拼装 */
+  private async chatStream(messages: LLMMessage[], options: ChatOptions): Promise<LLMResponse> {
+    const onDelta = options.onDelta!;
+    const body: Record<string, unknown> = {
+      model: this.model,
+      messages: messages.map(toWireMessage),
+      stream: true,
+      stream_options: { include_usage: true },
+    };
+    if (options.tools && options.tools.length > 0) {
+      body.tools = options.tools.map(toWireTool);
+      body.tool_choice = 'auto';
+    }
+    const temperature = options.temperature ?? this.temperature;
+    if (temperature !== undefined) body.temperature = temperature;
+
+    const timeout = AbortSignal.timeout(this.timeoutMs);
+    const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
+    const response = await fetch(`${this.baseURL}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${this.apiKey}`,
+      },
+      body: JSON.stringify(body),
+      signal,
+    });
+
+    if (!response.ok) {
+      const detail = await response.text().catch(() => '');
+      throw new Error(
+        `LLM request failed with ${response.status} ${response.statusText}` +
+          (detail ? `: ${detail.slice(0, 500)}` : ''),
+      );
+    }
+    if (!response.body) throw new Error('LLM streaming response contained no body');
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let content = '';
+    let finishReason: string | null = null;
+    let usage: TokenUsage | null = null;
+    const calls = new Map<number, { id: string; name: string; arguments: string }>();
+
+    const handleLine = (rawLine: string): void => {
+      const line = rawLine.trim();
+      if (!line.startsWith('data:')) return;
+      const payload = line.slice(5).trim();
+      if (!payload || payload === '[DONE]') return;
+      let chunk: StreamChunk;
+      try {
+        chunk = JSON.parse(payload) as StreamChunk;
+      } catch {
+        return;
+      }
+      if (chunk.error?.message) throw new Error(`LLM returned an error: ${chunk.error.message}`);
+      if (chunk.usage) usage = toUsage(chunk.usage);
+      const choice = chunk.choices?.[0];
+      if (!choice) return;
+      if (choice.finish_reason) finishReason = choice.finish_reason;
+      if (choice.delta?.content) {
+        content += choice.delta.content;
+        onDelta(choice.delta.content);
+      }
+      for (const piece of choice.delta?.tool_calls ?? []) {
+        const slot = calls.get(piece.index) ?? { id: '', name: '', arguments: '' };
+        if (piece.id) slot.id = piece.id;
+        if (piece.function?.name) slot.name = piece.function.name;
+        if (piece.function?.arguments) slot.arguments += piece.function.arguments;
+        calls.set(piece.index, slot);
+      }
+    };
+
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let newline = buffer.indexOf('\n');
+      while (newline !== -1) {
+        handleLine(buffer.slice(0, newline));
+        buffer = buffer.slice(newline + 1);
+        newline = buffer.indexOf('\n');
+      }
+    }
+    if (buffer.trim()) handleLine(buffer);
+
+    const toolCalls: ToolCall[] = [...calls.entries()]
+      .sort(([left], [right]) => left - right)
+      .map(([, slot]) => ({
+        id: slot.id || `call_${slot.name}`,
+        name: slot.name,
+        arguments: slot.arguments || '{}',
+      }));
+    return { content: content || null, toolCalls, finishReason, usage };
   }
 }
 

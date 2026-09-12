@@ -76,6 +76,8 @@ export interface SendOptions {
   model?: string;
   onEvent?: AgentEventHandler;
   onRoomEvent?: RoomEventHandler;
+  /** 私聊流式：增量文本回调（群回合不透传，避免露出不进历史的收尾推理） */
+  onDelta?: (text: string) => void;
   signal?: AbortSignal;
   /** 覆盖主人显示名（一般不用传，从 runtime 配置读） */
   ownerName?: string;
@@ -328,7 +330,7 @@ export class AgentRuntime {
       createdAt: Date.now(),
       source: 'user',
     };
-    return this.runTurn(agentId, task, { brief: undefined }, options);
+    return this.runTurn(agentId, task, { brief: undefined, onDelta: options.onDelta }, options);
   }
 
   // ── 群回合：扇出叫醒 ────────────────────────────────
@@ -717,6 +719,8 @@ export class AgentRuntime {
       posts?: string[];
       model?: string;
       onEvent?: AgentEventHandler;
+      /** 仅私聊传入：模型增量文本透传成 delta 事件 */
+      onDelta?: (text: string) => void;
       signal?: AbortSignal;
     },
     options: SendOptions = {},
@@ -765,6 +769,7 @@ export class AgentRuntime {
         messages: this.messages,
         maxIterations: this.options.maxIterations,
         onEvent: options.onEvent,
+        onDelta: turn.onDelta,
         signal: turn.signal ?? options.signal,
         toolsOverride: registry,
         toolContext: { ...(turn.toolContext ?? {}), turnState, emit: options.onEvent },
