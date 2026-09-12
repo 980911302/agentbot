@@ -19,8 +19,6 @@ interface ComposerProps {
   isGroup?: boolean;
   members?: ChannelMemberItem[];
   onSend: (text: string) => void;
-  /** 忙碌时的「停止」：等价于发一条停止词回合（《停止与插话.md》§9） */
-  onStopSend?: () => void;
   onModelChange: (model: string) => void;
 }
 
@@ -33,7 +31,6 @@ export function Composer({
   isGroup = false,
   members = [],
   onSend,
-  onStopSend,
   onModelChange,
 }: ComposerProps) {
   const [value, setValue] = useState('');
@@ -254,17 +251,7 @@ export function Composer({
           onKeyDown={handleKeyDown}
         />
 
-        {/* Right: 停止（忙碌时） + Send / Mic */}
-        {busy && onStopSend ? (
-          <button
-            type="button"
-            className="capsule-stop-btn"
-            onClick={onStopSend}
-            title="给当前对话的这个智能体发停止令"
-          >
-            停止
-          </button>
-        ) : null}
+        {/* Right: Send / Mic——界面不做停止入口；打「停」走停止令全链（《停止与插话.md》§9） */}
         {value.trim() || busy ? (
           <button
             type="button"

@@ -984,7 +984,6 @@ export default function App() {
         models={models}
         tools={tools}
         onSend={(text) => void send(text)}
-        onStopSend={activeChannel.kind === 'room' ? undefined : () => void send('停')}
         onModelChange={setModel}
       />
     ),
