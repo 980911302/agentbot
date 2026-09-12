@@ -56,6 +56,17 @@ export interface MessageRepositoryPort {
 }
 
 // ── 投递：智能体间 1:1 收件箱（含停止令信） ──────────
+/** 投递生命周期（E3.3）：pending → claimed → handled；失败按策略回 pending 或进 failed */
+export type DeliveryStatus = 'pending' | 'claimed' | 'handled' | 'failed';
+
+/** 处理形成的持久检查点：这批输入已经变成了哪条消息 / 哪个回合 */
+export interface DeliveryCheckpoint {
+  at: number;
+  messageId: string;
+  turnId?: string;
+  note?: string;
+}
+
 export interface DeliveryItem {
   id: string;
   toAgentId: string;
@@ -68,14 +79,77 @@ export interface DeliveryItem {
   kind?: 'message' | 'stop' | 'stop-ack';
   treeId?: string;
   createdAt: number;
+  /** 原消息 / 关联引用：每封信保留作者与关联（E3.3） */
+  messageId?: string;
+  correlationId?: string;
+  /** 缺省视为 pending（兼容没有生命周期字段的旧数据） */
+  status?: DeliveryStatus;
+  /** 处理失败次数；领取超时回收与 nack 共用同一份持久计数，重启不重置 */
+  attempts?: number;
+  /** 退避：早于这个时刻不领取 */
+  availableAt?: number;
+  /** 执行权：被谁领走 */
+  leaseOwner?: string;
+  /** 每次领取递增的 epoch（E3.6 用它拒绝迟到写入） */
+  leaseEpoch?: number;
+  /** 领取期限：过期视为处理中断，可被回收 */
+  leaseUntil?: number;
+  lastError?: string;
+  checkpoint?: DeliveryCheckpoint;
+}
+
+export interface DeliveryClaimInput {
+  /** 领取者标识（回合 / 执行实例） */
+  owner: string;
+  /** 领取期限（毫秒）：到期未确认视为中断 */
+  leaseMs: number;
+  /** 回收过期租约时，尝试次数达到此值进 failed */
+  maxAttempts: number;
+  now?: number;
+}
+
+export interface DeliveryFailureInput {
+  maxAttempts: number;
+  /** 退避基数：第 n 次失败等待 base * 2^(n-1)，封顶 maxDelayMs */
+  baseDelayMs: number;
+  maxDelayMs?: number;
+  now?: number;
 }
 
 export interface DeliveryPort {
   enqueue(item: Omit<DeliveryItem, 'id' | 'createdAt'>): Promise<DeliveryItem>;
-  drain(agentId: string): Promise<DeliveryItem[]>;
+  /**
+   * 原子领取：带执行权（owner）与期限（leaseMs），并取得递增 epoch。
+   * 领取不删除内容；同一 agent 同一时刻只应有一个有效领取（活的租约会挡住后来的领取）。
+   */
+  claim(agentId: string, input: DeliveryClaimInput): Promise<DeliveryItem[]>;
+  /** 处理形成持久检查点后确认；确认即出队（JSON 阶段不留在队列里） */
+  ack(agentId: string, ids: string[]): Promise<number>;
+  /** 失败退回：有限退避；到达上限进 failed，不再自动重试 */
+  nack(
+    agentId: string,
+    ids: string[],
+    error: string,
+    input: DeliveryFailureInput,
+  ): Promise<{ failed: string[]; pending: string[] }>;
+  /** 归还领取（忙等非失败原因）：不计次，立即回到可领取 */
+  release(agentId: string, ids: string[]): Promise<void>;
+  /** 记录持久检查点：这批信已被折成哪条消息 */
+  checkpoint(
+    agentId: string,
+    ids: string[],
+    patch: { messageId: string; turnId?: string; note?: string; at?: number },
+  ): Promise<void>;
+  /** 人工重试 failed：重置尝试预算 */
+  retryFailed(agentId: string): Promise<number>;
+  /** 未处理的投递（pending + claimed，不含 failed） */
   peek(agentId: string): Promise<DeliveryItem[]>;
   take(agentId: string, predicate: (item: DeliveryItem) => boolean): Promise<DeliveryItem[]>;
+  /** 未处理数（pending + claimed） */
   count(agentId: string): Promise<number>;
+  /** 现在可领取数（要不要再拉一次的判断依据） */
+  claimableCount(agentId: string, now?: number): Promise<number>;
+  failedCount(agentId: string): Promise<number>;
   clear(agentId: string): Promise<void>;
 }
 
@@ -97,6 +171,7 @@ export interface RunTreeRecord {
   agentId: string;
   children: Array<{ agentId: string; via: 'dm' | 'room'; roomId?: string }>;
   status: 'open' | 'cancelling' | 'cancelled';
+  /** 自动续跑次数上限 3，防止打断-续跑打乒乓 */
   resumeCount: number;
   createdAt: number;
 }
@@ -106,6 +181,8 @@ export interface RunLedgerPort {
   getTurn(id: string): RunTurnRecord | undefined;
   putTree(tree: RunTreeRecord): void;
   getTree(id: string): RunTreeRecord | undefined;
+  /** 全部任务树（停止按树遍历、续跑按树筛选） */
+  listTrees(): RunTreeRecord[];
   /** 当前占着执行位的回合 id；没有则 undefined */
   runningTurnOf(agentId: string): string | undefined;
   releaseRunning(agentId: string, turnId: string): void;

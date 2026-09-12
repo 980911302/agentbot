@@ -24,6 +24,8 @@ export function createSendToAgentTool(options: {
     text: string;
     priority: boolean;
     callerId: string;
+    /** 发信来源（发起回合的树 id）：收件侧保留这场传话的关联 */
+    correlationId?: string;
   }) => Promise<string>;
 }) {
   return defineTool<{
@@ -86,6 +88,7 @@ export function createSendToAgentTool(options: {
         text,
         priority: priority === true,
         callerId: context.agentId,
+        correlationId: context.turnState?.treeId,
       });
       const note = Array.isArray(images) && images.length > 0 ? '（附件暂不支持，已忽略）' : '';
       return `${reply}${note}`;

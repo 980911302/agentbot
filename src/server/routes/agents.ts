@@ -73,15 +73,24 @@ export async function handleAgentRoute(
     return;
   }
 
-  // 同事私发进来的积压消息（1:1 队列）
+  // 同事私发进来的积压消息（1:1 队列）：未处理的 + 处理失败的
   if (rest === '/inbox' && method === 'GET') {
-    json(response, 200, { items: await runtime.inbox.peek(agentId) });
+    json(response, 200, {
+      items: await runtime.inbox.peek(agentId),
+      failed: await runtime.failedMail(agentId),
+    });
     return;
   }
 
   if (rest === '/inbox' && method === 'POST') {
     await runtime.drainInbox(agentId);
     json(response, 200, { ok: true });
+    return;
+  }
+
+  // 人工重试失败的来信（重置尝试预算）
+  if (rest === '/inbox/retry' && method === 'POST') {
+    json(response, 200, { retried: await runtime.retryFailedMail(agentId) });
     return;
   }
 

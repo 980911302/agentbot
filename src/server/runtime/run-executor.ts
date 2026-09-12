@@ -12,24 +12,25 @@ import type { AgentRegistry } from '../../agent/registry.js';
 import type { MessageStore } from '../../store/messages.js';
 import type { MemoryStore } from '../../memory/store.js';
 import type { AgentInbox } from '../../agent/inbox.js';
+import type { RunLedger } from '../../storage/run-ledger.js';
 import type { AgentService } from './agent-service.js';
 import type { StopCoordinator } from './stop-coordinator.js';
 import { AgentBusyError } from './types.js';
 import type { RuntimeTurn, SendOptions, SendResult, TaskTree, TurnResult } from './types.js';
 
 /**
- * RunExecutor（E2.2 拆出）：一次回合的执行核心。
+ * RunExecutor（E2.2 拆出，E3.3 记账改经 RunLedger）：一次回合的执行核心。
  *
- * 持有回合/任务树记账（turns/trees/runningTurnByAgent，与 StopCoordinator 共享引用），
  * 实现《工程化执行计划.md》E2.2 的调度语义：
  *   - 用户的新句永远能开新回合——旧的断流挂起（park）、树记欠，结束后自动补跑（resume）
  *   - 同事信/群/续跑撞上忙智能体维持退避，不打扰正在进行的用户回合
  *   - 回合收尾顺序：停止令 → 欠账续跑 → 同事来信
+ *
+ * 回合/任务树的状态与「谁占着执行位」写入 RunLedger（E3.1 边界）；
+ * AbortController 这类执行句柄只留在账本的内存支路，不随状态落盘。
  */
 export class RunExecutor {
-  private readonly turns: Map<string, RuntimeTurn>;
-  private readonly trees: Map<string, TaskTree>;
-  private readonly runningTurnByAgent: Map<string, string>;
+  private readonly ledger: RunLedger;
   private readonly locks: Set<string>;
 
   constructor(
@@ -45,17 +46,13 @@ export class RunExecutor {
       agentService: AgentService;
       stopCoordinator: StopCoordinator;
       /** 收件箱积压时的消费入口（InboxProcessor） */
-      drainInbox: (agentId: string, options: SendOptions & { depth?: number }) => Promise<unknown>;
+      drainInbox: (agentId: string, options: SendOptions) => Promise<unknown>;
       locks: Set<string>;
-      turnsMap: Map<string, RuntimeTurn>;
-      treesMap: Map<string, TaskTree>;
-      runningTurnByAgentMap: Map<string, string>;
+      ledger: RunLedger;
       maxIterations?: number;
     },
   ) {
-    this.turns = deps.turnsMap;
-    this.trees = deps.treesMap;
-    this.runningTurnByAgent = deps.runningTurnByAgentMap;
+    this.ledger = deps.ledger;
     this.locks = deps.locks;
   }
 
@@ -90,7 +87,7 @@ export class RunExecutor {
 
     // 见 docs/架构设计.md「插话、停止和等待」：用户的新句永远能开新回合——旧的断流挂起、树记欠；
     // 同事信/群/续跑撞上忙智能体维持退避，不打扰正在进行的用户回合。
-    const existingTurnId = this.runningTurnByAgent.get(agentId);
+    const existingTurnId = this.ledger.runningTurnOf(agentId);
     if (existingTurnId) {
       if (source === 'user') {
         this.parkTurn(agentId, existingTurnId);
@@ -115,20 +112,19 @@ export class RunExecutor {
       id: treeId,
       rootTurnId: turnId,
       agentId,
-      jobs: [],
       children: [],
       status: 'open',
       resumeCount: 0,
       createdAt: runtimeTurn.createdAt,
     };
-    this.turns.set(turnId, runtimeTurn);
-    this.trees.set(treeId, tree);
-    this.runningTurnByAgent.set(agentId, turnId);
+    this.ledger.putTurn(runtimeTurn);
+    this.ledger.putTree(tree);
+    this.ledger.acquireRunning(agentId, turnId);
     this.locks.add(agentId);
 
     // 本回合自己的 abort 控制器：挂起（park）就掐这里；外部 close 信号并行生效
     const controller = new AbortController();
-    tree.jobs.push({ abort: () => controller.abort(), label: 'turn' });
+    this.ledger.jobsOf(treeId).push({ abort: () => controller.abort(), label: 'turn' });
     const externalSignal = turn.signal ?? options.signal;
     const signal = externalSignal
       ? AbortSignal.any([controller.signal, externalSignal])
@@ -174,9 +170,10 @@ export class RunExecutor {
         registerChild: (child) => {
           if (!tree.children.some((item) => item.agentId === child.agentId && item.via === child.via)) {
             tree.children.push(child);
+            this.ledger.putTree(tree);
           }
         },
-        registerJob: (abort, label) => tree.jobs.push({ abort, label }),
+        registerJob: (abort, label) => this.ledger.jobsOf(treeId).push({ abort, label }),
         persistOutgoing: async (text) => {
           const message: Message = {
             id: randomUUID(),
@@ -242,18 +239,24 @@ export class RunExecutor {
       };
     } finally {
       // 只有自己还占着坑才清；被插队时新回合已经接管了锁
-      if (this.runningTurnByAgent.get(agentId) === turnId) {
-        this.runningTurnByAgent.delete(agentId);
+      if (this.ledger.runningTurnOf(agentId) === turnId) {
+        this.ledger.releaseRunning(agentId, turnId);
         this.locks.delete(agentId);
       }
-      if (runtimeTurn.status === 'running') runtimeTurn.status = 'done';
-      tree.jobs = tree.jobs.filter((job) => job.label !== 'turn');
+      if (runtimeTurn.status === 'running') {
+        runtimeTurn.status = 'done';
+        this.ledger.putTurn(runtimeTurn);
+      }
+      this.ledger.setJobs(
+        treeId,
+        this.ledger.jobsOf(treeId).filter((job) => job.label !== 'turn'),
+      );
 
       // 收尾顺序（优先级）：停止令 → 欠账续跑 → 同事来信
       await this.deps.stopCoordinator.processPendingStops(agentId).catch(() => undefined);
       void this.resumeOwed(agentId).catch(() => undefined);
-      const pending = await this.deps.inbox.count(agentId).catch(() => 0);
-      if (pending > 0) {
+      const claimable = await this.deps.inbox.claimableCount(agentId).catch(() => 0);
+      if (claimable > 0) {
         this.deps.drainInbox(agentId, { model: turn.model ?? options.model }).catch(() => undefined);
       }
     }
@@ -261,32 +264,38 @@ export class RunExecutor {
 
   /** 把正在跑的回合断流挂起：旧树保持 open 记欠，等新回合结束再补跑 */
   private parkTurn(agentId: string, turnId: string): void {
-    const rt = this.turns.get(turnId);
+    const rt = this.ledger.getTurn(turnId);
     if (!rt || rt.status !== 'running') return;
     rt.status = 'parked';
-    const tree = this.trees.get(rt.treeId);
+    this.ledger.putTurn(rt);
+    const tree = this.ledger.getTree(rt.treeId);
     if (tree) {
-      for (const job of tree.jobs) job.abort();
+      for (const job of this.ledger.jobsOf(tree.id)) job.abort();
     }
   }
 
   /** 欠账补跑：最早的、还没续过 3 次的 parked 树，接回去继续做 */
   private async resumeOwed(agentId: string): Promise<void> {
-    if (this.runningTurnByAgent.has(agentId)) return;
-    const tree = [...this.trees.values()]
+    if (this.ledger.runningTurnOf(agentId)) return;
+    const tree = this.ledger
+      .listTrees()
       .filter(
         (item) =>
           item.agentId === agentId &&
           item.status === 'open' &&
           item.resumeCount < 3 &&
-          this.turns.get(item.rootTurnId)?.status === 'parked',
+          this.ledger.getTurn(item.rootTurnId)?.status === 'parked',
       )
       .sort((left, right) => left.createdAt - right.createdAt)[0];
     if (!tree) return;
     tree.resumeCount += 1;
-    const root = this.turns.get(tree.rootTurnId);
+    this.ledger.putTree(tree);
+    const root = this.ledger.getTurn(tree.rootTurnId);
     // 先了结再跑：续跑回合自己的 finally 会再触发 resumeOwed，不改状态会立即再续一轮
-    if (root && root.status === 'parked') root.status = 'done';
+    if (root && root.status === 'parked') {
+      root.status = 'done';
+      this.ledger.putTurn(root);
+    }
 
     const task: Message = {
       id: randomUUID(),
@@ -314,9 +323,13 @@ export class RunExecutor {
       // 续跑本身又被插队 → 这笔账重新记欠
       if (result.stopReason === 'parked' && root && root.status === 'done') {
         root.status = 'parked';
+        this.ledger.putTurn(root);
       }
     } catch {
-      if (root && root.status === 'done') root.status = 'parked';
+      if (root && root.status === 'done') {
+        root.status = 'parked';
+        this.ledger.putTurn(root);
+      }
     }
   }
 
@@ -333,4 +346,3 @@ export class RunExecutor {
     }
   }
 }
-

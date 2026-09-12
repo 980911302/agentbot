@@ -43,10 +43,8 @@ import {
   type AgentRuntimeOptions,
   type PendingStop,
   type RoomRoundSummary,
-  type RuntimeTurn,
   type SendOptions,
   type SendResult,
-  type TaskTree,
   type TurnResult,
   AgentBusyError,
 } from './runtime/types.js';
@@ -56,6 +54,7 @@ import { InboxProcessor } from './runtime/inbox-processor.js';
 import { RunExecutor } from './runtime/run-executor.js';
 import { RoomDispatcher } from './runtime/room-dispatcher.js';
 import { ReceivedStore } from '../storage/received-store.js';
+import { InMemoryRunLedger } from '../storage/run-ledger.js';
 export * from './runtime/types.js';
 
 const DEFAULT_MAX_AGENT_DEPTH = 3;
@@ -113,10 +112,8 @@ export class AgentRuntime {
   private readonly roomDispatcher: RoomDispatcher;
   private readonly locks = new Set<string>();
 
-  /** 回合与任务树（见 docs/架构设计.md「插话、停止和等待」）：当前存于内存，消息本身已落盘 */
-  private readonly turns = new Map<string, RuntimeTurn>();
-  private readonly trees = new Map<string, TaskTree>();
-  private readonly runningTurnByAgent = new Map<string, string>();
+  /** 回合与任务树账本（E3.3 接线；见 docs/架构设计.md「插话、停止和等待」） */
+  private readonly ledger = new InMemoryRunLedger();
   /** 撞上正在跑的用户回合的停止令：回合结束立刻处理 */
   private readonly pendingStops = new Map<string, PendingStop[]>();
 
@@ -179,9 +176,7 @@ export class AgentRuntime {
       inbox: this.inbox,
       rooms: this.rooms,
       broker: this.broker,
-      turns: this.turns,
-      trees: this.trees,
-      runningTurnByAgent: this.runningTurnByAgent,
+      ledger: this.ledger,
       pendingStops: this.pendingStops,
       stopWords: options.stopWords ?? DEFAULT_STOP_WORDS,
       stopAckTimeoutMs: options.stopAckTimeoutMs ?? 30_000,
@@ -194,6 +189,9 @@ export class AgentRuntime {
       stopCoordinator: this.stopCoordinator,
       runTurn: (agentId, task, turn, options) =>
         this.runTurn(agentId, task, { extraTools: [], ...turn }, options),
+      leaseMs: options.deliveryLeaseMs,
+      maxAttempts: options.deliveryMaxAttempts,
+      baseDelayMs: options.deliveryBaseDelayMs,
     });
 
     this.agentService = new AgentService({
@@ -222,9 +220,7 @@ export class AgentRuntime {
       stopCoordinator: this.stopCoordinator,
       drainInbox: (agentId, options) => this.drainInbox(agentId, options),
       locks: this.locks,
-      turnsMap: this.turns,
-      treesMap: this.trees,
-      runningTurnByAgentMap: this.runningTurnByAgent,
+      ledger: this.ledger,
       maxIterations: options.maxIterations,
     });
 
@@ -366,7 +362,9 @@ export class AgentRuntime {
       const existing = this.receivedStore.find(clientMessageId);
       if (existing) {
         // E3.2：重复提交返回原消息，不开新回合
-        const original = (await this.messages.list(agentId)).find((m) => m.id === existing.messageId);
+        const original = (await this.messages.list(agentId)).find(
+          (message) => message.id === existing.messageId,
+        );
         if (original) {
           options.onEvent?.({ type: 'message', message: original });
           const record = await this.registry.get(agentId);
@@ -461,7 +459,7 @@ export class AgentRuntime {
         if (room) return { kind: 'room' as const, id: room.id, name: room.name };
         return undefined;
       },
-      dispatch: async ({ targetId, kind, text, priority, callerId }) => {
+      dispatch: async ({ targetId, kind, text, priority, callerId, correlationId }) => {
         if (kind === 'agent') {
           const sender = await this.registry.get(callerId);
           const target = await this.registry.get(targetId);
@@ -473,6 +471,7 @@ export class AgentRuntime {
             priority,
             depth: 0,
             kind: 'message',
+            ...(correlationId ? { correlationId } : {}),
           });
           return `已投递给「${target?.name ?? targetId}」；发出去就结束，回复会作为之后的一个新回合回来。`;
         }
@@ -484,14 +483,24 @@ export class AgentRuntime {
     });
   }
 
-  /** 把积压的同事来信合并成一个回合处理 */
-  /** 把积压的同事来信合并成一个回合处理（搬至 InboxProcessor，此处保持兼容入口） */
-  async drainInbox(agentId: string, options: SendOptions & { depth?: number } = {}): Promise<TurnResult | null> {
-    return this.inboxProcessor.drain(agentId, options);
+  /** 消费积压的同事来信（领取 → 处理 → 确认；搬至 InboxProcessor，此处保持兼容入口） */
+  async drainInbox(agentId: string, options: SendOptions = {}): Promise<TurnResult | null> {
+    return this.inboxProcessor.process(agentId, options);
   }
 
+  /** 未处理的来信数（含领取中，不含 failed） */
   async pendingMail(agentId: string): Promise<number> {
     return this.inbox.count(agentId);
+  }
+
+  /** 处理失败、不再自动重试的来信数 */
+  async failedMail(agentId: string): Promise<number> {
+    return this.inbox.failedCount(agentId);
+  }
+
+  /** 人工重试失败的来信（重置尝试预算） */
+  async retryFailedMail(agentId: string): Promise<number> {
+    return this.inbox.retryFailed(agentId);
   }
 
   isBusy(agentId: string): boolean {

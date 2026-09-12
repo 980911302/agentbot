@@ -6,15 +6,10 @@ import type { InteractionBroker } from '../../interaction/broker.js';
 import type { AgentInbox } from '../../agent/inbox.js';
 import type { RoomStore } from '../../room/store.js';
 import type { MessageStore } from '../../store/messages.js';
+import type { RunLedger } from '../../storage/run-ledger.js';
 import { isStopSentence, DEFAULT_STOP_WORDS } from '../../config.js';
 import type { AgentRegistry } from '../../agent/registry.js';
-import type {
-  PendingStop,
-  RuntimeTurn,
-  SendOptions,
-  SendResult,
-  TaskTree,
-} from './types.js';
+import type { PendingStop, SendOptions, SendResult } from './types.js';
 
 /**
  * StopCoordinator（E2.2 拆出）：停止令的认词、排队与执行。
@@ -24,7 +19,7 @@ import type {
  *   - 用户回合优先：撞上正在跑的用户回合就排队，回合结束立刻处理
  *   - 只砍「早于本令」的树，用户新开的事不受牵连
  *
- * turns / trees / runningTurnByAgent / pendingStops 与 AgentRuntime 共享引用（Map 传引用）。
+ * 回合/任务树状态经 RunLedger 读（E3.3 接线）；pendingStops 与 runtime 共享引用（Map 传引用）。
  */
 export class StopCoordinator {
   private readonly pendingStops: Map<string, PendingStop[]>;
@@ -36,9 +31,7 @@ export class StopCoordinator {
       inbox: AgentInbox;
       rooms: RoomStore;
       broker: InteractionBroker;
-      turns: Map<string, RuntimeTurn>;
-      trees: Map<string, TaskTree>;
-      runningTurnByAgent: Map<string, string>;
+      ledger: RunLedger;
       pendingStops: Map<string, PendingStop[]>;
       stopWords: string[];
       stopAckTimeoutMs: number;
@@ -49,8 +42,8 @@ export class StopCoordinator {
 
   /** 用户发来停止词：撞上正在跑的用户回合就排队（那条 SSE 保持打开），否则立刻执行 */
   stopFromUser(agentId: string, text: string, options: SendOptions): Promise<SendResult> {
-    const runningId = this.deps.runningTurnByAgent.get(agentId);
-    const running = runningId ? this.deps.turns.get(runningId) : undefined;
+    const runningId = this.deps.ledger.runningTurnOf(agentId);
+    const running = runningId ? this.deps.ledger.getTurn(runningId) : undefined;
     if (running && running.source === 'user' && running.status === 'running') {
       let resolve!: (result: SendResult) => void;
       const done = new Promise<SendResult>((settle) => {
@@ -70,8 +63,8 @@ export class StopCoordinator {
     stop: { text: string; createdAt: number },
     replyTo: { agentId: string; name: string },
   ): Promise<void> {
-    const runningId = this.deps.runningTurnByAgent.get(agentId);
-    const running = runningId ? this.deps.turns.get(runningId) : undefined;
+    const runningId = this.deps.ledger.runningTurnOf(agentId);
+    const running = runningId ? this.deps.ledger.getTurn(runningId) : undefined;
     if (running && running.source === 'user' && running.status === 'running') {
       const queue = this.pendingStops.get(agentId) ?? [];
       queue.push({
@@ -163,14 +156,17 @@ export class StopCoordinator {
     await persist('好的，在停。');
 
     // 只砍「早于本令」的 open 树：停止令之后用户新开的事不受牵连
-    const targets = [...this.deps.trees.values()].filter(
-      (tree) => tree.agentId === agentId && tree.status === 'open' && tree.createdAt < stop.createdAt,
-    );
+    const targets = this.deps.ledger
+      .listTrees()
+      .filter(
+        (tree) => tree.agentId === agentId && tree.status === 'open' && tree.createdAt < stop.createdAt,
+      );
     const dmChildren: Array<{ agentId: string; treeId: string }> = [];
     const roomChildren: Array<{ roomId?: string }> = [];
     for (const tree of targets) {
       tree.status = 'cancelling';
-      for (const job of tree.jobs) job.abort();
+      this.deps.ledger.putTree(tree);
+      for (const job of this.deps.ledger.jobsOf(tree.id)) job.abort();
       for (const child of tree.children) {
         if (child.via === 'dm') dmChildren.push({ agentId: child.agentId, treeId: tree.id });
         else roomChildren.push({ roomId: child.roomId });
@@ -211,7 +207,10 @@ export class StopCoordinator {
       await this.awaitStopAcks(agentId, dmChildren.length, this.deps.stopAckTimeoutMs);
     }
 
-    for (const tree of targets) tree.status = 'cancelled';
+    for (const tree of targets) {
+      tree.status = 'cancelled';
+      this.deps.ledger.putTree(tree);
+    }
     await persist('停完了。');
 
     if (opts.replyTo) {

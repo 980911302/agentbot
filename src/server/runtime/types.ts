@@ -7,6 +7,7 @@ import type { LLMProvider } from '../../llm/provider.js';
 import type { MemoryStore } from '../../memory/store.js';
 import type { RoomEventHandler, RoundOutcome, RoundStatus } from '../../room/types.js';
 import type { SecretStore } from '../../secret/store.js';
+import type { RunTreeRecord, RunTurnRecord } from '../../storage/ports.js';
 import type { Tool } from '../../tools/tool.js';
 
 /** 种子智能体（首次启动时落进注册表） */
@@ -46,6 +47,12 @@ export interface AgentRuntimeOptions {
   stopWords?: string[];
   /** 停止令等下级回报的上限（默认 30s；测试可调短） */
   stopAckTimeoutMs?: number;
+  /** 投递领取期限（毫秒）：到期未确认视为中断，可回收（E3.3） */
+  deliveryLeaseMs?: number;
+  /** 同一封信最多处理几次，到顶进 failed（E3.3） */
+  deliveryMaxAttempts?: number;
+  /** 失败退避基数（毫秒），第 n 次等待 base * 2^(n-1)（E3.3） */
+  deliveryBaseDelayMs?: number;
 }
 
 export interface SendOptions {
@@ -63,30 +70,14 @@ export interface SendOptions {
   clientMessageId?: string;
 }
 
-/** 一次回合的记账（见 docs/架构设计.md「插话、停止和等待」） */
-export interface RuntimeTurn {
-  id: string;
-  agentId: string;
-  source: 'user' | 'agent' | 'room' | 'resume';
-  kind: 'normal' | 'stop';
-  text: string;
-  treeId: string;
-  status: 'running' | 'parked' | 'done' | 'cancelled';
-  createdAt: number;
-}
+/**
+ * 一次回合的记账（见 docs/架构设计.md「插话、停止和等待」）。
+ * 结构就是 RunLedger 的回合记录：执行句柄（AbortController）不在这里。
+ */
+export type RuntimeTurn = RunTurnRecord;
 
-/** 一轮派生出去的任务树（4.2）：停止令按这张表往下走 */
-export interface TaskTree {
-  id: string;
-  rootTurnId: string;
-  agentId: string;
-  jobs: Array<{ abort: () => void; label: string }>;
-  children: Array<{ agentId: string; via: 'dm' | 'room'; roomId?: string }>;
-  status: 'open' | 'cancelling' | 'cancelled';
-  /** 自动续跑次数上限 3，防止打断-续跑打乒乓 */
-  resumeCount: number;
-  createdAt: number;
-}
+/** 一轮派生出去的任务树（4.2）：停止令按这张表往下走；执行句柄在账本的内存支路 */
+export type TaskTree = RunTreeRecord;
 
 /** 撞上用户回合被挂起的停止令（运行时内部） */
 export interface PendingStop {
