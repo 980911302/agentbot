@@ -13,6 +13,8 @@ export interface ChannelItem {
   /** room = 群（扇出给成员）；agent = 1:1 私聊 */
   kind?: 'room' | 'agent';
   members?: Array<{ id: string; name: string; color: string }>;
+  /** 智能体频道的在场状态（来自后端轮询） */
+  status?: 'idle' | 'thinking' | 'working' | 'error';
 }
 
 interface SidebarProps {
@@ -148,7 +150,10 @@ export function Sidebar({
                   }
                 }}
               >
-                <div className="channel-avatar-wrapper">
+                <div
+                  className={`channel-avatar-wrapper${channel.status === 'working' ? ' working' : ''}`}
+                  title={channel.status === 'working' ? '正在干活' : undefined}
+                >
                   <BotAvatar
                     name={channel.name}
                     color={channel.color || '#8b5cf6'}

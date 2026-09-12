@@ -1014,28 +1014,6 @@ button {
 }
 
 /* ── Group Round Status & Silent Indicators ───────────────── */
-.round-line {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 14px;
-  border-radius: var(--r-full);
-  background: var(--accent-soft);
-  border: 1px solid var(--accent-glow);
-  color: var(--accent);
-  font-size: 12.5px;
-  width: fit-content;
-  margin: 4px auto;
-}
-
-.round-line .dot-pulse {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--accent);
-  animation: pulse 1.2s infinite ease-in-out;
-}
-
 .silent-line {
   display: flex;
   align-items: center;
@@ -2565,6 +2543,80 @@ button {
   }
   56%,
   100% {
+    opacity: 0;
+  }
+}
+
+/* ── 在场感：头像即状态 ───────────────────────────────── */
+
+.channel-avatar-wrapper {
+  position: relative;
+}
+
+.channel-avatar-wrapper.working::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--warn, '#f59e0b') 70%, transparent);
+  animation: pulse-ring 1.6s var(--ease, ease) infinite;
+}
+
+@keyframes pulse-ring {
+  0% {
+    transform: scale(0.92);
+    opacity: 0.9;
+  }
+  70% {
+    transform: scale(1.12);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1.12);
+    opacity: 0;
+  }
+}
+
+.chat-header-avatar {
+  position: relative;
+  flex: none;
+  display: flex;
+}
+
+.chat-header-avatar.done-flash .done-check {
+  animation: done-pop 2.5s var(--ease, ease) forwards;
+}
+
+.done-check {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--ok, '#30d158');
+  color: #ffffff;
+  box-shadow: 0 0 0 2px var(--panel, '#ffffff');
+}
+
+@keyframes done-pop {
+  0% {
+    transform: scale(0.4);
+    opacity: 0;
+  }
+  12% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  80% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(0.9);
     opacity: 0;
   }
 }

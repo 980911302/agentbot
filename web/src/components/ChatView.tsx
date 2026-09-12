@@ -3,7 +3,7 @@ import type { ReactNode, WheelEvent as ReactWheelEvent } from 'react';
 import type { ArtifactView, BotSummary, DisplayMessage, InteractionRequest } from '../types';
 import { RichText } from '../markdown';
 import { BotAvatar } from './BotAvatar';
-import { IconChevronDown, IconInfo } from '../icons';
+import { IconCheck, IconChevronDown, IconInfo } from '../icons';
 import { MessageItem } from './MessageItem';
 import { InteractionCard } from './InteractionCard';
 
@@ -17,8 +17,10 @@ interface ChatViewProps {
   composer: ReactNode;
   channelTitle?: string;
   onToggleInfo?: () => void;
-  /** 群回合：正在进入回合的成员名 */
-  roundActive?: string | null;
+  /** 群回合：正在进入回合的成员 */
+  roundActive?: { id: string; name: string; color: string } | null;
+  /** 回合/回复刚结束的短暂绿勾 */
+  doneFlash?: boolean;
   /** 群回合：这一轮看过但没开口的成员 */
   silentNotes?: string[];
   isGroup?: boolean;
@@ -43,6 +45,7 @@ export function ChatView({
   channelTitle,
   onToggleInfo,
   roundActive,
+  doneFlash,
   silentNotes,
   isGroup,
   members = [],
@@ -57,7 +60,19 @@ export function ChatView({
   const [pendingCount, setPendingCount] = useState(0);
   const [awayFromBottom, setAwayFromBottom] = useState(false);
   const lastSeenCount = useRef(messages.length);
-  const title = channelTitle || bot?.name || '白泽联调';
+  const title = channelTitle || bot?.name || '对话';
+
+  /** 最近一次还在跑的工具调用：悬停时告诉用户「它此刻在做什么」 */
+  const runningCall = (() => {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const call = messages[index]?.toolCalls.find((item) => item.status === 'running');
+      if (call) return call;
+    }
+    return null;
+  })();
+  const actionHint = runningCall
+    ? `${runningCall.name}(${runningCall.arguments.replace(/\s+/g, ' ').slice(0, 80)})`
+    : null;
 
   const distanceFromBottom = () => {
     const scroller = scrollerRef.current;
@@ -121,7 +136,17 @@ export function ChatView({
     <div className="main-chat-container">
       <header className="chat-top-header">
         <div className="chat-header-left">
-          <BotAvatar name={title} size={30} color={bot?.color || '#a855f7'} />
+          <div
+            className={`chat-header-avatar${doneFlash ? ' done-flash' : ''}`}
+            title={busy ? (actionHint ?? '正在处理…') : undefined}
+          >
+            <BotAvatar name={title} size={30} color={bot?.color || '#a855f7'} />
+            {doneFlash ? (
+              <span className="done-check">
+                <IconCheck size={11} />
+              </span>
+            ) : null}
+          </div>
           <div className="chat-header-title-box">
             <h2 className="chat-header-title">{title}</h2>
             {isGroup && members.length > 0 ? (
@@ -171,11 +196,23 @@ export function ChatView({
 
           {artifacts.length > 0 ? <ArtifactRow artifacts={artifacts} /> : null}
 
-          {/* 群回合进行中：谁在看 */}
+          {/* 群回合进行中：谁的回合谁的气泡在动 */}
           {isGroup && roundActive ? (
-            <div className="round-line">
-              <span className="dot-pulse" />
-              <span>{roundActive} 正在看这一轮…</span>
+            <div className="msg-group-item assistant thinking-indicator">
+              <div className="msg-avatar-col">
+                <BotAvatar name={roundActive.name} color={roundActive.color} size={34} />
+              </div>
+              <div className="msg-content-col">
+                <div className="msg-sender-header" style={{ color: roundActive.color }}>
+                  {roundActive.name}
+                </div>
+                <div className="msg-bubble-box working-bubble" title={roundActive.name}>
+                  <span className="dot-pulse" />
+                  <span className="dot-pulse" />
+                  <span className="dot-pulse" />
+                  <span className="working-label">正在回复…</span>
+                </div>
+              </div>
             </div>
           ) : null}
 
@@ -206,7 +243,10 @@ export function ChatView({
                 <div className="msg-sender-header" style={{ color: bot?.color || '#94a3b8' }}>
                   {bot?.name || '助手'}
                 </div>
-                <div className="msg-bubble-box assistant-bubble live-bubble">
+                <div
+                  className="msg-bubble-box assistant-bubble live-bubble"
+                  title={actionHint ?? '正在生成…'}
+                >
                   <RichText text={liveText} />
                   <span className="type-caret" />
                 </div>
@@ -223,11 +263,11 @@ export function ChatView({
                 <div className="msg-sender-header" style={{ color: bot?.color || '#94a3b8' }}>
                   {bot?.name || '助手'}
                 </div>
-                <div className="msg-bubble-box working-bubble">
+                <div className="msg-bubble-box working-bubble" title={actionHint ?? '正在处理…'}>
                   <span className="dot-pulse" />
                   <span className="dot-pulse" />
                   <span className="dot-pulse" />
-                  <span className="working-label">{bot?.activity || '正在协同处理中…'}</span>
+                  <span className="working-label">{bot?.activity || '正在处理…'}</span>
                 </div>
               </div>
             </div>

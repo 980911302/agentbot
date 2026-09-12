@@ -168,8 +168,12 @@ export default function App() {
   const [activeChannelId, setActiveChannelId] = useState<string>('');
   const [channelHistories, setChannelHistories] = useState<Record<string, DisplayMessage[]>>({});
   const [roomMemberLimit, setRoomMemberLimit] = useState(6);
-  /** 正在进入回合的成员，用于「谁在看」的实时提示 */
-  const [roundActive, setRoundActive] = useState<string | null>(null);
+  /** 群回合：正在进入回合的成员（谁的回合谁的气泡在动） */
+  const [roundActive, setRoundActive] = useState<{ id: string; name: string; color: string } | null>(
+    null,
+  );
+  /** 回合/回复刚结束的短暂绿勾（done 的在场感） */
+  const [doneFlash, setDoneFlash] = useState(false);
   /** 这一轮谁沉默了（沉默是合法结果，只做轻提示，不进正文） */
   const [silentNotes, setSilentNotes] = useState<Record<string, string[]>>({});
 
@@ -184,6 +188,8 @@ export default function App() {
   const [drawerTab, setDrawerTab] = useState<'screen' | 'memory' | 'members'>('screen');
   const [memoryToken, setMemoryToken] = useState(0);
   const [backendAgents, setBackendAgents] = useState<BotSummary[]>([]);
+  /** 给流式回调读最新成员表用的 ref（避免 send 闭包过期） */
+  const agentsRef = useRef<BotSummary[]>([]);
   const [rooms, setRooms] = useState<RoomView[]>([]);
   /** 正在等用户回答的卡片 */
   const [interactions, setInteractions] = useState<InteractionRequest[]>([]);
@@ -194,6 +200,7 @@ export default function App() {
   const [deleting, setDeleting] = useState(false);
   const [model, setModel] = useState('');
   const abortRef = useRef<AbortController | null>(null);
+  const prevBusyRef = useRef(false);
 
   const activeChannel = useMemo<ChannelItem>(
     () =>
@@ -208,6 +215,21 @@ export default function App() {
   );
 
   const currentMessages = channelHistories[activeChannelId] ?? [];
+
+  useEffect(() => {
+    agentsRef.current = backendAgents;
+  }, [backendAgents]);
+
+  // busy 落下时闪一个短暂的绿勾：完成了，但不用你做任何事
+  useEffect(() => {
+    const wasBusy = prevBusyRef.current;
+    prevBusyRef.current = busy;
+    if (wasBusy && !busy) {
+      setDoneFlash(true);
+      const timer = window.setTimeout(() => setDoneFlash(false), 2500);
+      return () => window.clearTimeout(timer);
+    }
+  }, [busy]);
 
   /** 群 → 用房间 id；私聊 → 用智能体 id（记忆面板也用它） */
   const activeAgentId = useMemo(() => {
@@ -289,6 +311,7 @@ export default function App() {
           color: bot.color,
           role: bot.title || bot.role,
           kind: 'agent' as const,
+          status: bot.status,
         })),
     ],
     [],
@@ -585,7 +608,11 @@ export default function App() {
                   };
                 });
               },
-              onRoundStart: ({ agentName }) => setRoundActive(agentName),
+              onRoundStart: ({ agentId, agentName }) => {
+                const color =
+                  agentsRef.current.find((bot) => bot.id === agentId)?.color ?? '#8b5cf6';
+                setRoundActive({ id: agentId, name: agentName, color });
+              },
               onRoundEnd: (outcome) => {
                 setRoundActive(null);
                 if (outcome.status !== 'spoke') {
@@ -848,6 +875,7 @@ export default function App() {
         members={activeChannel.members ?? []}
         channelKey={activeChannelId}
         roundActive={roundActive}
+        doneFlash={doneFlash}
         silentNotes={silentNotes[activeChannelId] ?? []}
       />
 
