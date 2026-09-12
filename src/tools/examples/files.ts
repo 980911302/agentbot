@@ -5,7 +5,7 @@ import { defineTool } from '../tool.js';
 const MAX_READ_BYTES = 256 * 1024;
 
 /**
- * Read —— 对齐《内置工具清单.md》1.7。
+ * Read —— 参见 docs/工具参考.md。
  *
  * Grok 语义：读自己机器上的文本（带行号），绝对路径；offset 负数从末尾数。
  * 没有云电脑，所以没有 machineId。

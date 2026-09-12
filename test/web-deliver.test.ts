@@ -17,7 +17,7 @@ import {
   UnsafeUrlError,
 } from '../src/tools/examples/web.js';
 
-/** 覆盖《工具与能力.md》第 4、7 节的安全边界 */
+/** 覆盖 docs/工具参考.md 中的安全边界 */
 describe('联网工具', () => {
   describe('内网地址识别', () => {
     const privates = [

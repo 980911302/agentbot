@@ -703,7 +703,7 @@ async function handleChatRoute(
     json(response, 400, { error: 'botId is required' });
     return;
   }
-  // 忙不拒：《停止与插话.md》——新句插队开新回合，旧的挂起欠账
+  // 忙不拒：见 docs/架构设计.md「插话、停止和等待」——新句插队开新回合，旧的挂起欠账
 
   response.writeHead(200, {
     'content-type': 'text/event-stream; charset=utf-8',

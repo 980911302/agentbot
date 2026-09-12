@@ -63,7 +63,7 @@ async function waitFor(predicate: () => boolean, what: string): Promise<void> {
   }
 }
 
-describe('插话抢占式调度（《停止与插话.md》§6/§7）', () => {
+describe('插话抢占式调度（见 docs/架构设计.md「插话、停止和等待」）', () => {
   let dir: string;
   let fake: ReturnType<typeof makeFakeProvider>;
   let runtime: AgentRuntime;
@@ -118,7 +118,7 @@ describe('插话抢占式调度（《停止与插话.md》§6/§7）', () => {
   });
 });
 
-describe('停止令（《停止与插话.md》§5/§4.3）', () => {
+describe('停止令（见 docs/架构设计.md「插话、停止和等待」）', () => {
   let dir: string;
   let fake: ReturnType<typeof makeFakeProvider>;
   let runtime: AgentRuntime;

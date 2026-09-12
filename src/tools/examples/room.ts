@@ -1,10 +1,10 @@
 import { defineTool } from '../tool.js';
 
 /**
- * SendToAgent —— 对齐《内置工具清单.md》A 组。
+ * SendToAgent —— 参见 docs/工具参考.md「协作与后台任务」。
  *
  * 私发另一个智能体，或发到自己所在的群。发出去立刻返回，不等回复；
- * 回复是之后的一个新回合（《停止与插话.md》：投递即结束）。
+ * 回复是之后的一个新回合（见 docs/架构设计.md「插话、停止和等待」：投递即结束）。
  *
  * 与 Grok 的差异记录：images 参数接受但忽略（消息面还没有附件气泡）；
  * priority=true 只表达紧急/叫停，插队用；真正的停止传播由运行时按任务树下发。
@@ -73,7 +73,7 @@ export function createSendToAgentTool(options: {
         throw new Error('不要发给自己');
       }
 
-      // 派活记账（《停止与插话.md》§8）：停止令沿这笔记往下传
+      // 派活记账（见 docs/架构设计.md「插话、停止和等待」）：停止令沿这笔记往下传
       context.turnState?.registerChild?.({
         agentId: target.id,
         via: target.kind === 'agent' ? 'dm' : 'room',

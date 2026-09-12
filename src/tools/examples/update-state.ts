@@ -4,7 +4,7 @@ import type { MemoryStore, WriteMemoryInput } from '../../memory/store.js';
 import type { MemoryScope, MemoryTier } from '../../memory/types.js';
 
 /**
- * update_state —— 对齐《内置工具清单.md》1.5 的子集。
+ * update_state —— 参见 docs/工具参考.md 的子集。
  *
  * 已支持：memory（write/forget）、profile（set）、settings（hidden_from_sidebar）、
  *         avatar（set/clear）、project（join/leave，只管自己的 projectIds）。

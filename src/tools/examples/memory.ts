@@ -41,7 +41,7 @@ export function resolveProjectOwner(
 }
 
 /**
- * RecallMemory —— 对齐《内置工具清单.md》1.4。
+ * RecallMemory —— 参见 docs/工具参考.md。
  *
  * 只读搜长期记忆；写入和忘记走 update_state(target=memory)。
  * Grok 的 scope：agent | user | all（默认 all）。

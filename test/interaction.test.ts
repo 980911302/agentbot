@@ -7,7 +7,7 @@ import { InteractionBroker } from '../src/interaction/broker.js';
 import { InteractionCancelledError, InteractionTimeoutError } from '../src/interaction/types.js';
 import { SecretStore } from '../src/secret/store.js';
 
-/** 覆盖《工具与能力.md》第 1 节：卡片交互与密钥框 */
+/** 覆盖 docs/工具参考.md：卡片交互与密钥框 */
 describe('交互代理', () => {
   it('界面作答后工具拿到答案', async () => {
     const broker = new InteractionBroker();

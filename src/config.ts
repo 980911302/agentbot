@@ -31,7 +31,7 @@ export interface AppConfig {
   ownerName: string;
   /** 是否启用联网工具（web_search / web_fetch） */
   web: boolean;
-  /** 停止词：私聊整句命中即视作停止令（《停止与插话.md》4.1） */
+  /** 停止词：私聊整句命中即视作停止令（见 docs/架构设计.md「插话、停止和等待」） */
   stopWords: string[];
 }
 

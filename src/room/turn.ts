@@ -26,7 +26,7 @@ export interface RoomBriefInput {
 
 /**
  * 群回合的发言纪律。
- * 直接对应《群聊与智能体交互.md》第 5 节那棵判断树。
+ * 参见 docs/架构设计.md「群与同事协作」的发言规则。
  */
 export function buildRoomBrief(input: RoomBriefInput): string {
   const others = input.members

@@ -6,7 +6,7 @@ import type { SecretStore } from '../../secret/store.js';
 import { deliverRoots, resolveDeliverPath } from './deliver.js';
 
 /**
- * SendToUser —— 对齐《内置工具清单.md》1.1。
+ * SendToUser —— 参见 docs/工具参考.md。
  *
  * 文本 / 附件 / 选项卡（widget）/ 密钥框（secret-request）统一出口。
  * 与 Grok 的分岔：私聊里纯助手文本仍然直达（防忘调工具的黑洞），

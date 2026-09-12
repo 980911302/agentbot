@@ -178,7 +178,7 @@ export default function App() {
 
   const [artifacts, setArtifacts] = useState<ArtifactView[]>([]);
   const [busy, setBusy] = useState(false);
-  /** 并发回合计数（《停止与插话.md》：新句可插队，busy 只是"还有流在跑"） */
+  /** 并发回合计数（见 docs/架构设计.md「插话、停止和等待」：新句可插队，busy 只是"还有流在跑"） */
   const busyCountRef = useRef(0);
   /** 私聊流式：正在生成的增量文本；只属于最新一条流，旧流结束不许清别人的字 */
   const [liveText, setLiveText] = useState('');

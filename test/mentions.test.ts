@@ -2,7 +2,7 @@ import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
 import { isSummoned, resolveMentions, stripMentions } from '../src/room/mentions.js';
 
-/** 覆盖《群聊与智能体交互.md》第 7 节第 6 条：解析失败当普通文本 */
+/** 覆盖 docs/架构设计.md「群与同事协作」：解析失败当普通文本 */
 describe('点名解析', () => {
   const members = [
     { id: 'a', name: '测试运维' },

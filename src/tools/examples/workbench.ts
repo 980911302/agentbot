@@ -5,7 +5,7 @@ import type { Workbench } from '../../workbench/service.js';
 export const MAX_AGENTS_PER_TURN = 2;
 
 /**
- * 工作台工具 —— 对齐《内置工具清单.md》A 组。
+ * 工作台工具 —— 参见 docs/工具参考.md「协作与后台任务」。
  *
  * CreateAgent / UpdateAgent / CreateChannel / UpdateChannel / ListSections。
  * 与 Grok 一致：没有删除工具（用户在侧边栏右键删）；UpdateAgent 只改传入字段、不能清空。

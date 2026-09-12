@@ -1,515 +1,144 @@
-# AgentBot
+# AgentBot 使用与开发说明
 
-本地运行的**多智能体协作工作台**。每个智能体有自己的长期记忆、自己的职责，可以在群里协作、私聊干活、互相传话。
+更新：2026-09-12，依据当前源码。待实现功能和工程改造见[执行计划](./工程化执行计划.md)；行为与目标模型见[架构设计](./架构设计.md)；工具参数见[工具参考](./工具参考.md)。
 
-> 三份文档分工：
-> - **本文** —— 是什么、怎么用、接口清单
-> - [设计文档](./设计文档.md) —— 架构与设计决策
-> - [链路文档](./链路文档.md) —— 一次请求从进到出的完整过程
+## 1. 安装与启动
 
-整理日期：2026-09-11
+当前仓库有根、web、desktop 三个 npm 包，各自维护锁文件。根 package.json 声明 Node ≥20.3，本次检查使用 Node v24.8.0。各端最低版本与发布版本尚需在执行计划 E1 统一核验，不能据此承诺所有 Node 20 环境都通过。
 
----
-
-## 1. 这是什么
-
-一句话：**给每个智能体一本自己的笔记，然后让它们在群里像同事一样协作。**
-
-和常见 AI 助手的差别：
-
-| | 常见助手 | AgentBot |
-| --- | --- | --- |
-| 记忆单位 | 一份账号一份记忆 | **每个智能体一本笔记** |
-| 人的信息 | 混在同一份里 | 单独的「关于你」作用域，所有智能体共享 |
-| 群聊 | 一个中心 AI 决定谁说话 | **扇出给全体成员，各自决定说不说** |
-| 记忆满了 | 报错或截断 | 画像降级成日志、日志老化、随手笔记过期 |
-| 上下文 | 历史切片 | **七段重新组装**（历史只占一段） |
-
----
-
-## 2. 快速开始
-
-### 2.1 环境要求
-
-- Node.js ≥ 20.3（需要原生 `fetch`）
-- macOS / Windows / Linux
-
-### 2.2 安装
+在项目根目录执行：
 
 ```bash
-npm install
-npm --prefix web install
-npm --prefix desktop install
-```
-
-### 2.3 三种跑法
-
-```bash
-# ① 桌面客户端（推荐）—— 内置后端，双击即用
-npm run desktop
-
-# ② 只跑后端 + 网页（默认 http://127.0.0.1:8787）
-npm run server
-
-# ③ 前端热重载开发（Vite :5173，自动代理 /api 到 :8787）
-npm run server        # 一个终端
-npm run web:dev       # 另一个终端
-```
-
-### 2.4 命令行模式
-
-```bash
-npm run dev -- "读一下 package.json，用一句话总结这个项目"
-```
-
-会打印上下文分层用量、每次工具调用、以及本轮写入的记忆：
-
-```
-agent> 通用助手 · deepseek-chat
-[context] Agent 角色=46t/1项  当前任务=35t/1项
-  → read_file({"path": "package.json"})
-  ← read_file: { "name": "agentbot", ... } (1ms)
-[memory] + [user/portrait] 用户的名字是张林
-(2 轮 · final_answer)
-```
-
-### 2.5 构建
-
-```bash
-npm run build        # 后端 → dist/
-npm run web:build    # 前端 → web/dist/
-npm run typecheck    # 双端类型检查
-```
-
----
-
-## 3. 界面说明
-
-```
-┌──────────┬──────────────────────────────┬──────────────┐
-│ 侧边栏    │  消息区                       │ 抽屉          │
-│          │                              │              │
-│ ☰ 白泽联调│  @everyone 各说一句…          │ 屏幕 / 记忆 / │
-│   （群）  │                              │ 成员          │
-│          │  ┌─ 测试运维 ────────────┐    │              │
-│ ○ 测试运维│  │ 159 的发测 checklist…  │    │ 群：成员表    │
-│ ○ 知识库  │  └──────────────────────┘    │ 私聊：记忆    │
-│ ○ 白泽团队│  ┌─ AI服务 ──────────────┐    │              │
-│ ○ AI服务  │  │ 我这边补一句…          │    │              │
-│          │  └──────────────────────┘    │              │
-│          │  · 白泽团队 看过，没开口       │              │
-│          │                              │              │
-│ ⚙ 市场    │  ┌────────────────────────┐  │              │
-│ LZ linlin│  │ 给 白泽联调 发消息…  →  │  │              │
-└──────────┴──────────────────────────────┴──────────────┘
-```
-
-### 3.1 侧边栏
-
-| 元素 | 说明 |
-| --- | --- |
-| **群**（带彩色头像组） | 点击进入群聊，成员各自发言 |
-| **智能体**（单个头像） | 点击进入私聊 |
-| `＋` | 新建智能体 / 新建群 |
-| 搜索框 | 过滤频道 |
-| 底部 | 市场（设置）、主题切换、当前用户 |
-
-### 3.2 输入框（胶囊）
-
-| 操作 | 效果 |
-| --- | --- |
-| `Enter` | 发送 |
-| `Shift + Enter` | 换行 |
-| `@名字` | 在群里点名某个成员 |
-| `@everyone` / `@所有人` | 点名全体 |
-| `+` 按钮 | 查看当前装载的工具 |
-| 模型选择器 | 切换 `Chat` / `Reasoner` |
-
-### 3.3 抽屉面板（点右上角 ⓘ）
-
-| 标签 | 内容 | 适用范围 |
-| --- | --- | --- |
-| **屏幕** | 实时显示正在执行的工具调用与返回 | 全部 |
-| **记忆** | 三层 × 三作用域，可手动增删、置为画像 | 全部 |
-| **成员** | 群成员表，可拉人 / 踢人 | 仅群 |
-
-### 3.4 群聊的两种提示
-
-- **「XX 正在看这一轮…」** —— 某成员正在处理，实时显示
-- **「XX 看过，没开口」** —— 该成员这一轮选择沉默（**正常行为**，不是失败）
-
----
-
-## 4. 功能清单
-
-### 4.1 智能体
-
-- 新建时指定**名字**与**职责**（职责写进系统提示词）
-- 每个智能体有独立的：指令、工具集、长期记忆、消息历史
-- 系统会自动给新智能体装载全部内置工具
-
-### 4.2 群聊
-
-- 群只有三样东西：**名字、成员表（≤ 6）、共享时间线**
-- **三波扇出**：被点名者串行 → 在场未点名者并行 → 被同事再次 @ 者串行
-- `@` 是强信号不是投递开关（没被 @ 的也会进入回合）
-- **成员之间也能互相叫醒**：A 发言里 `@B`，B 会被再开一轮（防环上限 2 次）
-- 被点名的成员**必须开口**（硬约束：不给沉默工具）
-- 成员表改完**从下一回合生效**，新成员不回溯历史
-
-### 4.3 记忆
-
-三层 × 三作用域：
-
-| 层 | 每次带进上下文 | 保留上限 | 超容量时 | 生存期 |
-| --- | --- | --- | --- | --- |
-| **画像** | 12 条 | 40 条 | 降级为日志 | 永久 |
-| **日志** | 8 条 | 600 条 | 淘汰最旧 | 永久（可搜） |
-| **随手笔记** | 6 条 | 80 条 | 淘汰最旧 | 24 小时 |
-
-| 作用域 | 谁能读 |
-| --- | --- |
-| **它的笔记** | 只有它自己 |
-| **共用的「关于你」** | 所有智能体 |
-| **项目笔记** | 参与该项目的智能体 |
-
-**写入方式**：
-
-1. **模型主动调用** `remember` 工具（用户说「记住这个」时）
-2. **回合后自动抽取**（兜底）
-
-**重复自动合并**——同一件事不会堆很多份。
-
-### 4.4 工作台写操作（智能体代劳）
-
-用户在对话里说一句，智能体自己去改工作台——不是「在对话里假装有个新角色」。
-
-| 能做 | 不能做（权限边界） |
-| --- | --- |
-| 建同事、改同事资料、改自己资料 | **删除同事（只有用户能做）** |
-| 建群、加人减人、改名 | **解散群（只有用户能做）** |
-| 以自己身份广播到群 | 改自己不在的群 |
-| 列出全部同事 / 群 / 分组 | 读别人的私聊与记忆 |
-
-约束：一个回合最多建 2 个同事 / 1 个群；拒绝重名（要求改用 update_*）；
-合并写入且空字符串不覆盖；改群要求调用者自己也在群里。
-
-智能体改完，侧边栏与成员面板会立刻同步（回合结束触发 + 15 秒兜底轮询）。
-
-### 4.5 上下文管理
-
-- 对话变长时自动压缩成摘要（触发阈值 12 条待压缩消息）
-- 旧记忆靠检索带回来，不是全量倒进去
-- 前端可以实时看到每段用了多少 token（`event: context`）
-
-### 4.6 工具
-
-| 工具 | 作用 | 限制 |
-| --- | --- | --- |
-| `calculator` | 四则运算 | 仅数字与 `+ - * / % ( )` |
-| `read_file` | 读文件 | ≤ 64 KB，沙箱内 |
-| `write_file` | 写文件 | ≤ 256 KB，沙箱内 |
-| `list_files` | 列目录 | 跳过隐藏项与 node_modules |
-| `remember` | 写长期记忆 | 可指定作用域与层级 |
-| `recall` | 搜长期记忆 | |
-| `list_workspace` | 列出全部同事 / 群 / 分组 | 改动前先拿 id |
-| `create_agent` | 新建同事 | 一个回合最多 2 个，拒绝重名 |
-| `update_agent` | 改同事名字 / 简介 / 职责 / 头像 | 合并写入，空值不覆盖 |
-| `update_self` | 改自己的资料 | |
-| `create_room` | 建群 | 成员上限 6，拒绝重名，自己要参加需写入 |
-| `update_room` | 改群名 / 加人 / 减人 | **调用者必须已在群里**，不能删空 |
-| `post_to_room` | 以自己身份广播到群（开新一轮） | 必须已在群里，会叫醒全体成员 |
-| `ask_user` | 弹选项卡让用户点，而不是打字 | 2~4 个选项，可自定义输入，5 分钟超时 |
-| `request_secret` | 弹遮罩框收密钥 | **值不进对话、不进记忆**，落盘 0600 |
-| `list_secrets` | 列出已保存的密钥名字 | 只有名字，没有值 |
-| `web_search` | 搜公网，返回标题 + 链接 + 摘要 | 过滤广告位；需登录的内容搜不到 |
-| `web_fetch` | 抓网页转纯文本 | **拒绝内网 / 环回地址（SSRF 防护）**，≤ 2 MB |
-| `deliver_file` | 把工作区文件投递到用户磁盘 | 只允许下载 / 桌面 / 文档，文件名不能逃逸 |
-| `say` | 群内发言 | **仅群回合**，每轮最多 3 条 |
-| `stay_silent` | 保持沉默 | **仅群回合**，被点名时不提供 |
-| `send_to_agent` | 私发同事 | 传话链深度上限 3 |
-
-**沙箱**：所有文件工具限制在项目根目录内，路径穿越会被拒绝。
-
----
-
-## 5. API 参考
-
-所有接口在 `http://127.0.0.1:<port>` 上，默认只监听 `127.0.0.1`。
-
-### 5.1 健康检查
-
-```
-GET /api/health
-→ {
-    ok: true,
-    service: "agentbot",
-    model: "deepseek-chat",
-    models: [{ id, label, hint }],
-    tools: [{ name, description }],
-    budget: { total, recentLimit, compactionTrigger, reserveRecent, sections }
-  }
-```
-
-### 5.2 智能体
-
-```
-GET    /api/agents                    列出全部智能体
-POST   /api/agents                    新建  { name, instructions?, color? }
-GET    /api/agents/:id                详情（含 memory / messageCount / busy）
-PATCH  /api/agents/:id                改    { name?, instructions?, toolNames?, projectIds? }
-DELETE /api/agents/:id                删除（连带消息与记忆）
-```
-
-> `/api/bots` 是 `/api/agents` 的兼容别名，响应里同时带 `bots` 与 `agents` 两个字段。
-
-### 5.3 消息与回合
-
-```
-GET  /api/agents/:id/messages?limit=N     读历史（已合并工具调用与结果）
-POST /api/agents/:id/messages             SSE 发起回合  { text, model? }
-```
-
-响应是 `text/event-stream`，事件见 §7。
-
-### 5.4 记忆
-
-```
-GET    /api/agents/:id/memory                            三层 × 三作用域快照
-POST   /api/agents/:id/memory                            手动写入 { text, scope?, tier?, tags?, projectId? }
-PATCH  /api/agents/:id/memory/:scope/:owner/:entryId     改层级 { tier?, text?, tags? }
-DELETE /api/agents/:id/memory/:scope/:owner/:entryId     遗忘
-```
-
-`:scope` 取值 `self` / `user` / `project`；`:owner` 对 `self` 是 agentId、对 `user` 是 `user`、对 `project` 是 projectId。
-
-写 `project` 作用域时归属必须明确：智能体只参与一个项目会自动落对；
-参与多个项目时必须显式给 `projectId`，否则返回 400（不会猜一个写进去）。
-
-### 5.5 上下文预览
-
-```
-GET /api/agents/:id/context
-→ { stats, system, droppedRecent, droppedGroups, surfaced }
-```
-
-用于调试——可以直接看到某一刻送给模型的系统提示原文与分层用量。
-
-### 5.6 收件箱（智能体 1:1）
-
-```
-GET  /api/agents/:id/inbox     查看积压
-POST /api/agents/:id/inbox     立即处理积压（合并成一个回合）
-```
-
-### 5.7 交互与密钥
-
-```
-GET  /api/interactions?agentId=        正在等回答的卡片
-POST /api/interactions/:id             作答 { value? , secret? , cancelled? }
-GET  /api/secrets                      已保存的密钥名字（不含值）
-DELETE /api/secrets/:name              删除一个密钥
-```
-
-密钥的值**永远不会**从接口回传；`request_secret` 只把名字交给模型。
-
-### 5.8 群
-
-```
-GET    /api/rooms                            列出全部群（含成员信息与最后一条消息）
-POST   /api/rooms                            新建  { name, memberIds }
-GET    /api/rooms/:id                        详情
-PATCH  /api/rooms/:id                        改名 / 改成员  { name?, memberIds? }
-DELETE /api/rooms/:id                        解散
-GET    /api/rooms/:id/messages?limit=N       共享时间线
-POST   /api/rooms/:id/messages               SSE 扇出  { text, model?, ownerName? }
-```
-
-`POST /api/rooms/:id/messages` 会**同时**返回 `event:`（AgentEvent）和 `room:`（RoomEvent）两种事件。
-
-### 5.9 兼容层
-
-| 旧接口 | 映射到 |
-| --- | --- |
-| `GET /api/bots` | `GET /api/agents` |
-| `POST /api/bots` | `POST /api/agents` |
-| `GET /api/sessions?botId=` | 该 agent 的对话概要 |
-| `GET /api/sessions/:id` | `GET /api/agents/:id/messages` |
-| `POST /api/chat` | `POST /api/agents/:id/messages` |
-
----
-
-## 6. 数据目录
-
-所有状态落在项目根的 `.agentbot/`（可用 `AGENT_DATA_DIR` 改）：
-
-```
-.agentbot/
-├── agents.json                     智能体注册表
-├── rooms/
-│   ├── index.json                  房间表
-│   └── <roomId>.jsonl              群时间线
-├── messages/
-│   └── <agentId>.jsonl             该智能体的消息（私聊 + 群聊同一条线）
-├── memory/
-│   ├── user.json                   共用的「关于你」
-│   ├── agents/<agentId>.json       它的笔记
-│   └── projects/<projectId>.json   项目笔记
-├── compaction/<agentId>.json       压缩摘要
-└── inbox/<agentId>.json            智能体 1:1 收件箱
-```
-
-**备份 / 迁移**：直接复制这个目录。**重置**：删掉它。
-
----
-
-## 7. SSE 事件速查
-
-| 事件 | 载荷 | 出现场景 |
-| --- | --- | --- |
-| `: ping` | — | 每 15 秒心跳 |
-| `event:` | `AgentEvent` | 私聊 + 群聊 |
-| `room:` | `RoomEvent` | 仅群聊 |
-| `done:` | `{ content, iterations, stopReason, agentId }` | 全部 |
-| `error:` | `{ message, status? }` | 全部 |
-
-```ts
-// AgentEvent
-{ type: 'context',    stats }                  // 上下文分层用量
-{ type: 'message',    message }                // 消息落库（含工具调用与结果）
-{ type: 'iteration',  index }                  // 第 N 轮模型调用
-{ type: 'compacted',  coversUpTo, messageCount }
-{ type: 'memory',     added, merged }          // 写入了记忆
-{ type: 'final',      content }
-
-// RoomEvent
-{ type: 'room_message', message }
-{ type: 'round_start',  roundId, agentId, agentName }
-{ type: 'round_end',    outcome }              // outcome.status: spoke | silent | error
-{ type: 'fanout_done',  roundId, spoke, silent }
-```
-
----
-
-## 8. 配置
-
-**API Key 只从环境变量或 `.env` 读，源码里没有任何默认密钥。**
-
-第一次使用：
-
-```bash
+npm ci
+npm --prefix web ci
+npm --prefix desktop ci
 cp .env.example .env
-# 编辑 .env，填入 AGENT_API_KEY
 ```
 
-`.env` 已在 `.gitignore` 中，不会进仓库。缺 key 时启动会直接失败并打印配置指引
-（桌面端会弹对话框提示）。
-
-| 变量 | 默认值 | 说明 |
-| --- | --- | --- |
-| `AGENT_API_KEY` | （必填） | 模型 API key，`OPENAI_API_KEY` 也可 |
-| `AGENT_BASE_URL` | `https://api.deepseek.com/v1` | 任何 OpenAI 兼容端点 |
-| `AGENT_MODEL` | `deepseek-chat` | 默认模型 |
-| `AGENT_OWNER_NAME` | `主人` | 在群里显示的主人名 |
-| `AGENT_DATA_DIR` | `<root>/.agentbot` | 数据目录 |
-| `AGENT_MEMORY_EXTRACTION` | 开启 | 设为 `off` 关闭回合后自动抽取记忆 |
-| `AGENT_WEB` | 开启 | 设为 `off` 关闭联网工具 |
-| `AGENT_DELIVER_DIRS` | `~/Downloads,~/Desktop,~/Documents` | `deliver_file` 允许写入的目录 |
-| `PORT` | `8787` | 仅 `npm run server` 使用 |
-
-读取顺序：**进程环境变量 > `.env` 文件**（命令行传入的能覆盖 `.env`）。
-
----
-
-## 9. 目录结构
-
-```
-AgentBot/
-├── src/                       后端（零运行时依赖）
-│   ├── agent/                 智能体：循环 / 注册表 / 收件箱 / 类型
-│   ├── context/               上下文：组装 / 预算 / 分配
-│   ├── memory/                记忆：存储 / 策略 / 去重 / 检索 / 压缩 / 抽取
-│   ├── room/                  群：房间表 / 点名 / 回合简报
-│   ├── store/                 消息存储（JSONL）
-│   ├── llm/                   Provider 接口与 OpenAI 兼容实现
-│   ├── tools/                 工具协议 / 注册表 / 内置工具
-│   ├── server/                HTTP/SSE / 运行时编排 / 预置数据
-│   ├── index.ts               公共 API 导出 + CLI
-│   └── config.ts              配置解析
-├── web/                       React 前端
-│   └── src/
-│       ├── App.tsx            事件消费与状态编排
-│       ├── api.ts             HTTP 客户端
-│       ├── components/        界面组件
-│       └── styles.css         设计系统
-├── desktop/                   Electron 客户端（内置后端）
-├── docs/                      文档
-├── 记忆系统.md                 产品规格：记忆
-├── 群聊与智能体交互.md          产品规格：群聊
-└── .agentbot/                 运行时数据（gitignore）
-```
-
----
-
-## 10. 常见问题
-
-**Q：换个模型供应商？**
-改 `AGENT_BASE_URL` 和 `AGENT_MODEL`，只要对方兼容 `/chat/completions`。UI 的模型选择器由 `/api/health` 的 `models` 驱动，可在 `src/config.ts` 的 `AVAILABLE_MODELS` 调整。
-
-**Q：API key 写死在代码里了？**
-默认值在 `src/config.ts`，但环境变量优先。要发布的话建议删掉默认值。
-
-**Q：为什么群里有人不回话？**
-这是**设计行为**。没被点名且没有新信息的成员会沉默，避免房间空转。想让它回就 `@它`。
-
-**Q：智能体会记得上次群里的讨论吗？**
-会。对每个智能体来说，私聊和群聊是**同一条对话线**，带房间标记。但它的私有笔记不会被同事读到。
-
-**Q：记忆会不会满？**
-不会报错。画像满了降级为日志，日志老了移出眼前（仍可搜），随手笔记 24 小时后消失。重要的事说「记住这个」会进画像层。
-
-**Q：怎么重置一切？**
-删掉 `.agentbot/` 目录。
-
-**Q：端口被占用？**
-`npm run server` 用 `PORT=9000 npm run server`；桌面端用随机端口，不会冲突。
-
----
-
-## 11. 开发
+首次使用时再复制模板，在 `.env` 填入模型 Key。已有 `.env` 时直接编辑，避免覆盖配置。随后选择运行方式：
 
 ```bash
-npm test             # 单元测试（node:test，40 项）
-npm run typecheck    # 后端 + 前端类型检查
-npm run build        # 后端编译
-npm run web:build    # 前端打包
-npm run server       # 起后端（带静态托管）
-npm run web:dev      # 前端热重载
+npm run desktop       # 构建后启动 Electron，使用随机后端端口
+npm run server        # 后端，默认 127.0.0.1:8787
+npm run web:dev       # Vite 开发前端，默认 :5173
+npm run dev -- "读一下 package.json"
 ```
 
-**测试覆盖**：点名解析（长名优先 / 别名 / 失败降级）、记忆去重（数字守卫 / 同义改写）、
-召唤队列（二次叫醒 / 防环 / 并行占名额）、开口与沉默判定、群回合简报。
+前后端热重载开发时，在两个终端分别运行 server 和 web:dev；Vite 将 `/api` 代理到 8787。若修改后端端口，也要同步开发代理。直接访问后端提供的网页前，先执行 `npm run web:build` 生成静态页面。
 
-**加一个新工具**：
+## 2. 当前工程命令
 
-```ts
-// src/tools/examples/my-tool.ts
-import { defineTool } from '../tool.js';
+| 命令 | 实际范围 |
+| --- | --- |
+| `npm test` | 根 test 目录的 node:test 测试 |
+| `npm run typecheck` | 仅后端 TypeScript |
+| `cd web && npm exec -- tsc --noEmit -p tsconfig.json` | 前端 TypeScript |
+| `npm run build` | 后端编译到 dist |
+| `npm run web:build` | 前端类型检查及 Vite 打包 |
+| `npm run desktop` | 后端构建、前端构建、启动桌面 |
 
-export const myTool = defineTool<{ input: string }>({
-  name: 'my_tool',
-  description: '这个工具做什么',
-  parameters: {
-    type: 'object',
-    properties: { input: { type: 'string', description: '参数说明' } },
-    required: ['input'],
-  },
-  execute({ input }) {
-    return `处理结果：${input}`;
-  },
-});
-```
+统一 check、clean、双端 typecheck 和 CI 是执行计划 E1 的待办，当前不要调用尚不存在的脚本。后端 tsc 目前不主动清理旧输出，删除源码后的旧 dist 文件可能残留；E1 将补干净构建。
 
-然后在 `src/server/tools.ts` 里注册即可——`ensureDefaultAgent()` 会自动把新工具补进已有智能体的工具集。
+## 3. 配置
 
-**改记忆策略 / 预算 / 群限制**：见[设计文档 §8 扩展点](./设计文档.md#8-扩展点)。
+配置解析在 `src/config.ts`，进程环境变量优先于 `.env`。缺少模型 Key 时启动失败，并提示配置方式；源码没有默认 Key。
+
+| 配置 | 默认/作用 |
+| --- | --- |
+| AGENT_API_KEY / OPENAI_API_KEY | 模型 Key，必填其中一个 |
+| AGENT_BASE_URL / OPENAI_BASE_URL | OpenAI 兼容地址，默认 `https://api.deepseek.com/v1` |
+| AGENT_MODEL | 默认 `deepseek-chat` |
+| AGENT_OWNER_NAME / AGENT_OWNER | 群发言者显示名，默认“主人” |
+| AGENT_DATA_DIR | 默认项目根 `.agentbot` |
+| AGENT_MEMORY_EXTRACTION | `off` 关闭自动抽取；显式记忆工具仍可使用 |
+| AGENT_WEB | `off` 不装载 WebSearch/WebFetch |
+| AGENT_STOP_WORDS | 逗号或空白分隔，追加停止词 |
+| AGENT_DELIVER_DIRS | 文件交付目录白名单；默认下载、桌面、文档目录 |
+| PORT | server 模式默认 8787；桌面使用随机端口 |
+
+界面的主人名当前另存 localStorage，并在群发送时传入；全局统一 SettingsService 尚未完成。设置页尚未提供完整的模型 Key、时区、语言与每同事工具装卸功能。
+
+## 4. 使用方式与当前边界
+
+- 侧边栏选择同事进入私聊，选择群进入共享讨论；加号创建同事或群。固定身份持续存在。
+- 聊天顶栏或侧边栏入口修改同事资料；用户可从侧边栏删除同事/群。分组、隐藏找回和完整头像管理仍在收尾计划。
+- Enter 发送，Shift+Enter 换行；群里 @名字 或 @everyone 点名。未被点名且没有补充信息时，同事可以沉默。
+- 私聊有增量文本；群展示成员的回合状态和公开发言。工具入参与输出主要在过程抽屉查看。
+- 信息抽屉提供过程、记忆和群成员；用户可查看、调整记忆及群成员。
+- 忙碌时可以继续发新句，旧执行挂起；发送整句“停”等停止词走停止流程。当前没有输入框停止按钮。
+- SendToUser 可显示选项卡或密钥框；交互目前有超时，用户新句会作废旧问题卡。密钥值不进入普通聊天或模型结果。
+- 当前群调度会跳过忙碌成员，收件箱和任务恢复也存在限制。可靠排队和跨重启持续工作是 E3/E4 目标。
+- 当前 SSE 断线会中止对应请求；关闭全部桌面窗口会退出后端。后台独立执行、重连补发和托盘常驻尚未实施。
+
+具体工具及限制见[工具参考](./工具参考.md)。当前不提供云电脑，也不把本机 Read/Shell 描述为受项目级文件沙箱约束。
+
+## 5. 当前 API 概览
+
+基础地址是后端的 `http://127.0.0.1:<port>`。源码入口 `src/server/http.ts`；表格只列当前存在的路由，新架构中 202 收信和统一事件订阅属于提案。
+
+| 路由 | 方法与作用 |
+| --- | --- |
+| `/api/health` | GET：模型、工具、预算、服务状态 |
+| `/api/agents` | GET/POST：列出/创建同事 |
+| `/api/agents/:id` | GET/PATCH/DELETE：详情/修改/删除 |
+| `/api/agents/:id/messages` | GET：原始消息；POST：以 SSE 执行一轮，正文含 text、可选 model |
+| `/api/agents/:id/memory` | GET/POST：记忆快照/手动写入 |
+| `/api/agents/:id/memory/:scope/:owner/:entryId` | PATCH/DELETE：改记忆/遗忘 |
+| `/api/agents/:id/context` | GET：当前上下文预览和预算统计 |
+| `/api/agents/:id/inbox` | GET：积压；POST：触发消费 |
+| `/api/rooms` | GET/POST：群列表/创建 |
+| `/api/rooms/:id` | GET/PATCH/DELETE：详情/修改/解散 |
+| `/api/rooms/:id/messages` | GET：群时间线；POST：SSE 群回合，含 text、可选 model/ownerName |
+| `/api/interactions` | GET：待答卡，可按 agentId 筛选 |
+| `/api/interactions/:id` | POST：value/secret/cancelled 等答案或取消 |
+| `/api/secrets` | GET：已存密钥名字，不含值 |
+| `/api/secrets/:name` | DELETE：删除对应密钥 |
+| `/api/bots`、`/api/bots/:id` | 兼容前端使用的同事视图与编辑入口 |
+| `/api/sessions`、`/api/sessions/:id` | 兼容对话概要和展示消息入口 |
+| `/api/chat` | 兼容私聊 SSE 发送入口 |
+
+agents 和 bots 当前并非字段完全一致的别名。例如 agents PATCH 只处理 name/instructions/toolNames/projectIds，而 bots 编辑入口可处理部分展示资料；E1/E2/E5 将统一契约。调用前以对应路由校验字段为准。
+
+记忆 API 中 scope 为 self/user/project，工具层 agent 映射 self；项目写入需明确 projectId。响应中的原始 Message 和前端展示消息形态不同，不直接混用。
+
+### SSE
+
+事件名称为 `event`（AgentEvent）、`room`（RoomEvent）、`done`、`error`，另有心跳注释。私聊增量为 `event` 中的 `type: delta`；最终文本、工具调用及结果为 message 事件；交互用 interaction/interaction_closed。
+
+群事件包含 room_message、round_start、round_end、fanout_done。未公开的收尾文本不作为群增量输出。当前前端消费在 api.ts 与 App.tsx，拆分计划在 E2。
+
+## 6. 数据、产物与备份
+
+当前身份、消息、群、记忆、摘要、收件箱和密钥保存在数据目录：
+
+| 路径 | 内容 |
+| --- | --- |
+| agents.json | 同事资料与工具配置 |
+| rooms/index.json、rooms/*.jsonl | 群及时间线 |
+| messages/*.jsonl | 每个同事的经历 |
+| memory/user.json、memory/agents/、memory/projects/ | 三作用域记忆 |
+| compaction/*.json | 压缩摘要 |
+| inbox/*.json | 同事来信 |
+| secrets.json | 本机明文密钥文件，权限 0600；不要复制到诊断日志 |
+
+密钥实现见 `src/secret/store.ts`。Run、任务树、待答 Promise、shell/worker 索引和 Todo 当前仍在内存，备份文件不能恢复这些进程句柄。
+
+备份时先停止后端写入，再复制整个配置的数据目录及所引用的必要产物。清理构建目录、旧文档或截图时，不清理 `.agentbot`。将来的数据库迁移与回滚按执行计划操作。
+
+## 7. 排查入口
+
+| 现象 | 先检查 |
+| --- | --- |
+| 无法启动 | `.env`/进程环境中的 Key、端口、前后端构建产物 |
+| 前端接口失败 | `/api/health`、Vite 代理、API 错误响应 |
+| 工具调用出现模型 400 | tool_calls 与 tool_result 是否成组；context 裁剪及 provider 输入 |
+| 群成员没回 | 是否忙碌被跳过、是否被点名、是否有公开 posts、round_end 状态 |
+| 插话后显示异常 | 旧流与新流 ID、busy 计数、收尾历史重拉、AbortSignal |
+| 卡片点击无效 | `/api/interactions` 中是否还存在；是否超时或被新句作废 |
+| 找不到旧信息 | 原消息是否存在、来源标记、压缩覆盖范围、记忆容量与检索词 |
+| 工具卸载后又回来 | ensureDefaultAgent 会补工具；E5.3 修复 |
+| 头像清除不生效 | registry 空覆盖约束；E5.1/E5.8 修复 |
+| 网页抓取拒绝访问 | URL 协议、解析地址、内网限制、响应大小与登录要求 |
+| UI 无法滚动 | 滚动容器 min-height、flex 布局、跟随底部状态 |
+
+记录实际错误和复现步骤，不用“已全部实现”的旧批次记录替代当前检查。功能与工程问题统一登记到执行计划对应项。

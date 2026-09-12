@@ -107,7 +107,7 @@ export function Composer({
 
   const submit = () => {
     const text = value.trim();
-    // 忙也照发：新句插队开新回合（《停止与插话.md》§6）
+    // 忙也照发：新句插队开新回合（见 docs/架构设计.md「插话、停止和等待」）
     if (!text) return;
     onSend(text);
     setValue('');
@@ -251,7 +251,7 @@ export function Composer({
           onKeyDown={handleKeyDown}
         />
 
-        {/* Right: Send / Mic——界面不做停止入口；打「停」走停止令全链（《停止与插话.md》§9） */}
+        {/* Right: Send / Mic——界面不做停止入口；打「停」走停止令全链（见 docs/架构设计.md「插话、停止和等待」） */}
         {value.trim() || busy ? (
           <button
             type="button"

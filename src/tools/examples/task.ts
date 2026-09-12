@@ -8,7 +8,7 @@ import type { LLMMessage, LLMProvider } from '../../llm/provider.js';
 import type { MessageStore } from '../../store/messages.js';
 
 /**
- * Task 工人族 —— 对齐《内置工具清单.md》H 组（executor 一种）。
+ * Task 工人族 —— 参见 docs/工具参考.md「协作与后台任务」（executor 一种）。
  *
  * Task 派一个后台工人：自足的 prompt、没有用户对话上下文、收尾文本=交付结果。
  * CheckSubagent 只读进度；MessageSubagent 塞一句纠偏（排进它的下一段）；

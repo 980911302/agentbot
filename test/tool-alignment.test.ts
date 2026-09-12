@@ -29,7 +29,7 @@ async function runTool(tool: Tool<any>, args: unknown, context: ToolContext): Pr
   return tool.execute(args as never, context) as Promise<string>;
 }
 
-describe('SendToUser（《内置工具清单.md》1.1）', () => {
+describe('SendToUser（见 docs/工具参考.md）', () => {
   let dir: string;
   let broker: InteractionBroker;
   let tool: Tool<any>;

@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 import { DEFAULT_STOP_WORDS, isStopSentence } from '../src/config.js';
 import { sortInboxForDrain, type InboxItem } from '../src/agent/inbox.js';
 
-/** 《停止与插话.md》4.1：认停止词由运行时做，整句匹配 */
+/** 见 docs/架构设计.md「插话、停止和等待」：认停止词由运行时做，整句匹配 */
 describe('停止词识别', () => {
   it('整句命中默认表', () => {
     for (const word of ['停', '停止', '取消', 'stop', 'cancel']) {

@@ -14,7 +14,7 @@ function secondsLeft(expiresAt: number, now: number): number {
 /**
  * 交互卡片。
  *
- * 对应《工具与能力.md》第 1 节：让用户点一下，而不是打字。
+ * 参见 docs/工具参考.md：让用户点一下，而不是打字。
  * 密钥类输入走遮罩框——值只在提交时发一次，不回显、不进对话。
  */
 export function InteractionCard({ request, onAnswer }: InteractionCardProps) {

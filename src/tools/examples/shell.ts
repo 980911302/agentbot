@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs';
 import { defineTool, type ToolContext } from '../tool.js';
 
 /**
- * Shell / AwaitShell —— 对齐《内置工具清单.md》1.6 / H. AwaitShell。
+ * Shell / AwaitShell —— 参见 docs/工具参考.md。
  *
  * 没有云电脑：命令直接跑在本机（AgentBot 本来就装在用户机器上）。
  * 安全边界靠两点：description 里明示、任务树 registerJob 让停止令能杀进程。

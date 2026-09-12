@@ -4,7 +4,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:pat
 /**
  * 把文件投递到用户磁盘。
  *
- * 对应《工具与能力.md》第 7 节：「把做好的 md 放到用户磁盘」可以留——
+ * 参见 docs/工具参考.md：「把做好的 md 放到用户磁盘」可以留——
  * 这是文件投递，不是远程桌面。
  *
  * 安全边界：只允许写进白名单目录（下载 / 桌面 / 文档），

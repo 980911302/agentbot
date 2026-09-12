@@ -71,7 +71,7 @@ export interface AgentRuntimeOptions {
   broker?: InteractionBroker;
   /** 密钥存储；不传则自建 */
   secrets?: SecretStore;
-  /** 停止词表；不传用默认（《停止与插话.md》4.1） */
+  /** 停止词表；不传用默认（见 docs/架构设计.md「插话、停止和等待」） */
   stopWords?: string[];
   /** 停止令等下级回报的上限（默认 30s；测试可调短） */
   stopAckTimeoutMs?: number;
@@ -90,7 +90,7 @@ export interface SendOptions {
   excludeAgentIds?: string[];
 }
 
-/** 一次回合的记账（《停止与插话.md》4.1） */
+/** 一次回合的记账（见 docs/架构设计.md「插话、停止和等待」） */
 export interface RuntimeTurn {
   id: string;
   agentId: string;
@@ -173,7 +173,7 @@ interface TurnInput {
 /**
  * 智能体运行时。
  *
- * 一次「回合」对应《群聊与智能体交互.md》里的单元：
+ * 一次「回合」参见 docs/架构设计.md「群与同事协作」中的回合定义：
  *   看见 → 判断树 → 0~N 条纯文本出站
  * 群本身没有大脑：投递器把入站消息扇出给成员，各自决定说不说。
  */
@@ -197,7 +197,7 @@ export class AgentRuntime {
   private readonly providers = new Map<string, LLMProvider>();
   private readonly locks = new Set<string>();
 
-  /** 回合与任务树（《停止与插话.md》§4）：内存即可，消息本身已落盘 */
+  /** 回合与任务树（见 docs/架构设计.md「插话、停止和等待」）：当前存于内存，消息本身已落盘 */
   private readonly turns = new Map<string, RuntimeTurn>();
   private readonly trees = new Map<string, TaskTree>();
   private readonly runningTurnByAgent = new Map<string, string>();
@@ -380,7 +380,7 @@ export class AgentRuntime {
   // ── 私聊回合 ────────────────────────────────────────
 
   async send(agentId: string, text: string, options: SendOptions = {}): Promise<SendResult> {
-    // 《停止与插话.md》§5：认停止词是运行时的事，不让模型「想起来去通知别人」
+    // 见 docs/架构设计.md「插话、停止和等待」：认停止词是运行时的事，不让模型「想起来去通知别人」
     if (isStopSentence(text, this.options.stopWords ?? DEFAULT_STOP_WORDS)) {
       return this.stopOrQueue(agentId, text, options);
     }
@@ -567,9 +567,9 @@ export class AgentRuntime {
   /**
    * 用户往房间发一条 → 扇出给全体成员。
    *
-   * 分三波（对应《群聊与智能体交互.md》第 3、4.1 节）：
+   * 分三波（参见 docs/架构设计.md「群与同事协作」）：
    *   波次 1  被点名的人              串行 —— 后者要能看到前者发言
-   *   波次 2  在场但未被点名的人       并行 —— 互相看不见（见 docs/链路文档.md）
+   *   波次 2  在场但未被点名的人       并行 —— 互相看不见（见 docs/架构设计.md）
    *   波次 3  被同事发言再次 @ 的人    串行，受 ROOM_MAX_RUNS_PER_MEMBER 约束
    *
    * `@` 是强信号不是投递开关：没被点名的一样进这一轮，只是不强制开口。
@@ -606,7 +606,7 @@ export class AgentRuntime {
     const mentions = resolveMentions(text, memberLike);
     const roundId = randomUUID();
     const ownerName = options.ownerName ?? this.options.ownerName ?? DEFAULT_OWNER_NAME;
-    // 群里的停止令（《停止与插话.md》§3）：不能紧急下发，被点名者下一轮从简报里知道
+    // 群里的停止令（见 docs/架构设计.md「插话、停止和等待」）：不能紧急下发，被点名者下一轮从简报里知道
     const stopRequested = isStopSentence(text, this.options.stopWords ?? DEFAULT_STOP_WORDS);
 
     const inbound: RoomMessage = {
@@ -1018,7 +1018,7 @@ export class AgentRuntime {
           ? 'agent'
           : 'user';
 
-    // 《停止与插话.md》§7：用户的新句永远能开新回合——旧的断流挂起、树记欠；
+    // 见 docs/架构设计.md「插话、停止和等待」：用户的新句永远能开新回合——旧的断流挂起、树记欠；
     // 同事信/群/续跑撞上忙智能体维持退避，不打扰正在进行的用户回合。
     const existingTurnId = this.runningTurnByAgent.get(agentId);
     if (existingTurnId) {
@@ -1179,7 +1179,7 @@ export class AgentRuntime {
       if (runtimeTurn.status === 'running') runtimeTurn.status = 'done';
       tree.jobs = tree.jobs.filter((job) => job.label !== 'turn');
 
-      // 收尾顺序（《停止与插话.md》§3 优先级）：停止令 → 欠账续跑 → 同事来信
+      // 收尾顺序（见 docs/架构设计.md「插话、停止和等待」 优先级）：停止令 → 欠账续跑 → 同事来信
       await this.processPendingStops(agentId).catch(() => undefined);
       void this.resumeOwed(agentId).catch(() => undefined);
       const pending = await this.inbox.count(agentId).catch(() => 0);

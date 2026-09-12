@@ -34,7 +34,7 @@ export interface AgentToolOptions {
 }
 
 /**
- * 常驻工具 —— 对齐《内置工具清单.md》常驻层。
+ * 常驻工具 —— 参见 docs/工具参考.md。
  *
  *   SendToUser / Read / Shell + AwaitShell / RecallMemory / update_state
  *   （Screenshot / GetDynamicTools / CallDynamicTool / ReactToMessage 不做，理由见对齐设计文档）

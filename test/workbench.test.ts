@@ -9,7 +9,7 @@ import { MessageStore } from '../src/store/messages.js';
 import { ROOM_MEMBER_LIMIT } from '../src/room/types.js';
 import { Workbench, WorkbenchError } from '../src/workbench/service.js';
 
-/** 覆盖《智能体可操作能力.md》第 1、2、10 节的权限与写入规则 */
+/** 覆盖 docs/工具参考.md 中的权限与写入规则 */
 describe('工作台写操作', () => {
   let dir: string;
   let registry: AgentRegistry;
