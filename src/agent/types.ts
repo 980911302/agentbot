@@ -84,6 +84,10 @@ export interface AgentRecord {
 export interface Agent {
   id: string;
   name: string;
+  /** 一行简介 */
+  title: string;
+  /** 详细描述 */
+  description: string;
   instructions: string;
   tools: Tool<any>[];
   memory: AgentMemory;

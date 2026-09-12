@@ -85,7 +85,7 @@ export class AgentRegistry {
       description: (input.description ?? '').trim(),
       instructions:
         (input.instructions ?? '').trim() ||
-        '你是运行在用户本机上的 AI 助手。用用户的语言、以第一人称回复，语气直接简洁。需要更准确时优先调用工具。',
+        '用用户的语言、以第一人称回复，语气直接简洁。需要更准确时优先调用工具。',
       toolNames: input.toolNames ?? [...this.defaultToolNames],
       color: input.color ?? COLORS[index % COLORS.length] ?? COLORS[0]!,
       avatar: input.avatar,

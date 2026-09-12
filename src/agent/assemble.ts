@@ -13,6 +13,8 @@ export function assembleAgent(options: AssembleOptions): Agent {
   return {
     id: record.id,
     name: record.name,
+    title: record.title,
+    description: record.description,
     instructions: record.instructions,
     // 工具按作用域共享，记忆按智能体各存一份（文档第 6 节）
     tools: tools.filter((tool) => allowed.has(tool.name)),

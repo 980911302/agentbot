@@ -107,7 +107,9 @@ export class ContextBuilder {
 
     const wants: SectionWants = {
       instructions:
-        estimateTokens(agent.instructions) + estimateTokens(options.turnBrief ?? ''),
+        estimateTokens(composeIdentity(agent)) +
+        estimateTokens(agent.instructions) +
+        estimateTokens(options.turnBrief ?? ''),
       memory: estimateTokens(portraitText) + estimateTokens(sharedText),
       retrieval: estimateTokens(retrievalText),
       compacted: estimateTokens(compactedText),
@@ -121,6 +123,7 @@ export class ContextBuilder {
     const scratchBudget = Math.max(200, Math.round(alloc.memory * 0.3));
 
     const system = composeSystem({
+      identity: composeIdentity(agent),
       instructions: agent.instructions,
       brief: options.turnBrief,
       portrait: truncateToTokens(portraitText, Math.max(600, alloc.memory)),
@@ -304,8 +307,34 @@ function collectWorkingFiles(messages: Message[]): WorkingFile[] {
   return [...seen.values()].slice(-12);
 }
 
+/**
+ * 身份块。
+ *
+ * 模型必须知道「我是谁」——否则问它叫什么，它只能把职责复述一遍。
+ * 名字同时是群聊里 @ 人的依据，认不出自己就没法正确判断「有没有人点我」。
+ */
+export function composeIdentity(agent: {
+  id: string;
+  name: string;
+  title?: string;
+  description?: string;
+}): string {
+  const lines = [`你是「${agent.name}」（id: ${agent.id}）。`];
+
+  const title = agent.title?.trim();
+  const description = agent.description?.trim();
+  if (title) lines.push(`一句话简介：${title}`);
+  if (description && description !== title) lines.push(`职责描述：${description}`);
+
+  return lines.join('\n');
+}
+
 function composeSystem(parts: Record<string, string | undefined>): string {
-  const blocks: string[] = [parts.instructions?.trim() ?? ''];
+  const blocks: string[] = [parts.identity?.trim() ?? ''];
+  const instructions = parts.instructions?.trim();
+  if (instructions) {
+    blocks.push(blocks[0] ? `## 你的职责\n${instructions}` : instructions);
+  }
 
   const push = (title: string, body?: string, raw = false) => {
     if (!body || !body.trim()) return;

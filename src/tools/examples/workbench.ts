@@ -13,7 +13,7 @@ export function createWorkbenchTools(workbench: Workbench) {
       '也用它避免重名：建之前先看看是不是已经有了。',
     ].join(' '),
     parameters: { type: 'object', properties: {} },
-    async execute() {
+    async execute(_args, context) {
       const [agents, rooms, sections] = await Promise.all([
         workbench.listAgents(),
         workbench.listRooms(),
@@ -23,13 +23,15 @@ export function createWorkbenchTools(workbench: Workbench) {
       const agentLines = agents
         .filter((agent) => !agent.hidden)
         .map((agent) => {
+          // 标出「你自己」——否则它只能靠 id 猜哪个是自己
+          const isSelf = agent.id === context.agentId;
           const bits = [
             `id=${agent.id}`,
             agent.title ? `简介：${agent.title}` : null,
             agent.section ? `分组：${agent.section}` : null,
             `颜色 ${agent.color}`,
           ].filter(Boolean);
-          return `- ${agent.name}（${bits.join('，')}）`;
+          return `- ${agent.name}${isSelf ? '（你自己）' : ''}（${bits.join('，')}）`;
         });
 
       const roomLines: string[] = [];
@@ -38,9 +40,12 @@ export function createWorkbenchTools(workbench: Workbench) {
         const names: string[] = [];
         for (const id of memberIds) {
           const found = agents.find((agent) => agent.id === id);
-          if (found) names.push(found.name);
+          if (!found) continue;
+          names.push(id === context.agentId ? `${found.name}（你）` : found.name);
         }
-        roomLines.push(`- ${room.name}（id=${room.id}，${memberIds.length} 人：${names.join('、') || '空'}）`);
+        const joined = names.join('、') || '空';
+        const mine = memberIds.includes(context.agentId) ? '，你在群里' : '，你不在群里';
+        roomLines.push(`- ${room.name}（id=${room.id}，${memberIds.length} 人：${joined}${mine}）`);
       }
 
       return [
