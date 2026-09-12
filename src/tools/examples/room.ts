@@ -85,6 +85,8 @@ export function createAgentMessageTool(options: {
       const trimmed = typeof text === 'string' ? text.trim() : '';
       if (!trimmed) throw new Error('内容不能为空');
       if (toAgentId === context.agentId) throw new Error('不要发给自己');
+      // 派活记账（《停止与插话.md》§8）：停止令要能沿这笔记往下传
+      context.turnState?.registerChild?.({ agentId: toAgentId, via: 'dm' });
       return options.onSend({ toAgentId, text: trimmed, priority: priority === true });
     },
   });

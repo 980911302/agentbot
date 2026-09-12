@@ -305,6 +305,8 @@ export function createWorkbenchTools(workbench: Workbench) {
         : rooms.find((item) => item.name === args.roomName?.trim());
       if (!room) throw new Error('找不到要发消息的群；给 roomId 或准确的 roomName');
 
+      // 派活记账（《停止与插话.md》§8）：room 型 child 的 agentId 记群 id，停止令按 roomId 回群喊话
+      context.turnState?.registerChild?.({ agentId: room.id, via: 'room', roomId: room.id });
       const result = await workbench.postToRoom(context.agentId, room.id, args.text);
       const skipped = result.skipped.length > 0 ? `（${result.skipped.join('、')} 正忙，跳过）` : '';
       return `已发到「${result.roomName}」，${result.called} 人进入回合：${result.spoke} 开口 / ${result.silent} 沉默${skipped}`;

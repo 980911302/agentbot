@@ -12,6 +12,12 @@ export interface RoomTurnContext {
 export interface TurnState {
   /** 工作台工具的本轮配额，防止一次对话里建一堆东西 */
   workbench: { agentsCreated: number; roomsCreated: number };
+  /** 本回合的任务树 id（《停止与插话.md》§8：派活必须记账） */
+  treeId?: string;
+  /** 记一笔"派给谁"：停止令要沿这张表往下传 */
+  registerChild?(child: { agentId: string; via: 'dm' | 'room'; roomId?: string }): void;
+  /** 记一笔"起了什么进程/流"：停止令要能掐掉 */
+  registerJob?(abort: AbortController, label: string): void;
 }
 
 export interface ToolContext {

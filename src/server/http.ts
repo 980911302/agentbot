@@ -100,6 +100,7 @@ export async function createAgentServer(options: AgentServerOptions = {}): Promi
     seed: SEED_AGENTS,
     seedRooms: SEED_ROOMS,
     ownerName: config.ownerName,
+    stopWords: config.stopWords,
     broker,
     secrets,
   });
@@ -697,10 +698,7 @@ async function handleChatRoute(
     json(response, 400, { error: 'botId is required' });
     return;
   }
-  if (context.runtime.isBusy(botId)) {
-    json(response, 409, { error: 'agent is already running' });
-    return;
-  }
+  // 忙不拒：《停止与插话.md》——新句插队开新回合，旧的挂起欠账
 
   response.writeHead(200, {
     'content-type': 'text/event-stream; charset=utf-8',
@@ -747,10 +745,7 @@ async function handleSend(
     json(response, 400, { error: 'text is required' });
     return;
   }
-  if (context.runtime.isBusy(agentId)) {
-    json(response, 409, { error: 'agent is already running' });
-    return;
-  }
+  // 忙不拒：新句插队（同 handleChatRoute）
 
   response.writeHead(200, {
     'content-type': 'text/event-stream; charset=utf-8',

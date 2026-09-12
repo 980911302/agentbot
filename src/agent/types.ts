@@ -157,7 +157,13 @@ export type AgentEvent =
 
 export type AgentEventHandler = (event: AgentEvent) => void;
 
-export type StopReason = 'final_answer' | 'max_iterations';
+/**
+ * 回合怎么收的场：
+ * parked = 被用户新句插队挂起（旧树仍 open 欠着）；
+ * stopped = 被停止令作废；
+ * cancelled = 连接断开等外部中止。
+ */
+export type StopReason = 'final_answer' | 'max_iterations' | 'parked' | 'stopped' | 'cancelled';
 
 export interface RunResult {
   content: string;

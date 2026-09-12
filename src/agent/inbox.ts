@@ -70,6 +70,17 @@ export class AgentInbox {
     return [...(await this.load(agentId))];
   }
 
+  /** 取出满足条件的信（其余保留原序）——stop-ack 的消费入口 */
+  async take(agentId: string, predicate: (item: InboxItem) => boolean): Promise<InboxItem[]> {
+    const list = await this.load(agentId);
+    const taken = list.filter(predicate);
+    if (taken.length === 0) return [];
+    const rest = list.filter((item) => !predicate(item));
+    this.cache.set(agentId, rest);
+    await this.save(agentId, rest);
+    return taken;
+  }
+
   async count(agentId: string): Promise<number> {
     return (await this.load(agentId)).length;
   }

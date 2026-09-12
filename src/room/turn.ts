@@ -20,6 +20,8 @@ export interface RoomBriefInput {
   roundPosts?: Array<{ speaker: string; text: string }>;
   /** 这一轮被叫醒的第几次（>1 表示是被同事发言再次 @ 起来的） */
   recallCount?: number;
+  /** 触发文本是停止词：群里不能紧急下发，被点名的人从简报里知道要停 */
+  stopRequested?: boolean;
 }
 
 /**
@@ -49,6 +51,11 @@ export function buildRoomBrief(input: RoomBriefInput): string {
     );
   } else {
     lines.push('没有人点名你。');
+  }
+
+  if (input.stopRequested) {
+    lines.push('**主人发了停止令：先停下手上的活。**');
+    lines.push('被点名的人回一句确认停了即可，不要继续执行任何旧任务。');
   }
 
   if (input.viaAgent) {
