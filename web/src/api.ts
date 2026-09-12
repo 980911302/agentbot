@@ -209,6 +209,8 @@ export interface RoomHandlers {
   onRoundStart?: (event: { agentId: string; agentName: string }) => void;
   onRoundEnd?: (outcome: import('./types').RoundOutcome) => void;
   onFanoutDone?: (event: { spoke: number; silent: number }) => void;
+  /** 群回合里智能体发出的 AgentEvent（主要是 interaction：ask_user 卡片） */
+  onAgentEvent?: (event: AgentEvent) => void;
   onError?: (message: string) => void;
 }
 
@@ -286,6 +288,11 @@ function dispatchRoomChunk(raw: string, handlers: RoomHandlers): void {
         handlers.onFanoutDone?.({ spoke: roomEvent.spoke, silent: roomEvent.silent });
         break;
     }
+    return;
+  }
+
+  if (event === 'event') {
+    handlers.onAgentEvent?.(data as AgentEvent);
     return;
   }
 

@@ -653,6 +653,20 @@ export default function App() {
                   agentsRef.current.find((bot) => bot.id === agentId)?.color ?? '#8b5cf6';
                 setRoundActive({ id: agentId, name: agentName, color });
               },
+              // 群回合里智能体可能 ask_user：卡片要能弹出来、能回答
+              onAgentEvent: (event) => {
+                if (event.type === 'interaction') {
+                  setInteractions((current) =>
+                    current.some((item) => item.id === event.request.id)
+                      ? current
+                      : [...current, event.request],
+                  );
+                  return;
+                }
+                if (event.type === 'interaction_closed') {
+                  setInteractions((current) => current.filter((item) => item.id !== event.id));
+                }
+              },
               onRoundEnd: (outcome) => {
                 setRoundActive(null);
                 if (outcome.status !== 'spoke') {
