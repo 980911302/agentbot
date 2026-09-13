@@ -32,7 +32,7 @@ export function createSendToAgentTool(options: {
     correlationId?: string;
     depth?: number;
     signal?: AbortSignal;
-  }) => Promise<string>;
+  }) => Promise<string | import('../result.js').ToolResult>;
 }) {
   return defineTool<{
     target_id: string;
@@ -103,11 +103,16 @@ export function createSendToAgentTool(options: {
           ...(attachments.length ? { images: attachments } : {}),
           priority: target.kind === 'agent' && priority === true,
           callerId: context.agentId,
-          correlationId: context.turnState?.treeId,
+          correlationId: context.authorization?.chainId ?? context.turnState?.treeId,
           depth: (context.agentChainDepth ?? 0) + 1,
           signal: context.signal,
         });
         attempt.status = 'ok';
+        if (typeof result === 'object' && result && 'content' in result) {
+          const receiptId = result.output?.handle;
+          if (receiptId) context.turnState?.acceptedDeliveryRefs?.push(receiptId);
+          return result;
+        }
         return result;
       } catch (error) {
         attempt.status = 'error';

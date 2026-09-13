@@ -99,7 +99,7 @@ export async function createAgentServer(options: AgentServerOptions = {}): Promi
       });
       return finalizer.finalize({
         actorId: input.actorId,
-        inputId: input.actorId,
+        inputId: input.inputId ?? input.actorId,
         content: input.content,
         deliveryRefs: input.deliveryRefs,
         source: input.source,

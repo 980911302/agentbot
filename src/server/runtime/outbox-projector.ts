@@ -7,6 +7,7 @@ import type { MessageActor } from '../../shared/contracts/message-identity.js';
 export interface OutboxRecord {
   receipt: DeliveryReceipt;
   payload: string;
+  images?: import('../../shared/contracts/input-image.js').InputImage[];
   projected?: boolean;
 }
 
@@ -32,6 +33,7 @@ export class OutboxProjector {
       fromActor: actors.from,
       toActor: actors.to,
       text: record.payload,
+      ...(record.images?.length ? { images: record.images } : {}),
       priority: false,
       depth: 0,
       kind: 'message',
@@ -41,6 +43,7 @@ export class OutboxProjector {
       from: actors.from,
       to: actors.to,
       text: record.payload,
+      ...(record.images?.length ? { images: record.images } : {}),
       createdAt: record.receipt.acceptedAt,
     });
     await this.deps.store.transact((draft) => {

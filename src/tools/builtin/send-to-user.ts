@@ -22,6 +22,7 @@ export function createSendToUserTool(input: {
   artifacts: ArtifactService;
   finalizeReply?: (input: {
     actorId: string;
+    inputId?: string;
     content: string;
     deliveryRefs?: string[];
     source?: 'user' | 'inbox' | 'room';
@@ -122,6 +123,7 @@ export function createSendToUserTool(input: {
         if (input.finalizeReply) {
           const verdict = await input.finalizeReply({
             actorId: context.agentId,
+            inputId: context.authorization?.inputId,
             content: text,
             deliveryRefs: args.delivery_refs,
             source: context.room ? 'room' : 'user',

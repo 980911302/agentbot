@@ -78,6 +78,12 @@ export interface SendOptions {
   agentChainDepth?: number;
   /** 幂等键（E3.2）：重复提交返回原消息 */
   clientMessageId?: string;
+  authorization?: import('../../shared/contracts/execution-control.js').ActivationTicket & {
+    commandId?: string;
+    grantId?: string;
+    chainId: string;
+    inputId: string;
+  };
 }
 
 /**

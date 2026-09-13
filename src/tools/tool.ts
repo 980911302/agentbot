@@ -45,6 +45,7 @@ export interface TurnState {
   requiredDelivery?: { kind: 'agent' | 'room'; requestedBy: 'message' };
   /** SendToAgent 的结构化尝试与回执；不能从模型最后一句话反推。 */
   deliveryAttempts?: DeliveryAttempt[];
+  acceptedDeliveryRefs?: string[];
   toolCalls?: number;
   toolInputChars?: number;
   toolOutputChars?: number;
@@ -78,6 +79,8 @@ export interface ToolContext {
   turnState?: TurnState;
   /** 把事件推给界面（例如弹出选项卡等用户回答） */
   emit?: (event: import('../agent/types.js').AgentEvent) => void;
+  authorization?: import('../shared/contracts/execution-control.js').ActivationTicket;
+  workbenchScope?: { issuedByCommandId: string };
 }
 
 export interface ExecutionAuthority {

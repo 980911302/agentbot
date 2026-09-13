@@ -26,6 +26,7 @@ describe('RuntimeControlStore', () => {
       const second = await RuntimeControlStore.open(env.dir);
       assert.equal(second.snapshot().controlSeq, 1);
       assert.equal(second.snapshot().agents['a1']?.agentId, 'a1');
+      assert.notEqual(second.currentProcessEpoch, first.currentProcessEpoch);
     } finally {
       await env.cleanup();
     }

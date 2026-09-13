@@ -148,6 +148,7 @@ export class AgentRuntime {
   readonly activation: ActivationCoordinator;
   private readonly deliveries: DeliveryService;
   private readonly projector: OutboxProjector;
+  private readonly runExecutions = new Map<string, Promise<SendResult>>();
 
   constructor(private readonly options: AgentRuntimeOptions) {
     this.chatRuns = new ChatRunCoordinator(options.dataDir, this.events);
@@ -155,7 +156,7 @@ export class AgentRuntime {
     this.registry = new AgentRegistry(options.dataDir, []);
     this.control = RuntimeControlStore.openSync(options.dataDir);
     this.activation = new ActivationCoordinator(this.control, {
-      processEpoch: this.control.snapshot().processEpoch,
+      processEpoch: this.control.currentProcessEpoch,
       exists: async (agentId) => Boolean(await this.registry.get(agentId)),
     });
     this.deliveries = new DeliveryService(this.control);
@@ -252,11 +253,16 @@ export class AgentRuntime {
           chainId: item.chainId ?? item.correlationId ?? item.id,
           source: item.kind === 'room' ? 'room' : 'inbox',
           disposition: item.disposition,
+          lease: item.leaseOwner && item.leaseEpoch !== undefined
+            ? { deliveryId: item.id, ownerId: item.leaseOwner, epoch: item.leaseEpoch }
+            : undefined,
         });
-        if (decision.kind === 'admitted') return 'run';
-        if (decision.kind === 'busy') return 'busy';
-        return 'hold';
+        if (decision.kind === 'admitted') {
+          await this.activation.markRunning(decision.ticket);
+        }
+        return decision;
       },
+      settleTicket: (ticketId) => this.activation.settleTicket(ticketId),
       canRetry: async (agentId, messageId) => {
         const all = this.chatRuns.list();
         const ids = new Set(all.filter(run => run.messageId === messageId && (!run.agentId || run.agentId === agentId)).map(run => run.runId));
@@ -299,6 +305,7 @@ export class AgentRuntime {
       extractor: this.extractor,
       agentService: this.agentService,
       stopCoordinator: this.stopCoordinator,
+      activation: this.activation,
       drainInbox: (agentId, options) => this.drainInbox(agentId, options),
       canAutoActivate: (agentId) => {
         if (!this.control.allowsAutomaticExecution()) return false;
@@ -562,13 +569,18 @@ export class AgentRuntime {
       if (!checkpoint || checkpoint.scope !== 'dm' || checkpoint.status === 'running') throw new Error('找不到当前智能体已停止的任务进度');
     }
     const stop = this.stopCoordinator.isStopSentence(text);
+    if (this.control.faulted && !stop) {
+      throw Object.assign(new Error('控制存储已损坏，禁止自动执行'), { code: 'CONTROL_FAULTED' });
+    }
+    const commandId = clientMessageId ?? randomUUID();
+    let authorization: Awaited<ReturnType<ActivationCoordinator['acceptUserInput']>> | undefined;
     if (!stop) {
-      await this.activation.acceptUserInput({
-        commandId: clientMessageId ?? randomUUID(),
+      authorization = await this.activation.acceptUserInput({
+        commandId,
         agentId,
-        inputId: clientMessageId ?? randomUUID(),
+        inputId: commandId,
         text,
-      }).catch(() => undefined);
+      });
     }
     const { run, duplicate } = this.chatRuns.prepare({ channelId: agentId, agentId,
       kind: stop ? 'stop' : 'agent', source: 'user', input: text,
@@ -596,14 +608,40 @@ export class AgentRuntime {
       } catch (error) { this.chatRuns.fail(run.runId, error); throw error; }
     }
 
+    const executeOnce = async (): Promise<SendResult> => {
+      if (!isActiveChatRun(this.chatRuns.get(run.runId)!)) return this.duplicateRun(agentId, task, options);
+      this.executor.cancelMaintenance(agentId);
+      if (stop) {
+        return this.chatRuns.execute(run.runId, () => this.stopCoordinator.stopFromUser(agentId, text, opts), result => result);
+      }
+      if (authorization) {
+        const decision = await this.activation.tryActivate({
+          agentId,
+          runId: run.runId,
+          taskId: run.taskId,
+          inputId: authorization.inputId,
+          chainId: authorization.chainId,
+          source: 'user',
+          grantId: authorization.grantId,
+        });
+        if (decision.kind !== 'admitted') {
+          throw Object.assign(new Error(decision.kind === 'held' ? decision.reason : decision.kind), { code: 'STALE_ACTIVATION' });
+        }
+        await this.activation.markRunning(decision.ticket);
+        return this.runTurn(agentId, task, { skipPersist: true, resumeTaskId }, { ...opts, authorization: decision.ticket });
+      }
+      return this.runTurn(agentId, task, { skipPersist: true, resumeTaskId }, opts);
+    };
+    let inflight = this.runExecutions.get(run.runId);
+    if (!inflight) {
+      inflight = executeOnce().finally(() => {
+        if (this.runExecutions.get(run.runId) === inflight) this.runExecutions.delete(run.runId);
+      });
+      this.runExecutions.set(run.runId, inflight);
+    }
     return {
       receipt: { runId: run.runId, taskId: run.taskId, run: this.chatRuns.get(run.runId), messageId: task.id, agentId, receiptSeq: this.events.latestSeq, duplicate },
-      execute: () => {
-        if (!isActiveChatRun(this.chatRuns.get(run.runId)!)) return this.duplicateRun(agentId, task, options);
-        this.executor.cancelMaintenance(agentId);
-        return stop ? this.chatRuns.execute(run.runId, () => this.stopCoordinator.stopFromUser(agentId, text, opts), result => result)
-          : this.runTurn(agentId, task, { skipPersist: true, resumeTaskId }, opts);
-      },
+      execute: () => inflight,
     };
   }
 
@@ -790,32 +828,45 @@ export class AgentRuntime {
             chainId: correlationId ?? callerId,
             target: { kind: 'agent', id: targetId, nameAtSend: target.name },
             payload: text,
+            ...(images?.length ? { images } : {}),
           });
           if (submitted.kind !== 'accepted') throw new Error(submitted.code);
-          const letter = await this.inbox.enqueue({
-            id: submitted.receipt.deliveryId,
-            toAgentId: targetId,
-            fromAgentId: callerId,
-            fromName: sender?.name ?? '同事',
-            fromActor: { kind: 'agent', id: sender.id, name: sender.name, color: sender.color, avatar: sender.avatar },
-            toActor: { kind: 'agent', id: target.id, name: target.name, color: target.color, avatar: target.avatar },
-            text,
-            ...(images?.length ? { images } : {}),
-            priority,
-            depth: depth ?? 1,
-            kind: 'message',
-            ...(correlationId ? { correlationId } : {}),
-          });
-          await this.archiveLetter(letter);
           await this.projector.project(submitted.receipt.actionId, {
             from: { kind: 'agent', id: sender.id, name: sender.name, color: sender.color, avatar: sender.avatar },
             to: { kind: 'agent', id: target.id, name: target.name, color: target.color, avatar: target.avatar },
-          }).catch(() => undefined);
+          });
+          const projected = await this.inbox.peek(targetId);
+          const letter = projected.find((item) => item.id === submitted.receipt.deliveryId);
+          if (letter) await this.archiveLetter(letter);
           this.inboxScheduler.watch(targetId);
-          return `已投递给「${target.name}」；发出去就结束，回复是之后的新回合。`;
+          return {
+            status: 'ok' as const,
+            content: `已投递给「${target.name}」；发出去就结束，回复是之后的新回合。`,
+            output: {
+              truncated: false,
+              handle: submitted.receipt.receiptId,
+            },
+          };
         }
+        const sender = await this.registry.get(callerId);
+        const rooms = await this.workbench.listRooms();
+        const room = rooms.find((item) => item.id === targetId);
+        if (!sender || !room) throw new Error('发信方或不在该群');
+        const submitted = await this.deliveries.submit({
+          actorId: callerId,
+          inputId: correlationId ?? `${callerId}:${targetId}`,
+          chainId: correlationId ?? callerId,
+          target: { kind: 'room', id: targetId, nameAtSend: room.name },
+          payload: text,
+          recipientCount: Math.max(0, room.memberIds.filter((id) => id !== callerId).length),
+        });
+        if (submitted.kind !== 'accepted') throw new Error(submitted.code);
         const result = await this.workbench.postToRoom(callerId, targetId, text, depth, signal);
-        return `已发到「${result.roomName}」。`;
+        return {
+          status: 'ok' as const,
+          content: `已发到「${result.roomName}」。`,
+          output: { truncated: false, handle: submitted.receipt.receiptId },
+        };
       },
     });
   }
@@ -866,12 +917,24 @@ export class AgentRuntime {
     return this.control.snapshot().stops[stopId];
   }
 
-  requestAgentStop(agentId: string, commandId: string) {
-    return this.activation.requestStop({
+  activationSnapshot() {
+    return this.control.snapshot();
+  }
+
+  async requestAgentStop(agentId: string, commandId: string) {
+    const operation = await this.activation.requestStop({
       commandId,
       requestedBy: { kind: 'user', id: 'owner' },
       scope: { kind: 'agent', agentId },
     });
+    await this.inbox.hold(agentId, 'agent_paused').catch(() => 0);
+    const runningId = this.ledger.runningTurnOf(agentId);
+    if (runningId) {
+      const treeId = this.ledger.getTurn(runningId)?.treeId;
+      if (treeId) for (const job of this.ledger.jobsOf(treeId)) job.abort();
+    }
+    await this.activation.settleStop(operation.stopId);
+    return this.activationSnapshot().stops[operation.stopId] ?? { ...operation, state: 'settled' as const };
   }
 
   resumeAgent(command: Parameters<ActivationCoordinator['resumeSelected']>[0]) {

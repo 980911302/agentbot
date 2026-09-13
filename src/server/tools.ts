@@ -30,6 +30,7 @@ export interface AgentToolAccess {
   ) => Promise<unknown>;
   finalizeReply?: (input: {
     actorId: string;
+    inputId?: string;
     content: string;
     deliveryRefs?: string[];
     source?: 'user' | 'inbox' | 'room';

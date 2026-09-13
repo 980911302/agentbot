@@ -1,5 +1,6 @@
 import { defineTool } from '../tool.js';
 import type { Workbench } from '../../workbench/service.js';
+import { ControlError } from '../../storage/runtime-control-store.js';
 
 /** 每个用户请求默认最多新建几个同事；不再用 2 卡住明确的三人创建。 */
 export const MAX_AGENTS_PER_TURN = 6;
@@ -44,6 +45,9 @@ export function createWorkbenchTools(workbench: Workbench) {
       required: ['name'],
     },
     async execute(args, context) {
+      if (context.authorization?.source === 'inbox') {
+        throw new ControlError('普通同事来信不能签发工作台创建授权', 'UNAUTHORIZED_ACTION');
+      }
       const counters = context.turnState?.workbench;
       if (counters && counters.agentsCreated >= MAX_AGENTS_PER_TURN) {
         throw new Error(`这一轮已经建了 ${counters.agentsCreated} 个同事，先跟用户确认要不要继续`);

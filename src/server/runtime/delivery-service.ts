@@ -12,6 +12,7 @@ export interface DeliverySubmitInput {
   chainId: string;
   target: { kind: 'agent' | 'room'; id: string; nameAtSend: string };
   payload: string;
+  images?: import('../../shared/contracts/input-image.js').InputImage[];
   recipientCount?: number;
 }
 
@@ -75,7 +76,7 @@ export class DeliveryService {
       draft.chains[input.chainId] = chain;
       draft.actions[key] = { receipt };
       draft.receipts[receipt.receiptId] = receipt;
-      draft.outbox[receipt.actionId] = { receipt, payload: input.payload };
+      draft.outbox[receipt.actionId] = { receipt, payload: input.payload, images: input.images };
       result = { kind: 'accepted', receipt, projectionStatus: 'pending' };
     });
     if (!result) throw new ControlError('投递提交失败', 'DELIVERY_COMMIT_UNKNOWN');

@@ -73,6 +73,7 @@ export interface RuntimeControlStoreOptions {
 
 export class RuntimeControlStore {
   readonly faulted: boolean;
+  readonly currentProcessEpoch: string;
   private state: ControlSnapshot;
   private queue: Promise<unknown> = Promise.resolve();
   private readonly file: string;
@@ -83,37 +84,51 @@ export class RuntimeControlStore {
     state: ControlSnapshot;
     faulted: boolean;
     softLimitBytes: number;
+    currentProcessEpoch: string;
   }) {
     this.file = input.file;
     this.state = input.state;
     this.faulted = input.faulted;
     this.softLimitBytes = input.softLimitBytes;
+    this.currentProcessEpoch = input.currentProcessEpoch;
   }
 
   static openSync(dataDir: string, options: RuntimeControlStoreOptions = {}): RuntimeControlStore {
     const file = join(dataDir, 'control', 'state.json');
-    const processEpoch = options.processEpoch ?? randomUUID();
+    const currentProcessEpoch = options.processEpoch ?? randomUUID();
     const softLimitBytes = options.softLimitBytes ?? DEFAULT_SOFT_LIMIT_BYTES;
     if (!existsSync(file)) {
-      return new RuntimeControlStore({ file, state: emptySnapshot(processEpoch), faulted: false, softLimitBytes });
+      return new RuntimeControlStore({
+        file,
+        state: emptySnapshot(currentProcessEpoch),
+        faulted: false,
+        softLimitBytes,
+        currentProcessEpoch,
+      });
     }
     try {
       const parsed = JSON.parse(readFileSync(file, 'utf8')) as ControlSnapshot;
       if (!parsed || typeof parsed !== 'object' || typeof parsed.controlSeq !== 'number') throw new Error('invalid snapshot');
+      const state = { ...emptySnapshot(parsed.processEpoch || currentProcessEpoch), ...parsed };
+      for (const ticket of Object.values(state.tickets)) {
+        if (ticket.state === 'admitted' || ticket.state === 'running') ticket.state = 'revoked';
+      }
+      state.processEpoch = currentProcessEpoch;
+      return new RuntimeControlStore({ file, state, faulted: false, softLimitBytes, currentProcessEpoch });
+    } catch {
       return new RuntimeControlStore({
         file,
-        state: { ...emptySnapshot(parsed.processEpoch || processEpoch), ...parsed, processEpoch: parsed.processEpoch || processEpoch },
-        faulted: false,
+        state: emptySnapshot(currentProcessEpoch),
+        faulted: true,
         softLimitBytes,
+        currentProcessEpoch,
       });
-    } catch {
-      return new RuntimeControlStore({ file, state: emptySnapshot(processEpoch), faulted: true, softLimitBytes });
     }
   }
 
   static async open(dataDir: string, options: RuntimeControlStoreOptions = {}): Promise<RuntimeControlStore> {
     const file = join(dataDir, 'control', 'state.json');
-    const processEpoch = options.processEpoch ?? randomUUID();
+    const currentProcessEpoch = options.processEpoch ?? randomUUID();
     const softLimitBytes = options.softLimitBytes ?? DEFAULT_SOFT_LIMIT_BYTES;
     try {
       const raw = await readFile(file, 'utf8');
@@ -121,26 +136,28 @@ export class RuntimeControlStore {
       if (!parsed || typeof parsed !== 'object' || typeof parsed.controlSeq !== 'number') {
         throw new Error('invalid snapshot');
       }
-      return new RuntimeControlStore({
-        file,
-        state: { ...emptySnapshot(parsed.processEpoch || processEpoch), ...parsed, processEpoch: parsed.processEpoch || processEpoch },
-        faulted: false,
-        softLimitBytes,
-      });
+      const state = { ...emptySnapshot(parsed.processEpoch || currentProcessEpoch), ...parsed };
+      for (const ticket of Object.values(state.tickets)) {
+        if (ticket.state === 'admitted' || ticket.state === 'running') ticket.state = 'revoked';
+      }
+      state.processEpoch = currentProcessEpoch;
+      return new RuntimeControlStore({ file, state, faulted: false, softLimitBytes, currentProcessEpoch });
     } catch (error) {
       if (isMissingFile(error)) {
         return new RuntimeControlStore({
           file,
-          state: emptySnapshot(processEpoch),
+          state: emptySnapshot(currentProcessEpoch),
           faulted: false,
           softLimitBytes,
+          currentProcessEpoch,
         });
       }
       return new RuntimeControlStore({
         file,
-        state: emptySnapshot(processEpoch),
+        state: emptySnapshot(currentProcessEpoch),
         faulted: true,
         softLimitBytes,
+        currentProcessEpoch,
       });
     }
   }
@@ -163,6 +180,7 @@ export class RuntimeControlStore {
       if (mutate(draft) === 'skip') return this.state.controlSeq;
       draft.controlSeq += 1;
       draft.schemaVersion = CONTROL_SCHEMA_VERSION;
+      draft.processEpoch = this.currentProcessEpoch;
       const encoded = JSON.stringify(draft);
       if (!opts.allowOverLimit && Buffer.byteLength(encoded, 'utf8') > this.softLimitBytes) {
         throw new ControlError('控制快照已接近容量上限，拒绝新增 payload', 'PAYLOAD_LIMIT');

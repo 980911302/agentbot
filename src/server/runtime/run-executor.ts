@@ -56,6 +56,7 @@ export class RunExecutor {
       extractor: MemoryExtractor;
       agentService: AgentService;
       stopCoordinator: StopCoordinator;
+      activation?: { ticketOf(id: string): import('../../shared/contracts/execution-control.js').ActivationTicket | undefined };
       /** 收件箱积压时的消费入口（InboxProcessor） */
       drainInbox: (agentId: string, options: SendOptions) => Promise<unknown>;
       canAutoActivate?: (agentId: string) => boolean;
@@ -304,6 +305,13 @@ export class RunExecutor {
         },
       };
 
+      if (options.authorization) {
+        const live = this.deps.activation?.ticketOf(options.authorization.ticketId);
+        if (!live || (live.state !== 'admitted' && live.state !== 'running')) {
+          throw new Error('STALE_ACTIVATION');
+        }
+      }
+
       const loop = new AgentLoop({
         provider,
         messages: this.deps.messages,
@@ -314,7 +322,14 @@ export class RunExecutor {
         onDelta: undefined,
         signal,
         toolsOverride: registry,
-        toolContext: { ...(turn.toolContext ?? {}), authority, turnState, emit: options.onEvent, outputs: this.deps.outputs },
+        toolContext: {
+          ...(turn.toolContext ?? {}),
+          authority,
+          turnState: { ...turnState, acceptedDeliveryRefs: [] },
+          emit: options.onEvent,
+          outputs: this.deps.outputs,
+          authorization: options.authorization,
+        },
         progress: { store: this.deps.progress, id: turnId },
         persistAssistantText: turn.persistAssistantText,
         stamp: task.roomId

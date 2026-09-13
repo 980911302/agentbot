@@ -34,7 +34,7 @@ export interface AgentLoopDeps {
   /** 覆盖这一轮可用的工具（例如群回合的定制工具面） */
   toolsOverride?: ToolRegistry;
   /** 工具执行上下文里要带的额外信息 */
-  toolContext?: Pick<ToolContext, 'room' | 'agentChainDepth' | 'turnState' | 'emit' | 'outputs' | 'authority'>;
+  toolContext?: Pick<ToolContext, 'room' | 'agentChainDepth' | 'turnState' | 'emit' | 'outputs' | 'authority' | 'authorization'>;
   progress?: { store: TaskProgressStore; id: string };
   /** 群回合里模型的收尾文本属于内部推理，不写进对话历史 */
   persistAssistantText?: boolean;

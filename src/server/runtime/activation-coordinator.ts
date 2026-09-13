@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import {
+  CHAIN_BUDGET_DEFAULTS,
   mayAutoActivate,
   type ActivationDecision,
   type ActivationGrant,
@@ -29,13 +30,16 @@ export interface UserCommand {
 }
 
 export class ActivationCoordinator {
+  readonly processEpoch: string;
   constructor(
     private readonly store: RuntimeControlStore,
     private readonly opts: {
       processEpoch: string;
       exists: (agentId: string) => Promise<boolean>;
     },
-  ) {}
+  ) {
+    this.processEpoch = opts.processEpoch;
+  }
 
   async acceptUserInput(input: UserCommand): Promise<AcceptedCommand> {
     let accepted: AcceptedCommand | undefined;
@@ -127,6 +131,23 @@ export class ActivationCoordinator {
         };
         return 'skip';
       }
+      if (input.source !== 'user') {
+        const chainState = draft.chains[input.chainId] ?? { chainId: input.chainId, rootCreatedSeq: rootCreatedSeq ?? draft.controlSeq + 1 };
+        const used = chainState.automaticRuns ?? 0;
+        const alreadyCounted = Object.values(draft.tickets).some(
+          (ticket) => ticket.inputId === input.inputId && ticket.chainId === input.chainId,
+        );
+        if (!alreadyCounted) {
+          if (used >= CHAIN_BUDGET_DEFAULTS.maxAutomaticRunsPerChain) {
+            chainState.pausedBudget = true;
+            draft.chains[input.chainId] = chainState;
+            decision = { kind: 'held', reason: 'budget_exhausted' };
+            return 'skip';
+          }
+          chainState.automaticRuns = used + 1;
+          draft.chains[input.chainId] = chainState;
+        }
+      }
       const ticket: ActivationTicket = {
         ticketId: randomUUID(),
         agentId: input.agentId,
@@ -136,7 +157,7 @@ export class ActivationCoordinator {
         chainId: input.chainId,
         generation: agent.generation,
         executionEpoch: 0,
-        processEpoch: this.opts.processEpoch,
+        processEpoch: this.processEpoch,
         grantId: grant?.grantId,
         lease: input.lease,
         admittedSeq: draft.controlSeq + 1,
@@ -155,7 +176,7 @@ export class ActivationCoordinator {
   }
 
   assertCurrent(ticket: ActivationTicket): void {
-    if (ticket.processEpoch !== this.opts.processEpoch) {
+    if (ticket.processEpoch !== this.processEpoch) {
       throw new ControlError('票据属于旧进程，不能继续执行', 'STALE_ACTIVATION');
     }
     const live = this.store.snapshot().tickets[ticket.ticketId];
@@ -193,6 +214,23 @@ export class ActivationCoordinator {
 
   requestStop(command: StopCommand): Promise<StopOperation> {
     return this.store.commitStop(command);
+  }
+
+  async settleTicket(ticketId: string, state: 'settled' | 'revoked' = 'settled'): Promise<void> {
+    await this.store.transact((draft) => {
+      const ticket = draft.tickets[ticketId];
+      if (!ticket || ticket.state === 'settled' || ticket.state === 'revoked') return 'skip';
+      ticket.state = state;
+    });
+  }
+
+  async settleStop(stopId: string, state: StopOperation['state'] = 'settled'): Promise<void> {
+    await this.store.transact((draft) => {
+      const stop = draft.stops[stopId];
+      if (!stop) return 'skip';
+      stop.state = state;
+      if (state === 'settled') stop.pendingEffects = [];
+    });
   }
 
   async resumeSelected(command: ResumeCommand): Promise<{ commandId: string; grantId?: string }> {

@@ -45,12 +45,14 @@ export class StopCoordinator {
   /** 用户发来停止词：控制事务先生效，再取消句柄；不等待正在执行的用户回合。 */
   async stopFromUser(agentId: string, text: string, options: SendOptions): Promise<SendResult> {
     const commandId = options.clientMessageId ?? options.messageId ?? options.runId ?? `${agentId}:stop:${text}`;
+    const operation = this.deps.activation
+      ? await this.deps.activation.requestStop({
+          commandId,
+          requestedBy: { kind: 'user', id: 'owner' },
+          scope: { kind: 'agent', agentId },
+        })
+      : undefined;
     if (this.deps.activation) {
-      await this.deps.activation.requestStop({
-        commandId,
-        requestedBy: { kind: 'user', id: 'owner' },
-        scope: { kind: 'agent', agentId },
-      });
       await this.deps.inbox.hold(agentId, 'agent_paused').catch(() => 0);
     }
     const runningId = this.deps.ledger.runningTurnOf(agentId);
@@ -58,7 +60,11 @@ export class StopCoordinator {
       const treeId = this.deps.ledger.getTurn(runningId)?.treeId;
       if (treeId) for (const job of this.deps.ledger.jobsOf(treeId)) job.abort();
     }
-    return this.executeStop(agentId, { text, createdAt: Date.now() }, { notifyUser: true, options });
+    const result = await this.executeStop(agentId, { text, createdAt: Date.now() }, { notifyUser: true, options });
+    if (operation && this.deps.activation) {
+      await this.deps.activation.settleStop(operation.stopId).catch(() => undefined);
+    }
+    return result;
   }
 
   /** 上级停止令（dm 的 kind=stop）：同样保护用户回合；处理完回 stop-ack */

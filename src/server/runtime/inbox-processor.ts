@@ -47,7 +47,8 @@ export class InboxProcessor {
       deliverRoom: (item: InboxItem, options: SendOptions) => Promise<unknown>;
       canRetry?: (agentId: string, messageId: string) => Promise<boolean>;
       archiveLetter?: (item: InboxItem) => Promise<void>;
-      admit?: (item: InboxItem) => Promise<'run' | 'hold' | 'busy'>;
+      admit?: (item: InboxItem) => Promise<import('../../shared/contracts/execution-control.js').ActivationDecision>;
+      settleTicket?: (ticketId: string) => Promise<void>;
       /** 领取期限（毫秒） */
       leaseMs?: number;
       /** 每封信的处理上限 */
@@ -140,17 +141,19 @@ export class InboxProcessor {
 
       const letter = letters[0]!;
       const ids = letters.map((item) => item.id);
+      let ticketId: string | undefined;
       if (this.deps.admit) {
         const decision = await this.deps.admit(letter);
-        if (decision === 'hold') {
+        if (decision.kind === 'held') {
           await session.release(ids);
-          await this.deps.inbox.holdIds(agentId, ids, 'agent_paused').catch(() => 0);
+          await this.deps.inbox.holdIds(agentId, ids, decision.reason === 'budget_exhausted' ? 'budget_exhausted' : 'agent_paused').catch(() => 0);
           return null;
         }
-        if (decision === 'busy') {
+        if (decision.kind === 'busy' || decision.kind === 'cancelled') {
           await session.release(ids);
           return null;
         }
+        ticketId = decision.ticket.ticketId;
       }
       const depth = letter.depth;
       const task: Message = {
@@ -191,11 +194,23 @@ export class InboxProcessor {
           },
           options,
         );
+        if (result.stopReason === 'cancelled' || result.stopReason === 'parked') {
+          await session.release(ids);
+          await this.deps.inbox.holdIds(agentId, ids, 'cancelled').catch(() => 0);
+          if (ticketId) await this.deps.settleTicket?.(ticketId);
+          return result;
+        }
+        if (result.stopReason === 'max_iterations' || result.stopReason === 'tool_limit') {
+          await session.release(ids);
+          await this.deps.inbox.holdIds(agentId, ids, 'manual_review').catch(() => 0);
+          if (ticketId) await this.deps.settleTicket?.(ticketId);
+          return result;
+        }
         await session.ack(ids);
-        // 处理完这批，继续往下走（受深度上限约束）
-        // 后续批次由到期调度器唤醒，避免递归领取和同一 agent 并发消费。
+        if (ticketId) await this.deps.settleTicket?.(ticketId);
         return result;
       } catch (error) {
+        if (ticketId) await this.deps.settleTicket?.(ticketId);
         if (error instanceof AgentBusyError) {
           // 忙不是失败：归还领取，等它空下来再处理
           await session.release(ids);
