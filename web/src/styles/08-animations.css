@@ -19,6 +19,112 @@
   to { transform: translateX(100%); }
 }
 
+@keyframes dot-bounce {
+  0%, 80%, 100% { opacity: 0.28; transform: translateY(0) scale(0.86); }
+  40% { opacity: 1; transform: translateY(-2px) scale(1); }
+}
+
+/* 折叠：0fr → 1fr，内容多高都能过渡 */
+.collapsible {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--dur-base) var(--ease);
+}
+
+.collapsible.open {
+  grid-template-rows: 1fr;
+}
+
+.collapsible-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* 切页/切频道短淡入（key 变化时重挂） */
+.swap {
+  animation: fade var(--dur-base) var(--ease);
+}
+
+/* 思考气泡三个点 */
+.dot-pulse {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.4;
+  animation: dot-bounce 1.15s ease-in-out infinite;
+}
+
+.dot-pulse:nth-child(2) { animation-delay: 0.14s; }
+.dot-pulse:nth-child(3) { animation-delay: 0.28s; }
+
+/* usePresence 进出场：挂在 scrim / drawer 上 */
+.scrim.enter,
+.scrim.enter-active,
+.scrim.exit,
+.scrim.exit-active {
+  animation: none;
+}
+
+.scrim.enter .dialog,
+.scrim.enter-active .dialog,
+.scrim.exit .dialog,
+.scrim.exit-active .dialog {
+  animation: none;
+}
+
+.scrim.enter,
+.scrim.exit {
+  opacity: 0;
+}
+
+.scrim.enter-active {
+  opacity: 1;
+  transition: opacity var(--dur-base) var(--ease);
+}
+
+.scrim.exit-active {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-base) var(--ease);
+}
+
+.scrim.enter .dialog,
+.scrim.exit .dialog {
+  opacity: 0;
+  transform: scale(0.96) translateY(8px);
+}
+
+.scrim.enter-active .dialog {
+  opacity: 1;
+  transform: none;
+  transition: opacity var(--dur-base) var(--ease), transform var(--dur-base) var(--ease);
+}
+
+.scrim.exit-active .dialog {
+  opacity: 0;
+  transform: scale(0.98) translateY(6px);
+  transition: opacity var(--dur-base) var(--ease), transform var(--dur-base) var(--ease);
+}
+
+.drawer.enter,
+.drawer.exit {
+  opacity: 0;
+  transform: translateX(14px);
+}
+
+.drawer.enter-active {
+  opacity: 1;
+  transform: none;
+  transition: opacity var(--dur-slow) var(--ease), transform var(--dur-slow) var(--ease);
+}
+
+.drawer.exit-active {
+  opacity: 0;
+  transform: translateX(16px);
+  transition: opacity var(--dur-base) var(--ease), transform var(--dur-base) var(--ease);
+}
+
 .skeleton {
   position: relative;
   overflow: hidden;

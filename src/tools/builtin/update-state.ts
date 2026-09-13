@@ -1,4 +1,6 @@
 import { stat } from 'node:fs/promises';
+import { extname } from 'node:path';
+import { resolveProjectOwner } from './memory.js';
 import { defineTool } from '../tool.js';
 import type { MemoryStore, WriteMemoryInput } from '../../memory/store.js';
 import type { MemoryScope, MemoryTier } from '../../memory/types.js';
@@ -46,10 +48,9 @@ export function createUpdateStateTools(input: {
       ownerId = 'user';
       where = '共用记忆';
     } else if (scope === 'project') {
-      ownerId = args.project ?? context.projectIds[0] ?? context.agentId;
-      if (!context.projectIds.includes(ownerId) && ownerId !== context.agentId) {
-        ownerId = context.projectIds[0] ?? context.agentId;
-      }
+      const project = resolveProjectOwner(args.project, context.projectIds);
+      if ('error' in project) throw new Error(project.error);
+      ownerId = project.ownerId;
       where = `项目笔记（${ownerId}）`;
     }
 
@@ -76,7 +77,9 @@ export function createUpdateStateTools(input: {
     let ownerId = context.agentId;
     if (scope === 'user') ownerId = 'user';
     else if (scope === 'project') {
-      ownerId = args.project ?? context.projectIds[0] ?? context.agentId;
+      const project = resolveProjectOwner(args.project, context.projectIds);
+      if ('error' in project) throw new Error(project.error);
+      ownerId = project.ownerId;
     }
 
     const snapshot = await input.memory.snapshot(context.agentId, {
@@ -133,8 +136,8 @@ export function createUpdateStateTools(input: {
           },
           action: { type: 'string', description: 'write / forget / set / clear / join / leave' },
           fact: { type: 'string', description: 'memory：一句话事实；forget 时给原文' },
-          tier: { type: 'string', description: 'memory：profile | log | note' },
-          scope: { type: 'string', description: 'memory：agent | user | project' },
+          tier: { type: 'string', enum: ['profile', 'log', 'note'] },
+          scope: { type: 'string', enum: ['agent', 'user', 'project'] },
           project: { type: 'string', description: 'memory/project：项目 slug' },
           name: { type: 'string', description: 'profile：显示名' },
           description: { type: 'string', description: 'profile：职责描述' },
@@ -166,7 +169,10 @@ export function createUpdateStateTools(input: {
           if (args.name) patch.name = args.name;
           if (args.title) patch.title = args.title;
           if (args.description) patch.instructions = args.description;
-          if (args.avatar_color) patch.color = args.avatar_color;
+          if (args.avatar_color) {
+            if (!/^#[0-9a-f]{6}$/i.test(args.avatar_color)) throw new Error('avatar_color 必须是 #rrggbb');
+            patch.color = args.avatar_color;
+          }
           if (Object.keys(patch).length === 0) {
             throw new Error('profile set 至少给 name / description / title / avatar_color 之一');
           }
@@ -191,6 +197,7 @@ export function createUpdateStateTools(input: {
           if (action !== 'set') throw new Error(`avatar 只支持 set / clear，收到：${action}`);
           const path = args.path?.trim();
           if (!path) throw new Error('avatar set 需要 path');
+          if (!['.png', '.jpg', '.jpeg', '.webp', '.gif'].includes(extname(path).toLowerCase())) throw new Error('头像只支持 PNG/JPEG/WebP/GIF');
           const info = await stat(path).catch(() => null);
           if (!info?.isFile()) throw new Error(`找不到图片：${path}`);
           if (info.size > 5 * 1024 * 1024) throw new Error('图片必须小于 5MB');
@@ -204,12 +211,15 @@ export function createUpdateStateTools(input: {
           }
           const slug = args.project?.trim();
           if (!slug) throw new Error('project 必须给项目 slug');
+          if (!/^[\p{L}\p{N}_-]{1,80}$/u.test(slug)) throw new Error('project slug 只能包含字母、数字、下划线、短横线，最多 80 字符');
           const current = context.projectIds;
           const next =
             action === 'join'
               ? [...new Set([...current, slug])]
               : current.filter((item) => item !== slug);
+          if (next.length > 20) throw new Error('最多参与 20 个项目');
           await input.updateAgent(context.agentId, { projectIds: next });
+          context.projectIds.splice(0, context.projectIds.length, ...next);
           return action === 'join' ? `已加入项目 ${slug}` : `已离开项目 ${slug}`;
         }
 

@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react';
 
-type Block =
+export type Block =
   | { type: 'heading'; level: number; content: string }
   | { type: 'code'; language: string; content: string }
   | { type: 'list'; ordered: boolean; items: string[] }
@@ -8,7 +8,7 @@ type Block =
   | { type: 'hr' }
   | { type: 'paragraph'; content: string };
 
-function parseBlocks(text: string): Block[] {
+export function parseBlocks(text: string): Block[] {
   const blocks: Block[] = [];
   const lines = text.split('\n');
   let i = 0;
@@ -42,7 +42,7 @@ function parseBlocks(text: string): Block[] {
     }
 
     // 3. Headings
-    const headingMatch = line.match(/^(#{1,4})\s+(.+)$/);
+    const headingMatch = line.match(/^(#{1,4})\s+(\S.*)$/);
     if (headingMatch) {
       const hashes = headingMatch[1] ?? '#';
       const headingContent = headingMatch[2] ?? '';
@@ -71,10 +71,10 @@ function parseBlocks(text: string): Block[] {
     }
 
     // 5. Unordered list
-    if (/^(\s*)[-*+]\s+(.+)$/.test(line)) {
+    if (/^(\s*)[-*+]\s+(\S.*)$/.test(line)) {
       const listItems: string[] = [];
-      while (i < lines.length && /^(\s*)[-*+]\s+(.+)$/.test(lines[i]!)) {
-        const match = lines[i]!.match(/^(\s*)[-*+]\s+(.+)$/);
+      while (i < lines.length && /^(\s*)[-*+]\s+(\S.*)$/.test(lines[i]!)) {
+        const match = lines[i]!.match(/^(\s*)[-*+]\s+(\S.*)$/);
         if (match && match[2]) listItems.push(match[2]);
         i += 1;
       }
@@ -87,10 +87,10 @@ function parseBlocks(text: string): Block[] {
     }
 
     // 6. Ordered list
-    if (/^(\s*)\d+\.\s+(.+)$/.test(line)) {
+    if (/^(\s*)\d+\.\s+(\S.*)$/.test(line)) {
       const listItems: string[] = [];
-      while (i < lines.length && /^(\s*)\d+\.\s+(.+)$/.test(lines[i]!)) {
-        const match = lines[i]!.match(/^(\s*)\d+\.\s+(.+)$/);
+      while (i < lines.length && /^(\s*)\d+\.\s+(\S.*)$/.test(lines[i]!)) {
+        const match = lines[i]!.match(/^(\s*)\d+\.\s+(\S.*)$/);
         if (match && match[2]) listItems.push(match[2]);
         i += 1;
       }
@@ -114,12 +114,20 @@ function parseBlocks(text: string): Block[] {
       i < lines.length &&
       lines[i]!.trim() &&
       !lines[i]!.trimStart().startsWith('```') &&
-      !lines[i]!.startsWith('#') &&
+      // 只把合法 Markdown 标题留给下一轮处理。单独的 `#`、`#foo`
+      // 或五级以上标题都应按普通段落消费，否则 i 不前进，会把渲染器跑到 OOM。
+      !/^(#{1,4})\s+(\S.*)$/.test(lines[i]!) &&
       !lines[i]!.startsWith('>') &&
-      !/^(\s*)[-*+]\s+/.test(lines[i]!) &&
-      !/^(\s*)\d+\.\s+/.test(lines[i]!) &&
+      !/^(\s*)[-*+]\s+(\S.*)$/.test(lines[i]!) &&
+      !/^(\s*)\d+\.\s+(\S.*)$/.test(lines[i]!) &&
       !/^(---|___|\*\*\*)\s*$/.test(lines[i]!.trim())
     ) {
+      paragraphLines.push(lines[i]!);
+      i += 1;
+    }
+    // 防御性进度保证：即使上面的识别规则以后再次出现边界不一致，
+    // 也必须把当前行当普通文本消费，绝不能让 while 原地空转到 OOM。
+    if (paragraphLines.length === 0) {
       paragraphLines.push(lines[i]!);
       i += 1;
     }

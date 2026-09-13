@@ -1,8 +1,10 @@
-import { mkdir, readFile, writeFile, rm } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import type { Room, RoomMessage, RoomView } from './types.js';
 import { ROOM_MEMBER_LIMIT } from './types.js';
+import { isMissingFile, writeJsonAtomic } from '../storage/atomic-json.js';
+import { JsonlLog } from '../storage/jsonl-log.js';
 
 export class RoomError extends Error {
   constructor(message: string) {
@@ -22,20 +24,19 @@ interface RoomDoc {
 export class RoomStore {
   private doc: RoomDoc = { rooms: [] };
   private loaded = false;
-  private readonly timeline = new Map<string, RoomMessage[]>();
+  private loading?: Promise<void>;
+  private readonly timeline: JsonlLog<RoomMessage>;
   private readonly baseDir: string;
 
   constructor(dataDir: string) {
     this.baseDir = join(dataDir, 'rooms');
+    this.timeline = new JsonlLog(this.baseDir);
   }
 
   private get indexFile(): string {
     return join(this.baseDir, 'index.json');
   }
 
-  private timelineFile(roomId: string): string {
-    return join(this.baseDir, `${roomId}.jsonl`);
-  }
 
   // ── 房间表 ──────────────────────────────────────────
 
@@ -71,6 +72,7 @@ export class RoomStore {
       id: randomUUID(),
       name,
       memberIds,
+      memberJoinedAt: Object.fromEntries(memberIds.map(id => [id, now])),
       createdAt: now,
       updatedAt: now,
     };
@@ -91,6 +93,8 @@ export class RoomStore {
       throw new RoomError(`成员最多 ${ROOM_MEMBER_LIMIT} 个，当前 ${next.length} 个`);
     }
 
+    const old = new Set(room.memberIds);
+    room.memberJoinedAt = Object.fromEntries(next.map(id => [id, old.has(id) ? room.memberJoinedAt?.[id] ?? room.createdAt : Date.now()]));
     room.memberIds = next;
     room.updatedAt = Date.now();
     await this.save();
@@ -114,37 +118,41 @@ export class RoomStore {
     const before = this.doc.rooms.length;
     this.doc.rooms = this.doc.rooms.filter((room) => room.id !== roomId);
     if (this.doc.rooms.length === before) return false;
-    this.timeline.delete(roomId);
     await this.save();
-    await rm(this.timelineFile(roomId), { force: true });
+    await this.timeline.clear(roomId);
     return true;
   }
 
   // ── 共享时间线 ──────────────────────────────────────
 
   async append(message: RoomMessage): Promise<RoomMessage> {
-    const list = await this.loadTimeline(message.roomId);
-    list.push(message);
-    await mkdir(dirname(this.timelineFile(message.roomId)), { recursive: true });
-    await writeFile(this.timelineFile(message.roomId), `${JSON.stringify(message)}\n`, {
-      flag: 'a',
-    });
+    await this.timeline.append(message.roomId, message);
     return message;
   }
 
+  async appendIfAbsent(message: RoomMessage): Promise<RoomMessage> {
+    const existing = (await this.timeline.list(message.roomId)).find((item) => item.id === message.id);
+    if (existing) {
+      if (existing.text !== message.text || existing.senderId !== message.senderId) {
+        throw new Error('TIMELINE_ID_CONFLICT');
+      }
+      return existing;
+    }
+    return this.append(message);
+  }
+
   async messages(roomId: string, limit?: number): Promise<RoomMessage[]> {
-    const list = await this.loadTimeline(roomId);
+    const list = await this.timeline.list(roomId);
     if (!limit || limit >= list.length) return [...list];
     return list.slice(list.length - limit);
   }
 
   async count(roomId: string): Promise<number> {
-    return (await this.loadTimeline(roomId)).length;
+    return (await this.timeline.list(roomId)).length;
   }
 
   async clearTimeline(roomId: string): Promise<void> {
-    this.timeline.set(roomId, []);
-    await rm(this.timelineFile(roomId), { force: true });
+    await this.timeline.clear(roomId);
   }
 
   /**
@@ -152,7 +160,7 @@ export class RoomStore {
    * members 由调用方注入（房间只存 id，名字从注册表取）。
    */
   async view(room: Room, memberInfo: Array<{ id: string; name: string; color: string }>): Promise<RoomView> {
-    const list = await this.loadTimeline(room.id);
+    const list = await this.timeline.list(room.id);
     const last = list[list.length - 1];
     return {
       ...room,
@@ -166,54 +174,38 @@ export class RoomStore {
 
   private async load(): Promise<void> {
     if (this.loaded) return;
-    this.loaded = true;
+    if (!this.loading) {
+      this.loading = (async () => {
+        try {
+          const raw = await readFile(this.indexFile, 'utf8');
+          const parsed = JSON.parse(raw) as Partial<RoomDoc>;
+          if (Array.isArray(parsed.rooms)) {
+            this.doc = {
+              rooms: parsed.rooms.map((room) => ({ ...room, memberIds: room.memberIds ?? [] })),
+            };
+          }
+        } catch (error) {
+          if (!isMissingFile(error)) throw error;
+          this.doc = { rooms: [] };
+        }
+        this.loaded = true;
+      })();
+    }
     try {
-      const raw = await readFile(this.indexFile, 'utf8');
-      const parsed = JSON.parse(raw) as Partial<RoomDoc>;
-      if (Array.isArray(parsed.rooms)) {
-        this.doc = {
-          rooms: parsed.rooms.map((room) => ({ ...room, memberIds: room.memberIds ?? [] })),
-        };
-      }
-    } catch {
-      this.doc = { rooms: [] };
+      await this.loading;
+    } finally {
+      if (this.loaded) this.loading = undefined;
     }
   }
 
   private async save(): Promise<void> {
-    await mkdir(dirname(this.indexFile), { recursive: true });
-    await writeFile(this.indexFile, JSON.stringify(this.doc, null, 2), 'utf8');
+    await writeJsonAtomic(this.indexFile, this.doc);
   }
 
-  private async loadTimeline(roomId: string): Promise<RoomMessage[]> {
-    const cached = this.timeline.get(roomId);
-    if (cached) return cached;
-
-    let raw = '';
-    try {
-      raw = await readFile(this.timelineFile(roomId), 'utf8');
-    } catch {
-      this.timeline.set(roomId, []);
-      return this.timeline.get(roomId) as RoomMessage[];
-    }
-
-    const list: RoomMessage[] = [];
-    for (const line of raw.split('\n')) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      try {
-        list.push(JSON.parse(trimmed) as RoomMessage);
-      } catch {
-        // 跳过坏行
-      }
-    }
-    this.timeline.set(roomId, list);
-    return list;
-  }
 }
 
 function cloneRoom(room: Room): Room {
-  return { ...room, memberIds: [...room.memberIds] };
+  return { ...room, memberIds: [...room.memberIds], ...(room.memberJoinedAt ? { memberJoinedAt: { ...room.memberJoinedAt } } : {}) };
 }
 
 function dedupe(ids: string[]): string[] {

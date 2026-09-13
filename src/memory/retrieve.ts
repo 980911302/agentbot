@@ -102,5 +102,9 @@ export function rankMemories(
 }
 
 export function retrieveMemories(refs: MemoryRef[], query: string, maxItems = 8): MemoryRef[] {
-  return rankMemories(refs, query, { maxItems, minScore: 0.04 });
+  const ranked = rankMemories(refs, query, { maxItems, minScore: 0.04 });
+  if (ranked.length >= maxItems || !query.trim()) return ranked;
+  const seen = new Set(ranked.map(ref => `${ref.scope}:${ref.ownerId}:${ref.entry.id}`));
+  const literal = refs.filter(ref => !seen.has(`${ref.scope}:${ref.ownerId}:${ref.entry.id}`) && ref.entry.text.toLowerCase().includes(query.trim().toLowerCase()));
+  return [...ranked, ...literal.sort((a, b) => b.entry.updatedAt - a.entry.updatedAt)].slice(0, maxItems);
 }

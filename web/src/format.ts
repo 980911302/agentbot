@@ -1,11 +1,18 @@
-/** 相对/时钟时间：刚刚 → HH:mm → M/D */
 export function formatClock(timestamp: number): string {
   if (!Number.isFinite(timestamp) || timestamp <= 0) return '刚刚';
   const date = new Date(timestamp);
+  const now = new Date();
   const diff = Date.now() - timestamp;
   if (diff < 60_000) return '刚刚';
-  if (diff < 24 * 60 * 60 * 1000) {
+
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const yesterdayStart = todayStart - 24 * 60 * 60 * 1000;
+
+  if (timestamp >= todayStart) {
     return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+  }
+  if (timestamp >= yesterdayStart) {
+    return '昨天';
   }
   return `${date.getMonth() + 1}/${date.getDate()}`;
 }

@@ -19,7 +19,7 @@ interface WireToolCall {
 
 interface WireMessage {
   role: string;
-  content: string | null;
+  content: string | null | Array<{ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } }>;
   tool_calls?: WireToolCall[];
   tool_call_id?: string;
 }
@@ -50,6 +50,24 @@ const DEFAULT_BASE_URL = 'https://api.deepseek.com/v1';
 const DEFAULT_TIMEOUT_MS = 180_000;
 /** 流式途中连续这么久没有收到任何字节，视为流已停滞：报错优于无限挂起 */
 const STREAM_IDLE_TIMEOUT_MS = 60_000;
+const MAX_RESPONSE_BYTES = 512 * 1024;
+const MAX_STREAM_BYTES = 2 * 1024 * 1024;
+
+async function readResponseText(response: Response): Promise<string> {
+  const reader = response.body?.getReader();
+  if (!reader) return '';
+  const decoder = new TextDecoder();
+  let bytes = 0, text = '';
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) return text + decoder.decode();
+      bytes += value.length;
+      if (bytes > MAX_RESPONSE_BYTES) throw new Error('模型响应超过 512KiB，已停止读取，请拆分任务');
+      text += decoder.decode(value, { stream: true });
+    }
+  } finally { await reader.cancel().catch(() => undefined); reader.releaseLock(); }
+}
 
 export class OpenAIProvider implements LLMProvider {
   readonly name = 'openai-compatible';
@@ -102,14 +120,14 @@ export class OpenAIProvider implements LLMProvider {
     });
 
     if (!response.ok) {
-      const detail = await response.text().catch(() => '');
+      const detail = await readResponseText(response).catch(() => '');
       throw new Error(
         `LLM request failed with ${response.status} ${response.statusText}` +
           (detail ? `: ${detail.slice(0, 500)}` : ''),
       );
     }
 
-    const data = (await response.json()) as WireResponse;
+    const data = JSON.parse(await readResponseText(response)) as WireResponse;
     if (data.error?.message) {
       throw new Error(`LLM returned an error: ${data.error.message}`);
     }
@@ -162,21 +180,23 @@ export class OpenAIProvider implements LLMProvider {
       },
       body: JSON.stringify(body),
       signal,
-    });
+    }).catch(error => { if (idleTimer) clearTimeout(idleTimer); throw error; });
 
     if (!response.ok) {
-      const detail = await response.text().catch(() => '');
+      if (idleTimer) clearTimeout(idleTimer);
+      const detail = await readResponseText(response).catch(() => '');
       throw new Error(
         `LLM request failed with ${response.status} ${response.statusText}` +
           (detail ? `: ${detail.slice(0, 500)}` : ''),
       );
     }
-    if (!response.body) throw new Error('LLM streaming response contained no body');
+    if (!response.body) { if (idleTimer) clearTimeout(idleTimer); throw new Error('LLM streaming response contained no body'); }
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
     let content = '';
+    let bytes = 0;
     let finishReason: string | null = null;
     let usage: TokenUsage | null = null;
     const calls = new Map<number, { id: string; name: string; arguments: string }>();
@@ -190,7 +210,7 @@ export class OpenAIProvider implements LLMProvider {
       try {
         chunk = JSON.parse(payload) as StreamChunk;
       } catch {
-        return;
+        throw new Error('模型 SSE 返回了不完整或非法 JSON，未执行本批工具');
       }
       if (chunk.error?.message) throw new Error(`LLM returned an error: ${chunk.error.message}`);
       if (chunk.usage) usage = toUsage(chunk.usage);
@@ -199,13 +219,16 @@ export class OpenAIProvider implements LLMProvider {
       if (choice.finish_reason) finishReason = choice.finish_reason;
       if (choice.delta?.content) {
         content += choice.delta.content;
+        if (content.length > 64000) throw new Error('模型正文超过 64000 字符，请拆分任务');
         onDelta(choice.delta.content);
       }
       for (const piece of choice.delta?.tool_calls ?? []) {
+        if (!Number.isSafeInteger(piece.index) || piece.index < 0 || piece.index >= 128) throw new Error('模型工具索引/数量超限');
         const slot = calls.get(piece.index) ?? { id: '', name: '', arguments: '' };
         if (piece.id) slot.id = piece.id;
         if (piece.function?.name) slot.name = piece.function.name;
         if (piece.function?.arguments) slot.arguments += piece.function.arguments;
+        if (slot.arguments.length > 64000 || slot.name.length > 200 || slot.id.length > 200) throw new Error('模型工具参数超过安全缓冲上限，请分块写入');
         calls.set(piece.index, slot);
       }
     };
@@ -214,8 +237,11 @@ export class OpenAIProvider implements LLMProvider {
       for (;;) {
         const { value, done } = await reader.read();
         if (done) break;
+        bytes += value.length;
+        if (bytes > MAX_STREAM_BYTES) throw new Error('模型流超过 2MiB，已停止读取');
         armIdle();
         buffer += decoder.decode(value, { stream: true });
+        if (buffer.length > MAX_RESPONSE_BYTES) throw new Error('模型单条流事件超过 512Ki 字符');
         let newline = buffer.indexOf('\n');
         while (newline !== -1) {
           handleLine(buffer.slice(0, newline));
@@ -224,6 +250,7 @@ export class OpenAIProvider implements LLMProvider {
         }
       }
       if (buffer.trim()) handleLine(buffer);
+      if (!finishReason) throw new Error('模型流在结束标记前断开；未执行本批工具，请重试');
     } catch (error) {
       if (idleController.signal.aborted) {
         throw new Error(
@@ -233,6 +260,8 @@ export class OpenAIProvider implements LLMProvider {
       throw error;
     } finally {
       if (idleTimer) clearTimeout(idleTimer);
+      await reader.cancel().catch(() => undefined);
+      reader.releaseLock();
     }
 
     const toolCalls: ToolCall[] = [...calls.entries()]
@@ -267,6 +296,16 @@ function toWireMessage(message: LLMMessage): WireMessage {
     };
   }
 
+  if (message.images?.length) {
+    if (message.role !== 'user') throw new Error('图片只能附在入站 user 消息中');
+    return { role: 'user', content: [
+      { type: 'text', text: message.content ?? '' },
+      ...message.images.flatMap(image => [
+        ...(image.alt ? [{ type: 'text' as const, text: `图片说明（发送者提供）：${image.alt}` }] : []),
+        { type: 'image_url' as const, image_url: { url: image.url } },
+      ]),
+    ] };
+  }
   return { role: message.role, content: message.content ?? '' };
 }
 

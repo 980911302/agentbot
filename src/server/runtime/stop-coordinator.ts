@@ -10,6 +10,7 @@ import type { RunLedger } from '../../storage/run-ledger.js';
 import { isStopSentence, DEFAULT_STOP_WORDS } from '../../config.js';
 import type { AgentRegistry } from '../../agent/registry.js';
 import type { PendingStop, SendOptions, SendResult } from './types.js';
+import type { ActivationCoordinator } from './activation-coordinator.js';
 
 /**
  * StopCoordinator（E2.2 拆出）：停止令的认词、排队与执行。
@@ -35,24 +36,27 @@ export class StopCoordinator {
       pendingStops: Map<string, PendingStop[]>;
       stopWords: string[];
       stopAckTimeoutMs: number;
+      activation?: ActivationCoordinator;
     },
   ) {
     this.pendingStops = deps.pendingStops;
   }
 
-  /** 用户发来停止词：撞上正在跑的用户回合就排队（那条 SSE 保持打开），否则立刻执行 */
-  stopFromUser(agentId: string, text: string, options: SendOptions): Promise<SendResult> {
-    const runningId = this.deps.ledger.runningTurnOf(agentId);
-    const running = runningId ? this.deps.ledger.getTurn(runningId) : undefined;
-    if (running && running.source === 'user' && running.status === 'running') {
-      let resolve!: (result: SendResult) => void;
-      const done = new Promise<SendResult>((settle) => {
-        resolve = settle;
+  /** 用户发来停止词：控制事务先生效，再取消句柄；不等待正在执行的用户回合。 */
+  async stopFromUser(agentId: string, text: string, options: SendOptions): Promise<SendResult> {
+    const commandId = options.clientMessageId ?? options.messageId ?? options.runId ?? `${agentId}:stop:${text}`;
+    if (this.deps.activation) {
+      await this.deps.activation.requestStop({
+        commandId,
+        requestedBy: { kind: 'user', id: 'owner' },
+        scope: { kind: 'agent', agentId },
       });
-      const queue = this.pendingStops.get(agentId) ?? [];
-      queue.push({ text, createdAt: Date.now(), options, notifyUser: true, resolve });
-      this.pendingStops.set(agentId, queue);
-      return done;
+      await this.deps.inbox.hold(agentId, 'agent_paused').catch(() => 0);
+    }
+    const runningId = this.deps.ledger.runningTurnOf(agentId);
+    if (runningId) {
+      const treeId = this.deps.ledger.getTurn(runningId)?.treeId;
+      if (treeId) for (const job of this.deps.ledger.jobsOf(treeId)) job.abort();
     }
     return this.executeStop(agentId, { text, createdAt: Date.now() }, { notifyUser: true, options });
   }
@@ -60,8 +64,8 @@ export class StopCoordinator {
   /** 上级停止令（dm 的 kind=stop）：同样保护用户回合；处理完回 stop-ack */
   async stopFromParent(
     agentId: string,
-    stop: { text: string; createdAt: number },
-    replyTo: { agentId: string; name: string },
+    stop: { text: string; createdAt: number; treeId?: string },
+    replyTo: { agentId: string; name: string; treeId?: string },
   ): Promise<void> {
     const runningId = this.deps.ledger.runningTurnOf(agentId);
     const running = runningId ? this.deps.ledger.getTurn(runningId) : undefined;
@@ -133,7 +137,11 @@ export class StopCoordinator {
   private async executeStop(
     agentId: string,
     stop: { text: string; createdAt: number },
-    opts: { notifyUser: boolean; options: SendOptions; replyTo?: { agentId: string; name: string } },
+    opts: {
+      notifyUser: boolean;
+      options: SendOptions;
+      replyTo?: { agentId: string; name: string; treeId?: string };
+    },
   ): Promise<SendResult> {
     const record = await this.deps.registry.get(agentId);
     const name = record?.name ?? '智能体';
@@ -143,6 +151,7 @@ export class StopCoordinator {
       if (!opts.notifyUser) return;
       const message: Message = {
         id: randomUUID(),
+        runId: opts.options.runId,
         agentId,
         role: 'assistant',
         content: { type: 'text', text: line },
@@ -159,7 +168,7 @@ export class StopCoordinator {
     const targets = this.deps.ledger
       .listTrees()
       .filter(
-        (tree) => tree.agentId === agentId && tree.status === 'open' && tree.createdAt < stop.createdAt,
+        (tree) => tree.agentId === agentId && (tree.status === 'open' || tree.status === 'incomplete') && tree.createdAt < stop.createdAt,
       );
     const dmChildren: Array<{ agentId: string; treeId: string }> = [];
     const roomChildren: Array<{ roomId?: string }> = [];
@@ -204,7 +213,7 @@ export class StopCoordinator {
     }
 
     if (dmChildren.length > 0) {
-      await this.awaitStopAcks(agentId, dmChildren.length, this.deps.stopAckTimeoutMs);
+      await this.awaitStopAcks(agentId, dmChildren, this.deps.stopAckTimeoutMs);
     }
 
     for (const tree of targets) {
@@ -222,6 +231,7 @@ export class StopCoordinator {
         priority: true,
         depth: 0,
         kind: 'stop-ack',
+        ...(opts.replyTo.treeId ? { treeId: opts.replyTo.treeId } : {}),
       });
     }
 
@@ -246,15 +256,22 @@ export class StopCoordinator {
   }
 
   /** 等下级的 stop-ack；信箱里的 ack 由这里消费，不会进模型 */
-  private async awaitStopAcks(agentId: string, expected: number, timeoutMs: number): Promise<void> {
+  private async awaitStopAcks(
+    agentId: string,
+    expectedChildren: Array<{ agentId: string; treeId: string }>,
+    timeoutMs: number,
+  ): Promise<void> {
     const deadline = Date.now() + timeoutMs;
-    let acked = 0;
-    while (acked < expected && Date.now() < deadline) {
+    const expected = new Set(expectedChildren.map((child) => `${child.agentId}:${child.treeId}`));
+    while (expected.size > 0 && Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, 120));
       const taken = await this.deps.inbox
-        .take(agentId, (item) => item.kind === 'stop-ack')
+        .take(
+          agentId,
+          (item) => item.kind === 'stop-ack' && expected.has(`${item.fromAgentId}:${item.treeId ?? ''}`),
+        )
         .catch(() => []);
-      acked += taken.length;
+      for (const item of taken) expected.delete(`${item.fromAgentId}:${item.treeId ?? ''}`);
     }
   }
 

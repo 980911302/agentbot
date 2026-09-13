@@ -1,6 +1,6 @@
-import { mkdir, readFile, writeFile, rm } from 'node:fs/promises';
+import { readFile, rm } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { judgeDuplicate, memoryKey } from './dedup.js';
 import { DEMOTE_TARGET, TIER_POLICY, USER_OWNER, isExpired } from './policy.js';
 import type {
@@ -12,6 +12,7 @@ import type {
   MemorySource,
   MemoryTier,
 } from './types.js';
+import { isMissingFile, writeJsonAtomic } from '../storage/atomic-json.js';
 
 export interface WriteMemoryInput {
   scope: MemoryScope;
@@ -49,6 +50,7 @@ const EMPTY: ScopeDoc = { entries: [] };
  */
 export class MemoryStore {
   private readonly cache = new Map<string, ScopeDoc>();
+  private readonly loading = new Map<string, Promise<ScopeDoc>>();
   private readonly baseDir: string;
 
   constructor(dataDir: string) {
@@ -98,8 +100,9 @@ export class MemoryStore {
 
   // ── 写 ──────────────────────────────────────────────
 
-  async write(input: WriteMemoryInput): Promise<WriteMemoryResult> {
+  async write(input: WriteMemoryInput, assertCurrent?: () => void): Promise<WriteMemoryResult> {
     const doc = await this.load(input.scope, input.ownerId);
+    assertCurrent?.();
     this.sweep(doc);
 
     const text = input.text.trim().slice(0, 2000);
@@ -332,23 +335,33 @@ export class MemoryStore {
     const key = this.cacheKey(scope, ownerId);
     const cached = this.cache.get(key);
     if (cached) return cached;
+    const existing = this.loading.get(key);
+    if (existing) return existing;
 
-    let doc: ScopeDoc = { entries: [] };
+    const pending = (async () => {
+      let doc: ScopeDoc = { entries: [] };
+      try {
+        const raw = await readFile(this.pathFor(scope, ownerId), 'utf8');
+        const parsed = JSON.parse(raw) as Partial<ScopeDoc>;
+        if (Array.isArray(parsed.entries)) doc = { entries: parsed.entries };
+      } catch (error) {
+        if (!isMissingFile(error)) throw error;
+      }
+      this.cache.set(key, doc);
+      return doc;
+    })();
+    this.loading.set(key, pending);
     try {
-      const raw = await readFile(this.pathFor(scope, ownerId), 'utf8');
-      const parsed = JSON.parse(raw) as Partial<ScopeDoc>;
-      if (Array.isArray(parsed.entries)) doc = { entries: parsed.entries };
-    } catch {
-      // 首次使用
+      return await pending;
+    } finally {
+      this.loading.delete(key);
     }
-    this.cache.set(key, doc);
-    return doc;
   }
 
   private async save(scope: MemoryScope, ownerId: string, doc: ScopeDoc): Promise<void> {
     const file = this.pathFor(scope, ownerId);
-    await mkdir(dirname(file), { recursive: true });
-    await writeFile(file, JSON.stringify(doc, null, 2), 'utf8');
+    this.cache.set(this.cacheKey(scope, ownerId), doc);
+    await writeJsonAtomic(file, doc);
   }
 }
 

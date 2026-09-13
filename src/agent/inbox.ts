@@ -1,12 +1,14 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import type {
   DeliveryClaimInput,
   DeliveryFailureInput,
   DeliveryItem,
   DeliveryPort,
+  DeliveryLease,
 } from '../storage/ports.js';
+import { isMissingFile, writeJsonAtomic } from '../storage/atomic-json.js';
 
 /**
  * 智能体之间 1:1 的收件箱。
@@ -32,6 +34,14 @@ export type {
 /** 默认退避封顶：失败越多次等越久，但不无限涨 */
 export const DELIVERY_MAX_BACKOFF_MS = 60_000;
 
+export class DeliveryLeaseLostError extends Error {
+  constructor() { super('投递租约已失效，拒绝旧处理者回填'); this.name = 'DeliveryLeaseLostError'; }
+}
+export function leaseOf(item: InboxItem): DeliveryLease {
+  if (!item.leaseOwner || item.leaseEpoch === undefined) throw new DeliveryLeaseLostError();
+  return { owner: item.leaseOwner, epoch: item.leaseEpoch };
+}
+
 /** drain 的处理顺序：停止令最前，其余保持到达顺序（优先信在入队时已插队首） */
 export function sortInboxForDrain<T extends InboxItem>(list: T[]): T[] {
   const rank = (item: InboxItem): number => (item.kind === 'stop' ? 0 : 1);
@@ -42,11 +52,28 @@ interface InboxState {
   /** 每次领取递增；重启也不回退（E3.6 防迟到写入用） */
   epoch: number;
   items: InboxItem[];
+  /** 含已 ack 的群投递次数，不能用待处理数当配额，否则相互 @ 永不封顶。 */
+  roomDeliveryCounts?: Record<string, number>;
 }
 
 export class AgentInbox implements DeliveryPort {
   private readonly cache = new Map<string, InboxState>();
+  private readonly loading = new Map<string, Promise<InboxState>>();
   private readonly dir: string;
+  private readonly listeners = new Set<(agentId: string) => void>();
+
+  subscribe(listener: (agentId: string) => void): () => void {
+    this.listeners.add(listener); return () => this.listeners.delete(listener);
+  }
+
+  async nextWakeAt(agentId: string): Promise<number | null> {
+    const state = await this.load(agentId);
+    const runnable = (item: InboxItem) => item.disposition !== 'held' && item.disposition !== 'cancelled';
+    const held = state.items.filter(item => item.status === 'claimed' && runnable(item)).map(item => item.leaseUntil ?? 0);
+    const pending = state.items.filter(item => item.status === 'pending' && runnable(item)).map(item => item.availableAt ?? item.createdAt);
+    const due = held.length ? held : pending;
+    return due.length ? Math.min(...due) : null;
+  }
 
   constructor(dataDir: string) {
     this.dir = join(dataDir, 'inbox');
@@ -56,11 +83,36 @@ export class AgentInbox implements DeliveryPort {
     return join(this.dir, `${agentId}.json`);
   }
 
-  async enqueue(item: Omit<InboxItem, 'id' | 'createdAt'>): Promise<InboxItem> {
+  async enqueue(item: Omit<InboxItem, 'id' | 'createdAt'> & { id?: string }): Promise<InboxItem> {
     const state = await this.load(item.toAgentId);
+    return this.insert(state, item);
+  }
+
+  async enqueueRoom(item: Omit<InboxItem, 'id' | 'createdAt'>, maxRuns: number): Promise<InboxItem | undefined> {
+    if (item.kind !== 'room' || !item.room) throw new Error('群投递缺少上下文');
+    const state = await this.load(item.toAgentId);
+    const counts = state.roomDeliveryCounts ??= {};
+    const key = `${item.room.roomId}:${item.room.roundId}`;
+    const count = counts[key] ?? state.items.filter(entry => entry.kind === 'room' && entry.room?.roundId === item.room!.roundId).length;
+    if (count >= maxRuns) return undefined;
+    // 检查和占名额之间无 await；同一 agent 并发入队不会突破上限。
+    counts[key] = count + 1;
+    return this.insert(state, item);
+  }
+
+  private async insert(state: InboxState, item: Omit<InboxItem, 'id' | 'createdAt'> & { id?: string }): Promise<InboxItem> {
+    if (item.id) {
+      const existing = state.items.find((entry) => entry.id === item.id);
+      if (existing) {
+        if (existing.text !== item.text || existing.toAgentId !== item.toAgentId) {
+          throw new Error('INBOX_ID_CONFLICT');
+        }
+        return structuredClone(existing);
+      }
+    }
     const full: InboxItem = {
       ...item,
-      id: randomUUID(),
+      id: item.id ?? randomUUID(),
       createdAt: Date.now(),
       status: 'pending',
       attempts: 0,
@@ -70,7 +122,7 @@ export class AgentInbox implements DeliveryPort {
     if (full.priority) state.items.unshift(full);
     else state.items.push(full);
     await this.save(full.toAgentId, state);
-    return full;
+    return structuredClone(full);
   }
 
   /**
@@ -105,9 +157,14 @@ export class AgentInbox implements DeliveryPort {
     }
 
     const eligible = state.items.filter(
-      (item) => item.status === 'pending' && (item.availableAt ?? item.createdAt) <= now,
+      (item) =>
+        item.status === 'pending'
+        && (item.availableAt ?? item.createdAt) <= now
+        && item.disposition !== 'held'
+        && item.disposition !== 'cancelled',
     );
-    const claimed = sortInboxForDrain(eligible);
+    if (input.limit !== undefined && (!Number.isInteger(input.limit) || input.limit < 1)) throw new Error('领取数量必须为正整数');
+    const claimed = sortInboxForDrain(eligible).slice(0, input.limit);
     if (claimed.length === 0) {
       if (mutated) await this.save(agentId, state);
       return [];
@@ -120,15 +177,17 @@ export class AgentInbox implements DeliveryPort {
       item.leaseEpoch = state.epoch;
       item.leaseUntil = now + input.leaseMs;
     }
+    const snapshot = structuredClone(claimed);
     await this.save(agentId, state);
-    return claimed;
+    return snapshot;
   }
 
   /** 确认：处理已形成持久检查点，出队 */
-  async ack(agentId: string, ids: string[]): Promise<number> {
+  async ack(agentId: string, ids: string[], lease: DeliveryLease): Promise<number> {
     if (ids.length === 0) return 0;
     const state = await this.load(agentId);
     const wanted = new Set(ids);
+    this.assertLease(state, ids, lease);
     const before = state.items.length;
     state.items = state.items.filter((item) => !wanted.has(item.id));
     const removed = before - state.items.length;
@@ -142,9 +201,11 @@ export class AgentInbox implements DeliveryPort {
     ids: string[],
     error: string,
     input: DeliveryFailureInput,
+    lease: DeliveryLease,
   ): Promise<{ failed: string[]; pending: string[] }> {
     const state = await this.load(agentId);
     const now = input.now ?? Date.now();
+    this.assertLease(state, ids, { ...lease, now });
     const maxDelay = input.maxDelayMs ?? DELIVERY_MAX_BACKOFF_MS;
     const wanted = new Set(ids);
     const failed: string[] = [];
@@ -171,9 +232,10 @@ export class AgentInbox implements DeliveryPort {
   }
 
   /** 归还领取：不算失败、不烧重试预算（AgentBusy 等「现在处理不了」） */
-  async release(agentId: string, ids: string[]): Promise<void> {
+  async release(agentId: string, ids: string[], lease: DeliveryLease): Promise<void> {
     if (ids.length === 0) return;
     const state = await this.load(agentId);
+    this.assertLease(state, ids, lease);
     const wanted = new Set(ids);
     let mutated = false;
     for (const item of state.items) {
@@ -192,9 +254,11 @@ export class AgentInbox implements DeliveryPort {
     agentId: string,
     ids: string[],
     patch: { messageId: string; turnId?: string; note?: string; at?: number },
+    lease: DeliveryLease,
   ): Promise<void> {
     if (ids.length === 0) return;
     const state = await this.load(agentId);
+    this.assertLease(state, ids, lease);
     const wanted = new Set(ids);
     let mutated = false;
     for (const item of state.items) {
@@ -252,7 +316,7 @@ export class AgentInbox implements DeliveryPort {
   /** 取出（含领取中）未处理的信；failed 单独用 failedCount 读，不在这里混着展示 */
   async peek(agentId: string): Promise<InboxItem[]> {
     const state = await this.load(agentId);
-    return state.items.filter((item) => item.status !== 'failed');
+    return structuredClone(state.items.filter((item) => item.status !== 'failed'));
   }
 
   /** 取出满足条件的信（其余保留原序、状态不变）——stop-ack 的消费入口 */
@@ -273,8 +337,40 @@ export class AgentInbox implements DeliveryPort {
   async claimableCount(agentId: string, now = Date.now()): Promise<number> {
     const state = await this.load(agentId);
     return state.items.filter(
-      (item) => item.status === 'pending' && (item.availableAt ?? item.createdAt) <= now,
+      (item) =>
+        item.status === 'pending'
+        && (item.availableAt ?? item.createdAt) <= now
+        && item.disposition !== 'held'
+        && item.disposition !== 'cancelled',
     ).length;
+  }
+
+  async holdIds(agentId: string, ids: string[], reason: NonNullable<InboxItem['holdReason']>): Promise<number> {
+    const wanted = new Set(ids);
+    const state = await this.load(agentId);
+    let count = 0;
+    for (const item of state.items) {
+      if (!wanted.has(item.id)) continue;
+      item.disposition = 'held';
+      item.holdReason = reason;
+      count += 1;
+    }
+    if (count > 0) await this.save(agentId, state);
+    return count;
+  }
+
+  async hold(agentId: string, reason: NonNullable<InboxItem['holdReason']>): Promise<number> {
+    const state = await this.load(agentId);
+    let count = 0;
+    for (const item of state.items) {
+      if (item.disposition === 'cancelled' || item.status === 'failed') continue;
+      if (item.kind === 'stop' || item.kind === 'stop-ack') continue;
+      item.disposition = 'held';
+      item.holdReason = reason;
+      count += 1;
+    }
+    if (count > 0) await this.save(agentId, state);
+    return count;
   }
 
   async failedCount(agentId: string): Promise<number> {
@@ -289,36 +385,66 @@ export class AgentInbox implements DeliveryPort {
   private async load(agentId: string): Promise<InboxState> {
     const cached = this.cache.get(agentId);
     if (cached) return cached;
+    const existing = this.loading.get(agentId);
+    if (existing) return existing;
 
-    let state: InboxState = { epoch: 0, items: [] };
-    try {
-      const raw = await readFile(this.file(agentId), 'utf8');
-      const parsed = JSON.parse(raw) as unknown;
-      if (Array.isArray(parsed)) {
-        // E3.3 之前的文件是纯数组：补 epoch 与生命周期字段
-        state = { epoch: 0, items: parsed as InboxItem[] };
-      } else if (parsed && typeof parsed === 'object') {
-        const data = parsed as Partial<InboxState>;
-        state = {
-          epoch: typeof data.epoch === 'number' ? data.epoch : 0,
-          items: Array.isArray(data.items) ? (data.items as InboxItem[]) : [],
-        };
+    const pending = (async () => {
+      let state: InboxState = { epoch: 0, items: [] };
+      try {
+        const raw = await readFile(this.file(agentId), 'utf8');
+        const parsed = JSON.parse(raw) as unknown;
+        if (Array.isArray(parsed)) {
+          // E3.3 之前的文件是纯数组：补 epoch 与生命周期字段
+          state = { epoch: 0, items: parsed as InboxItem[] };
+        } else if (parsed && typeof parsed === 'object') {
+          const data = parsed as Partial<InboxState>;
+          state = {
+            epoch: typeof data.epoch === 'number' ? data.epoch : 0,
+            items: Array.isArray(data.items) ? (data.items as InboxItem[]) : [],
+            roomDeliveryCounts: data.roomDeliveryCounts ?? {},
+          };
+        }
+      } catch (error) {
+        if (!isMissingFile(error)) throw error;
       }
-    } catch {
-      // 空箱
+      for (const item of state.items) {
+        if (!item.status) item.status = 'pending';
+        if (typeof item.attempts !== 'number') item.attempts = 0;
+        if (typeof item.availableAt !== 'number') item.availableAt = item.createdAt;
+      }
+      this.cache.set(agentId, state);
+      return state;
+    })();
+    this.loading.set(agentId, pending);
+    try {
+      return await pending;
+    } finally {
+      this.loading.delete(agentId);
     }
-    for (const item of state.items) {
-      if (!item.status) item.status = 'pending';
-      if (typeof item.attempts !== 'number') item.attempts = 0;
-      if (typeof item.availableAt !== 'number') item.availableAt = item.createdAt;
-    }
-    this.cache.set(agentId, state);
-    return state;
   }
 
   private async save(agentId: string, state: InboxState): Promise<void> {
     const file = this.file(agentId);
-    await mkdir(dirname(file), { recursive: true });
-    await writeFile(file, JSON.stringify(state, null, 2), 'utf8');
+    this.cache.set(agentId, state);
+    await writeJsonAtomic(file, state);
+    for (const listener of this.listeners) { try { listener(agentId); } catch { /* 调度观察者不改变提交结果 */ } }
+  }
+
+  async renew(agentId: string, ids: string[], lease: DeliveryLease, leaseMs: number): Promise<void> {
+    if (!ids.length) return;
+    const state = await this.load(agentId);
+    this.assertLease(state, ids, lease);
+    const wanted = new Set(ids);
+    for (const item of state.items) if (wanted.has(item.id)) item.leaseUntil = (lease.now ?? Date.now()) + leaseMs;
+    await this.save(agentId, state);
+  }
+
+  private assertLease(state: InboxState, ids: string[], lease: DeliveryLease): void {
+    const now = lease?.now ?? Date.now();
+    if (!lease || ids.some(id => {
+      const item = state.items.find(item => item.id === id);
+      return !item || item.status !== 'claimed' || item.leaseOwner !== lease.owner ||
+        item.leaseEpoch !== lease.epoch || (item.leaseUntil ?? 0) <= now;
+    })) throw new DeliveryLeaseLostError();
   }
 }

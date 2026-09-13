@@ -24,14 +24,16 @@ const PRIORITY: Array<keyof SectionAllocation> = ['recent', 'memory', 'retrieval
 export function allocateSections(
   budget: ContextBudget,
   wants: SectionWants,
+  fixedMemory?: number,
 ): { alloc: SectionAllocation; available: number } {
-  const fixed = wants.instructions + wants.task + wants.files;
+  const fixed = wants.instructions + wants.task + wants.files + (fixedMemory ?? 0);
   const available = Math.max(0, budget.total - fixed);
 
-  const keys: Array<keyof SectionAllocation> = ['memory', 'retrieval', 'compacted', 'recent'];
+  const keys: Array<keyof SectionAllocation> = fixedMemory === undefined
+    ? ['memory', 'retrieval', 'compacted', 'recent'] : ['retrieval', 'compacted', 'recent'];
   const minTotal = keys.reduce((sum, key) => sum + budget.sections[key].min, 0);
 
-  const alloc = {} as SectionAllocation;
+  const alloc = { memory: fixedMemory ?? 0 } as SectionAllocation;
   for (const key of keys) {
     const section: SectionBudget = budget.sections[key];
     alloc[key] =
@@ -42,6 +44,7 @@ export function allocateSections(
 
   let remaining = available - keys.reduce((sum, key) => sum + alloc[key], 0);
   for (const key of PRIORITY) {
+    if (!keys.includes(key)) continue;
     if (remaining <= 0) break;
     const section = budget.sections[key];
     const headroom = Math.max(0, section.max - alloc[key]);

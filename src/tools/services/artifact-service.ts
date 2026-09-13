@@ -1,4 +1,6 @@
-import { copyFile, mkdir, stat } from 'node:fs/promises';
+import { copyFile, mkdir, realpath, stat } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 
@@ -78,18 +80,30 @@ export class ArtifactService {
     path: string,
     fileName?: string,
   ): Promise<{ path: string; bytes: number }> {
-    const root = resolve(workspaceRoot);
-    const source = resolve(root, path);
-    const rel = relative(root, source);
-    if (rel.startsWith('..') || isAbsolute(rel)) {
-      throw new DeliverPathError(`path 超出了工作区范围：${path}`);
-    }
+    const root = await realpath(workspaceRoot);
+    const source = await realpath(resolve(root, path));
+    const inside = (base: string, file: string) => { const rel = relative(base, file); return rel === '' || (rel !== '..' && !rel.startsWith('../') && !isAbsolute(rel)); };
+    const userRoots = (await Promise.all(this.roots.map(root => realpath(root).catch(() => null)))).filter((root): root is string => root !== null);
+    const alreadyAccessible = userRoots.some(root => inside(root, source));
+    if (!inside(root, source) && !alreadyAccessible) throw new DeliverPathError(`path 超出了工作区和交付目录范围：${path}`);
     const info = await stat(source).catch(() => null);
     if (!info?.isFile()) throw new DeliverPathError(`工作区里没有这个文件：${path}`);
+    if (info.size > 50 * 1024 * 1024) throw new DeliverPathError('附件超过 50MiB，请拆分或提供文件路径');
+    if (alreadyAccessible && !inside(root, source) && !fileName) return { path: source, bytes: info.size };
 
     const target = resolveDeliverPath(fileName ?? basename(source), undefined, this.roots);
     await mkdir(dirname(target.path), { recursive: true });
-    await copyFile(source, target.path);
-    return { path: target.path, bytes: info.size };
+    const parent = await realpath(dirname(target.path));
+    const allowedRoot = await realpath(target.root);
+    if (!inside(allowedRoot, parent)) throw new DeliverPathError('目标目录的符号链接超出交付范围');
+    let destination = join(parent, basename(target.path));
+    if (destination === source) return { path: source, bytes: info.size };
+    try { await copyFile(source, destination, constants.COPYFILE_EXCL); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+      destination = join(parent, `${randomUUID().slice(0, 8)}-${basename(target.path)}`);
+      await copyFile(source, destination, constants.COPYFILE_EXCL);
+    }
+    return { path: destination, bytes: info.size };
   }
 }

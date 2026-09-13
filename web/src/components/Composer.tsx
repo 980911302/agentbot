@@ -149,8 +149,8 @@ export function Composer({
   };
 
   const placeholder = isGroup
-    ? '在群聊中发消息，输入 @ 唤醒指定成员… (Enter 发送)'
-    : `问问 ${botName}… (Enter 发送，Shift+Enter 换行)`;
+    ? '在群聊中发消息，输入 @ 唤醒指定成员…'
+    : `给 ${botName || 'Bot'} 发消息`;
 
   return (
     <div className="composer-capsule-wrapper">

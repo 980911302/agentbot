@@ -25,6 +25,7 @@ import { handleInteractionItem, handleInteractionsCollection } from './routes/in
 import { handleSecretsCollection } from './routes/secrets.js';
 import { handleHealthRoute } from './routes/health.js';
 import { handleEventsRoute } from './routes/events.js';
+import { ReplyFinalizer } from './runtime/reply-finalizer.js';
 
 export interface AgentServerOptions {
   port?: number;
@@ -91,6 +92,19 @@ export async function createAgentServer(options: AgentServerOptions = {}): Promi
   bind({
     agentName: async (agentId) => (await runtime.registry.get(agentId))?.name ?? agentId,
     updateAgent: (agentId, patch) => runtime.registry.update(agentId, patch),
+    finalizeReply: async (input) => {
+      const finalizer = new ReplyFinalizer({
+        lookup: async (id) => runtime.deliveryReceipt(id),
+        canView: (actorId, receipt) => receipt.actorId === actorId,
+      });
+      return finalizer.finalize({
+        actorId: input.actorId,
+        inputId: input.actorId,
+        content: input.content,
+        deliveryRefs: input.deliveryRefs,
+        source: input.source,
+      });
+    },
   });
 
   // 健康检查报全量工具面（常驻 + 平台层），而不是装配前的常驻子集
@@ -152,14 +166,16 @@ export async function createAgentServer(options: AgentServerOptions = {}): Promi
     port,
     url: `http://${host === '0.0.0.0' ? '127.0.0.1' : host}:${port}/`,
     runtime,
-    close: () =>
-      new Promise<void>((done) => {
+    close: async () => {
+      await runtime.close();
+      return new Promise<void>((done) => {
         server.closeAllConnections();
         server.close(() => {
           // 退出前放掉单实例锁（E3.6）：不放的话下次启动要等进程被判定为死掉
           void lock.release().finally(done);
         });
-      }),
+      });
+    },
   };
 }
 
@@ -184,6 +200,12 @@ async function handleRequest(
     return;
   }
 
+  if (path === '/api/chat/state' && method === 'GET') {
+    const channels = (url.searchParams.get('channels') ?? '').split(',').filter(Boolean);
+    json(response, 200, await context.runtime.chatSnapshot(channels));
+    return;
+  }
+
   if (path === '/api/bots' || path === '/api/agents') {
     await handleBotsCollection(request, response, context, method);
     return;
@@ -202,6 +224,27 @@ async function handleRequest(
   const sessionMatch = /^\/api\/sessions\/([^/]+)$/.exec(path);
   if (sessionMatch && method === 'GET') {
     await handleSessionItem(response, context, decodeURIComponent(sessionMatch[1] ?? ''));
+    return;
+  }
+
+  const stopMatch = /^\/api\/control\/stops\/([^/]+)$/.exec(path);
+  if (stopMatch && method === 'GET') {
+    const stop = context.runtime.stopOperation(decodeURIComponent(stopMatch[1] ?? ''));
+    if (!stop) { json(response, 404, { error: 'unknown stop' }); return; }
+    json(response, 200, stop);
+    return;
+  }
+
+  const deliveryMatch = /^\/api\/deliveries\/([^/]+)$/.exec(path);
+  if (deliveryMatch && method === 'GET') {
+    const receipt = context.runtime.deliveryReceipt(decodeURIComponent(deliveryMatch[1] ?? ''));
+    if (!receipt) { json(response, 404, { error: 'unknown receipt' }); return; }
+    json(response, 200, receipt);
+    return;
+  }
+
+  if (path === '/api/control/stop-all' && method === 'POST') {
+    json(response, 400, { error: 'UNSUPPORTED_STOP_SCOPE', code: 'UNSUPPORTED_STOP_SCOPE' });
     return;
   }
 

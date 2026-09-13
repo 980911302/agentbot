@@ -41,6 +41,7 @@ export class InteractionBroker {
 
   /** 挂在某处等用户回答；返回时要么有答案，要么抛超时/取消 */
   request(input: RequestInteractionInput): Promise<InteractionAnswer> {
+    if (this.pending.size >= 32 || this.list({ agentId: input.agentId }).length >= 1) return Promise.reject(new Error('已有待回答交互，请先等待它完成'));
     const timeoutMs = input.timeoutMs ?? DEFAULT_INTERACTION_TIMEOUT_MS;
     const now = Date.now();
     const request: InteractionRequest = {
@@ -96,6 +97,7 @@ export class InteractionBroker {
   resolve(id: string, answer: { value?: string; secret?: string }): boolean {
     const entry = this.pending.get(id);
     if (!entry) return false;
+    if ((answer.value?.length ?? 0) > 12000 || (answer.secret?.length ?? 0) > 16000) return false;
     entry.settle({ id, value: answer.value, secret: answer.secret, answeredAt: Date.now() });
     return true;
   }

@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { BotAvatar } from './BotAvatar';
+import { usePresence } from '../motion';
 import type { BotSummary } from '../types';
 
 const PALETTE = [
@@ -28,6 +29,11 @@ export function BotProfileDialog({ bot, onClose, onSave }: BotProfileDialogProps
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const presence = usePresence(bot !== null);
+  const shownRef = useRef(bot);
+  if (bot) shownRef.current = bot;
+  const shown = bot ?? shownRef.current;
+
   useEffect(() => {
     if (!bot) return;
     setName(bot.name);
@@ -36,7 +42,7 @@ export function BotProfileDialog({ bot, onClose, onSave }: BotProfileDialogProps
     setError(null);
   }, [bot]);
 
-  if (!bot) return null;
+  if (!presence.mounted || !shown) return null;
 
   const submit = async () => {
     const trimmed = name.trim();
@@ -55,7 +61,7 @@ export function BotProfileDialog({ bot, onClose, onSave }: BotProfileDialogProps
 
   return (
     <div
-      className="scrim"
+      className={`scrim ${presence.state}`}
       role="presentation"
       onMouseDown={(event) => event.target === event.currentTarget && onClose()}
     >
@@ -69,8 +75,8 @@ export function BotProfileDialog({ bot, onClose, onSave }: BotProfileDialogProps
 
         <div className="dialog-body">
           <div className="profile-preview">
-            <BotAvatar name={name.trim() || bot.name} color={color} size={46} />
-            <span>{name.trim() || bot.name}</span>
+            <BotAvatar name={name.trim() || shown.name} color={color} size={46} />
+            <span>{name.trim() || shown.name}</span>
           </div>
 
           <label className="field">

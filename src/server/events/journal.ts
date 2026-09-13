@@ -8,17 +8,9 @@
  *
  * 当前为进程内实现：重连补发不跨重启；跨重启由客户端「先取快照再订阅」兜底。
  */
-export interface JournalEntry {
-  /** 进程内单调递增：客户端补发、去重都用它 */
-  seq: number;
-  at: number;
-  /** 事件归属：dm 频道是 agentId，群频道是 roomId（前端据此路由） */
-  agentId?: string;
-  roomId?: string;
-  /** agent=回合内事件；room=群事件；run=回合生命周期 */
-  kind: 'agent' | 'room' | 'run';
-  payload: unknown;
-}
+import { randomUUID } from 'node:crypto';
+import type { JournalEntry, EventCursor } from '../../shared/contracts/chat-state.js';
+export type { JournalEntry } from '../../shared/contracts/chat-state.js';
 
 export interface JournalReplay {
   /** after 之后攒下的事件（按 seq 升序） */
@@ -30,7 +22,10 @@ export interface JournalReplay {
 }
 
 export class EventJournal {
+  readonly epoch = randomUUID();
   private readonly entries: JournalEntry[] = [];
+  private readonly sizes: number[] = [];
+  private bytes = 0;
   private seq = 0;
   private readonly listeners = new Set<(entry: JournalEntry) => void>();
 
@@ -40,12 +35,30 @@ export class EventJournal {
     return this.seq;
   }
 
+  get cursor(): EventCursor { return { epoch: this.epoch, seq: this.seq }; }
+
+  /** 读模型期间有事件提交就重取，失败绝不宣称恢复成功或推进客户端游标。 */
+  async snapshot<T>(read: () => Promise<T>): Promise<T & { cursor: EventCursor }> {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const seq = this.seq;
+      const value = await read();
+      if (seq === this.seq) return { ...value, cursor: this.cursor };
+    }
+    throw new Error('聊天状态正在变化，请重试快照');
+  }
+
   publish(entry: Omit<JournalEntry, 'seq' | 'at'> & { at?: number }): JournalEntry {
     this.seq += 1;
-    const full: JournalEntry = { ...entry, seq: this.seq, at: entry.at ?? Date.now() };
+    const full: JournalEntry = { ...entry, epoch: this.epoch, seq: this.seq, at: entry.at ?? Date.now() };
     this.entries.push(full);
-    if (this.entries.length > this.limit) this.entries.splice(0, this.entries.length - this.limit);
-    for (const listener of this.listeners) listener(full);
+    const size = Buffer.byteLength(JSON.stringify(full));
+    this.sizes.push(size); this.bytes += size;
+    while (this.entries.length > this.limit || this.bytes > 8 * 1024 * 1024) {
+      this.entries.shift(); this.bytes -= this.sizes.shift() ?? 0;
+    }
+    for (const listener of this.listeners) {
+      try { listener(full); } catch { /* 连接/观察者失败不能让已执行的工具变成运行失败 */ }
+    }
     return full;
   }
 

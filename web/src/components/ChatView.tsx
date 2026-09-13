@@ -3,9 +3,12 @@ import type { ReactNode, WheelEvent as ReactWheelEvent } from 'react';
 import type { ArtifactView, BotSummary, DisplayMessage, InteractionRequest } from '../types';
 import { RichText } from '../markdown';
 import { BotAvatar } from './BotAvatar';
-import { IconCheck, IconChevronDown, IconInfo } from '../icons';
+import { IconArrowDown, IconArrowUp, IconCheck, IconShare, IconSidebar } from '../icons';
 import { MessageItem } from './MessageItem';
 import { InteractionCard } from './InteractionCard';
+import { CorrespondenceRow, CorrespondenceDialog } from './CorrespondenceView';
+import { chatRows } from '../features/chat/correspondence';
+import type { MessageActor } from '../../../src/shared/contracts/message-identity';
 
 interface ChatViewProps {
   bot: BotSummary | null;
@@ -20,7 +23,7 @@ interface ChatViewProps {
   /** 私聊点标题打开智能体资料编辑 */
   onOpenProfile?: () => void;
   /** 错误消息的重试（重新发送原话） */
-  onRetry?: (text: string) => void;
+  onRetry?: (text: string, clientMessageId?: string) => void;
   /** 频道内的轻状态行（任务挂起等系统提示） */
   notices?: string[];
   /** 群回合：正在进入回合的成员 */
@@ -70,6 +73,8 @@ export function ChatView({
   const [awayFromBottom, setAwayFromBottom] = useState(false);
   const lastSeenCount = useRef(messages.length);
   const title = channelTitle || bot?.name || '对话';
+  const [peer, setPeer] = useState<MessageActor | null>(null);
+  useEffect(() => setPeer(null), [channelKey]);
 
   /** 最近一次还在跑的工具调用：悬停时告诉用户「它此刻在做什么」 */
   const runningCall = (() => {
@@ -146,10 +151,12 @@ export function ChatView({
       <header className="chat-top-header">
         <div className="chat-header-left">
           <div
-            className={`chat-header-avatar${doneFlash ? ' done-flash' : ''}`}
-            title={busy ? (actionHint ?? '正在处理…') : undefined}
+            className={`chat-header-avatar${doneFlash ? ' done-flash' : ''}${onOpenProfile ? ' clickable' : ''}`}
+            title={busy ? (actionHint ?? '正在处理…') : (onOpenProfile ? '编辑智能体资料' : undefined)}
+            onClick={onOpenProfile}
+            role={onOpenProfile ? 'button' : undefined}
           >
-            <BotAvatar name={title} size={30} color={bot?.color || '#a855f7'} />
+            <BotAvatar name={title} size={28} color={bot?.color || '#a855f7'} status={bot?.status} />
             {doneFlash ? (
               <span className="done-check">
                 <IconCheck size={11} />
@@ -182,20 +189,58 @@ export function ChatView({
               ) : null}
             </div>
           ) : null}
+          {/* header actions */}
         </div>
 
         <div className="chat-header-right">
           <button
             type="button"
             className="chat-header-icon-btn"
-            aria-label="详情信息"
+            aria-label="分享"
+            title="分享或导出会话"
+            onClick={() => {
+              void navigator.clipboard.writeText(window.location.href);
+            }}
+          >
+            <IconShare size={17} />
+          </button>
+          <button
+            type="button"
+            className="chat-header-icon-btn"
+            aria-label="侧边栏与屏幕"
             title="查看任务与环境详情"
             onClick={onToggleInfo}
           >
-            <IconInfo size={18} />
+            <IconSidebar size={17} />
           </button>
         </div>
       </header>
+
+      {/* 顶部悬浮未读药丸 (图二对应) */}
+      {awayFromBottom ? (
+        <div
+          className="floating-unread-pill"
+          role="button"
+          tabIndex={0}
+          onClick={jumpToBottom}
+          title="点击直达最新消息"
+        >
+          <IconArrowUp size={14} />
+          <span>{pendingCount > 0 ? `${pendingCount} 条新消息` : '回到最新消息'}</span>
+          <span
+            className="floating-unread-close"
+            role="button"
+            tabIndex={0}
+            onClick={(e) => {
+              e.stopPropagation();
+              setAwayFromBottom(false);
+            }}
+            title="关闭提示"
+          >
+            ×
+          </span>
+        </div>
+      ) : null}
 
       <div
         className="chat-scroll-viewport"
@@ -204,15 +249,19 @@ export function ChatView({
         onWheel={onWheel}
       >
         <div className="chat-message-list swap" key={channelKey}>
-          {messages.map((message) => (
-            <MessageItem
-              key={message.id}
-              message={message}
-              bot={bot}
-              memberNames={isGroup ? members.map((member) => member.name) : []}
-              onRetry={onRetry}
-            />
-          ))}
+          {chatRows(messages).map((row) =>
+            row.kind === 'correspondence' ? (
+              <CorrespondenceRow key={row.id} agentId={bot?.id ?? ''} transfers={row.transfers} onOpen={setPeer} />
+            ) : (
+              <MessageItem
+                key={row.message.id}
+                message={row.message}
+                bot={bot}
+                memberNames={isGroup ? members.map((member) => member.name) : []}
+                onRetry={onRetry}
+              />
+            ),
+          )}
 
           {artifacts.length > 0 ? <ArtifactRow artifacts={artifacts} /> : null}
 
@@ -222,9 +271,9 @@ export function ChatView({
               <div className="msg-avatar-col">
                 <BotAvatar name={roundActive.name} color={roundActive.color} size={34} />
               </div>
-              <div className="msg-content-col">
-                <div className="msg-sender-header" style={{ color: roundActive.color }}>
-                  {roundActive.name}
+              <div className="msg-content-col assistant-content">
+                <div className="msg-sender-header assistant-header" style={{ color: roundActive.color }}>
+                  <span>{roundActive.name}</span>
                 </div>
                 <div className="msg-bubble-box working-bubble" title={roundActive.name}>
                   <span className="dot-pulse" />
@@ -266,9 +315,9 @@ export function ChatView({
               <div className="msg-avatar-col">
                 <BotAvatar name={bot?.name || '助手'} color={bot?.color || '#94a3b8'} size={34} />
               </div>
-              <div className="msg-content-col">
-                <div className="msg-sender-header" style={{ color: bot?.color || '#94a3b8' }}>
-                  {bot?.name || '助手'}
+              <div className="msg-content-col assistant-content">
+                <div className="msg-sender-header assistant-header" style={{ color: bot?.color || '#94a3b8' }}>
+                  <span>{bot?.name || '助手'}</span>
                 </div>
                 <div
                   className="msg-bubble-box assistant-bubble live-bubble"
@@ -286,9 +335,9 @@ export function ChatView({
               <div className="msg-avatar-col">
                 <BotAvatar name={bot?.name || '助手'} color={bot?.color || '#94a3b8'} size={34} />
               </div>
-              <div className="msg-content-col">
-                <div className="msg-sender-header" style={{ color: bot?.color || '#94a3b8' }}>
-                  {bot?.name || '助手'}
+              <div className="msg-content-col assistant-content">
+                <div className="msg-sender-header assistant-header" style={{ color: bot?.color || '#94a3b8' }}>
+                  <span>{bot?.name || '助手'}</span>
                 </div>
                 <div className="msg-bubble-box working-bubble" title={actionHint ?? '正在处理…'}>
                   <span className="dot-pulse" />
@@ -302,23 +351,22 @@ export function ChatView({
         </div>
       </div>
 
-      {/* 翻历史时新消息还在来，给一个回到底部的出口 */}
+      {/* 底部悬浮直达最新消息按钮 (截图对应) */}
       {awayFromBottom ? (
         <button
           type="button"
-          className="scroll-bottom"
-          aria-label={pendingCount > 0 ? `回到底部，${pendingCount} 条新消息` : '回到底部'}
-          title="回到底部"
+          className="floating-scroll-bottom-btn"
           onClick={jumpToBottom}
+          title="直达最新消息"
+          aria-label="直达最新消息"
         >
-          <IconChevronDown size={17} />
-          {pendingCount > 0 ? (
-            <span className="unread-dot">{pendingCount > 99 ? '99+' : pendingCount}</span>
-          ) : null}
+          <IconArrowDown size={16} />
         </button>
       ) : null}
 
       {composer}
+      {peer && channelKey ? <CorrespondenceDialog key={`${channelKey}:${peer.id}`} agentId={channelKey} agentName={title} peer={peer}
+        live={messages.flatMap(message => message.correspondence ? [message.correspondence] : [])} onClose={() => setPeer(null)} /> : null}
     </div>
   );
 }

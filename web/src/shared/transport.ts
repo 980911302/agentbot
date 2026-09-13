@@ -31,15 +31,22 @@ export async function readSseFrames(
   const reader = response.body!.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
+  try {
   for (;;) {
     const { value, done } = await reader.read();
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
+    if (buffer.length > 4 * 1024 * 1024) throw new Error('事件帧超过接收上限');
     let boundary = buffer.indexOf('\n\n');
     while (boundary !== -1) {
       onFrame(buffer.slice(0, boundary));
       buffer = buffer.slice(boundary + 2);
       boundary = buffer.indexOf('\n\n');
     }
+  }
+  } finally {
+    // 协议缺口/epoch 变化会从 onFrame 抛出；必须关闭旧流，不能只另开一条连接。
+    await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
   }
 }

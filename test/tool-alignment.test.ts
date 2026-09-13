@@ -382,7 +382,7 @@ describe('工作台改名（A 组）', () => {
 });
 
 describe('SendToAgent 记账与名字回退（A 组）', () => {
-  it('resolveTarget 命中后 registerChild(dm)，dispatch 收到文本', async () => {
+  it('resolveTarget 命中后只投递，不把同事登记为子任务', async () => {
     const { createSendToAgentTool } = await import('../src/tools/builtin/room.js');
     const dispatched: Array<{ targetId: string; kind: string; text: string }> = [];
     const children: Array<{ agentId: string; via: string }> = [];
@@ -410,9 +410,6 @@ describe('SendToAgent 记账与名字回退（A 组）', () => {
     assert.equal(dispatched[0]!.targetId, 'a2');
     assert.equal(dispatched[0]!.kind, 'agent');
     assert.equal(dispatched[0]!.text, '把这事办了');
-    assert.equal(children.length, 1);
-    assert.equal(children[0]!.agentId, 'a2');
-    assert.equal(children[0]!.via, 'dm');
-    assert.equal(children[0]!.roomId, undefined);
+    assert.equal(children.length, 0);
   });
 });

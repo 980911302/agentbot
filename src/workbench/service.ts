@@ -15,20 +15,16 @@ export class WorkbenchError extends Error {
 
 export interface PostToRoomResult {
   roomName: string;
-  /** 实际进入回合的成员数 */
-  called: number;
-  spoke: number;
-  silent: number;
-  /** 正忙、已排队等它空下来处理的成员名（E3.7：不再跳过丢信） */
-  queued: string[];
+  /** 仅表示发送成功，不包含收件人执行结果。 */
+  roundId: string;
 }
 
 export interface WorkbenchDeps {
   registry: AgentRegistry;
   rooms: RoomStore;
   messages: MessageStore;
-  /** 由运行时注入：往群里发一条并扇出（排除调用者自己） */
-  postToRoom: (roomId: string, text: string, excludeAgentIds: string[]) => Promise<PostToRoomResult>;
+  /** 由运行时注入：只写群消息并入队（排除调用者自己），不等待扇出执行。 */
+  postToRoom: (roomId: string, text: string, excludeAgentIds: string[], depth?: number, signal?: AbortSignal, callerId?: string) => Promise<PostToRoomResult>;
   /** 主人在群里的显示名 */
   ownerName: string;
 }
@@ -58,12 +54,13 @@ export class Workbench {
     color?: string;
     avatar?: string;
     section?: string;
+    resourceId?: string;
   }): Promise<AgentRecord> {
     const name = input.name?.trim();
     if (!name) throw new WorkbenchError('新建同事必须给一个名字');
 
     const existing = await this.deps.registry.findByName(name);
-    if (existing) {
+    if (existing && existing.id !== input.resourceId) {
       throw new WorkbenchError(
         `已经有一个叫「${name}」的同事了（id=${existing.id}）。要改资料请用 update_agent，不要重名再建一个。`,
       );
@@ -71,6 +68,18 @@ export class Workbench {
 
     if (input.color !== undefined && !/^#[0-9a-fA-F]{6}$/.test(input.color.trim())) {
       throw new WorkbenchError('color 必须是 #rrggbb 形式的十六进制色值');
+    }
+
+    if (input.resourceId) {
+      return this.deps.registry.createIfAbsent(input.resourceId, {
+        name,
+        title: input.title,
+        description: input.description,
+        instructions: input.instructions,
+        color: input.color?.trim(),
+        avatar: input.avatar,
+        section: input.section,
+      });
     }
 
     return this.deps.registry.create({
@@ -163,9 +172,9 @@ export class Workbench {
 
   /**
    * 以自己身份往群里发一条并扇出。
-   * 与群回合里的 `say` 不同：这会把全体成员叫醒开新的一轮。
+   * 与群回合内 SendToUser 的本轮发言不同：这会把全体成员叫醒开新的一轮。
    */
-  async postToRoom(callerId: string, roomId: string, text: string): Promise<PostToRoomResult> {
+  async postToRoom(callerId: string, roomId: string, text: string, depth?: number, signal?: AbortSignal): Promise<PostToRoomResult> {
     const body = text?.trim();
     if (!body) throw new WorkbenchError('要发的内容不能为空');
 
@@ -175,7 +184,8 @@ export class Workbench {
       throw new WorkbenchError('你不在这个群里，不能代群发言；先让成员把你拉进去');
     }
 
-    return this.deps.postToRoom(roomId, body, [callerId]);
+    signal?.throwIfAborted();
+    return this.deps.postToRoom(roomId, body, [callerId], depth, signal, callerId);
   }
 
   // ── 内部 ────────────────────────────────────────────

@@ -1,4 +1,10 @@
+import { ActivationCoordinator } from './runtime/activation-coordinator.js';
+import { DeliveryService } from './runtime/delivery-service.js';
+import { OutboxProjector } from './runtime/outbox-projector.js';
+import { RuntimeControlStore } from '../storage/runtime-control-store.js';
+import type { DeliveryReceipt } from '../shared/contracts/execution-control.js';
 import { randomUUID } from 'node:crypto';
+import { InboxScheduler } from './runtime/inbox-scheduler.js';
 import type {
   Agent,
   AgentEvent,
@@ -14,7 +20,8 @@ import { createWorkbenchTools } from '../tools/builtin/workbench.js';
 import { Workbench } from '../workbench/service.js';
 import { InteractionBroker } from '../interaction/broker.js';
 import { SecretStore } from '../secret/store.js';
-import { AgentInbox } from '../agent/inbox.js';
+import { AgentInbox, type InboxItem } from '../agent/inbox.js';
+import { CorrespondenceStore } from '../storage/correspondence-store.js';
 import { DEFAULT_OWNER_NAME, DEFAULT_STOP_WORDS, isStopSentence } from '../config.js';
 import { ContextBuilder, type BuiltContext, type BuildOptions } from '../context/builder.js';
 import type { ContextBudget } from '../context/budget.js';
@@ -36,6 +43,9 @@ import { resolveProjectOwner } from '../tools/builtin/memory.js';
 import { ToolRegistry } from '../tools/registry.js';
 import { createSendToAgentTool } from '../tools/builtin/room.js';
 import { createTaskTools } from '../tools/builtin/task.js';
+import { createReadToolOutputTool } from '../tools/builtin/tool-output.js';
+import { ToolOutputStore } from '../tools/services/tool-output-store.js';
+import { TaskProgressStore } from '../storage/task-progress.js';
 import type { Tool, TurnState } from '../tools/tool.js';
 
 // 类型与错误定义已抽到 ./types（E2.2 第一步）；这里按原名 re-export 保持兼容
@@ -57,9 +67,13 @@ import { planRecovery } from '../tools/policy.js';
 import { RunExecutor } from './runtime/run-executor.js';
 import { RoomDispatcher } from './runtime/room-dispatcher.js';
 import { ReceivedStore } from '../storage/received-store.js';
-import { InMemoryRunLedger } from '../storage/run-ledger.js';
+import { JsonRunLedger } from '../storage/run-ledger.js';
+import type { RunLedger } from '../storage/run-ledger.js';
 import { JsonToolInvocationLedger } from '../storage/tool-ledger.js';
 import { EventJournal } from './events/journal.js';
+import { ChatRunCoordinator } from './runtime/chat-run-coordinator.js';
+import { isActiveChatRun } from '../shared/contracts/chat-state.js';
+import { toDisplayMessages, toCorrespondenceView, collectArtifacts } from './presenters.js';
 export * from './runtime/types.js';
 
 const DEFAULT_MAX_AGENT_DEPTH = 3;
@@ -93,6 +107,7 @@ export class AgentRuntime {
   readonly compaction: CompactionStore;
   readonly rooms: RoomStore;
   readonly inbox: AgentInbox;
+  readonly correspondence: CorrespondenceStore;
 
   readonly workbench: Workbench;
   readonly broker: InteractionBroker;
@@ -109,6 +124,7 @@ export class AgentRuntime {
   private readonly stopCoordinator: StopCoordinator;
   /** 同事来信的消费（E2.2 拆出） */
   private readonly inboxProcessor: InboxProcessor;
+  private readonly inboxScheduler: InboxScheduler;
   /** 回合执行核心（E2.2 拆出）：调度/记账/模型循环/记忆收尾 */
   private readonly executor: RunExecutor;
   /** 接收幂等日志（E3.2） */
@@ -118,21 +134,42 @@ export class AgentRuntime {
   private readonly locks = new Set<string>();
 
   /** 回合与任务树账本（E3.3 接线；见 docs/架构设计.md「插话、停止和等待」） */
-  private readonly ledger = new InMemoryRunLedger();
+  private readonly ledger: RunLedger;
   /** 事件日志（E3.4）：发送与订阅分离的基础；断线只断订阅，不牵动执行 */
   readonly events = new EventJournal();
+  readonly chatRuns: ChatRunCoordinator;
   /** 工具执行账本（E3.5）：先记意图再执行再记结果；中断的调用留在这里等核对 */
   readonly toolLedger: JsonToolInvocationLedger;
+  readonly taskProgress: TaskProgressStore;
+  readonly toolOutputs: ToolOutputStore;
   /** 撞上正在跑的用户回合的停止令：回合结束立刻处理 */
   private readonly pendingStops = new Map<string, PendingStop[]>();
+  private readonly control: RuntimeControlStore;
+  readonly activation: ActivationCoordinator;
+  private readonly deliveries: DeliveryService;
+  private readonly projector: OutboxProjector;
 
   constructor(private readonly options: AgentRuntimeOptions) {
+    this.chatRuns = new ChatRunCoordinator(options.dataDir, this.events);
+    this.ledger = new JsonRunLedger(options.dataDir);
     this.registry = new AgentRegistry(options.dataDir, []);
+    this.control = RuntimeControlStore.openSync(options.dataDir);
+    this.activation = new ActivationCoordinator(this.control, {
+      processEpoch: this.control.snapshot().processEpoch,
+      exists: async (agentId) => Boolean(await this.registry.get(agentId)),
+    });
+    this.deliveries = new DeliveryService(this.control);
     this.messages = new MessageStore(options.dataDir);
     this.memory = options.memoryStore ?? new MemoryStore(options.dataDir);
     this.compaction = new CompactionStore(options.dataDir);
     this.rooms = new RoomStore(options.dataDir);
     this.inbox = new AgentInbox(options.dataDir);
+    this.correspondence = new CorrespondenceStore(options.dataDir);
+    this.projector = new OutboxProjector({
+      store: this.control,
+      inbox: this.inbox,
+      correspondence: this.correspondence,
+    });
     this.broker = options.broker ?? new InteractionBroker();
     this.secrets = options.secrets ?? new SecretStore(options.dataDir);
     this.builder = new ContextBuilder(this.messages, options.budget);
@@ -150,16 +187,12 @@ export class AgentRuntime {
       rooms: this.rooms,
       messages: this.messages,
       ownerName: options.ownerName ?? DEFAULT_OWNER_NAME,
-      postToRoom: async (roomId, text, excludeAgentIds) => {
-        const summary = await this.postToRoom(roomId, text, { excludeAgentIds });
-        const spoke = summary.outcomes.filter((item) => item.status === 'spoke').length;
-        return {
-          roomName: summary.roomName,
-          called: summary.outcomes.length,
-          spoke,
-          silent: summary.outcomes.length - spoke,
-          queued: summary.queued,
-        };
+      postToRoom: async (roomId, text, excludeAgentIds, agentChainDepth, signal, callerId) => {
+        if (!callerId) throw new Error('代群发言缺少真实发送者');
+        const summary = await this.roomDispatcher.enqueueMessage(roomId, text, { excludeAgentIds, agentChainDepth, signal,
+          roomSenderId: callerId, onRoomEvent: payload => this.events.publish({ kind: 'room', roomId, payload }) });
+        for (const member of (await this.rooms.get(roomId))?.memberIds ?? []) if (member !== callerId) this.inboxScheduler.watch(member);
+        return { roomName: summary.roomName, roundId: summary.roundId };
       },
     });
 
@@ -171,13 +204,12 @@ export class AgentRuntime {
       locks: this.locks,
       membersOf: (roomId) => this.membersOf(roomId),
       ownerNameFallback: options.ownerName ?? DEFAULT_OWNER_NAME,
+      onExperience: message => this.events.publish({ kind: 'agent', agentId: message.agentId, runId: message.runId, payload: { type: 'message', message } }),
       stopWords: options.stopWords ?? DEFAULT_STOP_WORDS,
       runTurn: (agentId, task, turn, options) =>
         this.runTurn(agentId, task, turn, options),
-      // 延迟回合里被点到且空闲的人：立刻叫醒（忙的由它自己的回合收尾接手）
-      drainInbox: (agentId, options) => {
-        void this.drainInbox(agentId, options).catch(() => undefined);
-      },
+      // 只通知调度器，绝不沿发送方的栈递归执行收件人。
+      drainInbox: agentId => this.inboxScheduler.watch(agentId),
     });
 
 
@@ -191,6 +223,7 @@ export class AgentRuntime {
       pendingStops: this.pendingStops,
       stopWords: options.stopWords ?? DEFAULT_STOP_WORDS,
       stopAckTimeoutMs: options.stopAckTimeoutMs ?? 30_000,
+      activation: this.activation,
     });
 
     this.inboxProcessor = new InboxProcessor({
@@ -201,11 +234,39 @@ export class AgentRuntime {
       runTurn: (agentId, task, turn, options) =>
         this.runTurn(agentId, task, { extraTools: [], ...turn }, options),
       // 排队的群回合：事件按 roomId 归属（前端据此路由到群频道）
-      deliverRoom: (item, options) =>
-        this.roomDispatcher.deliverQueued(
-          item,
-          this.journaling(options, { roomId: item.room?.roomId ?? '' }),
-        ),
+      deliverRoom: (item, options) => {
+        const roomId = item.room?.roomId ?? '';
+        const { run } = this.chatRuns.prepare({ channelId: roomId, roomId, kind: 'room', source: 'room',
+          input: item.text, messageId: item.checkpoint?.messageId });
+        const scoped = this.chatRuns.bind(run, options);
+        return this.chatRuns.execute(run.runId, () => this.roomDispatcher.deliverQueued(item, scoped),
+          result => { if (result.status === 'error') throw new Error(result.note ?? '延迟群回合执行失败'); return {}; });
+      },
+      archiveLetter: item => this.archiveLetter(item),
+      admit: async (item) => {
+        const decision = await this.activation.tryActivate({
+          agentId: item.toAgentId,
+          runId: item.id,
+          taskId: item.id,
+          inputId: item.id,
+          chainId: item.chainId ?? item.correlationId ?? item.id,
+          source: item.kind === 'room' ? 'room' : 'inbox',
+          disposition: item.disposition,
+        });
+        if (decision.kind === 'admitted') return 'run';
+        if (decision.kind === 'busy') return 'busy';
+        return 'hold';
+      },
+      canRetry: async (agentId, messageId) => {
+        const all = this.chatRuns.list();
+        const ids = new Set(all.filter(run => run.messageId === messageId && (!run.agentId || run.agentId === agentId)).map(run => run.runId));
+        for (let size = -1; size !== ids.size;) {
+          size = ids.size;
+          for (const run of all) if (run.parentRunId && ids.has(run.parentRunId)) ids.add(run.runId);
+        }
+        const runs = all.filter(run => ids.has(run.runId) && run.agentId === agentId);
+        return runs.length > 0 && runs.every(run => this.taskProgress.get(run.runId, agentId)?.mayHaveSideEffects === false);
+      },
       leaseMs: options.deliveryLeaseMs,
       maxAttempts: options.deliveryMaxAttempts,
       baseDelayMs: options.deliveryBaseDelayMs,
@@ -224,6 +285,8 @@ export class AgentRuntime {
 
     this.receivedStore = new ReceivedStore(options.dataDir);
     this.toolLedger = new JsonToolInvocationLedger(options.dataDir);
+    this.taskProgress = new TaskProgressStore(options.dataDir);
+    this.toolOutputs = new ToolOutputStore(options.dataDir);
 
     this.executor = new RunExecutor({
       registry: this.registry,
@@ -237,26 +300,57 @@ export class AgentRuntime {
       agentService: this.agentService,
       stopCoordinator: this.stopCoordinator,
       drainInbox: (agentId, options) => this.drainInbox(agentId, options),
+      canAutoActivate: (agentId) => {
+        if (!this.control.allowsAutomaticExecution()) return false;
+        return this.control.snapshot().agents[agentId]?.autoActivation !== 'paused';
+      },
       locks: this.locks,
       ledger: this.ledger,
       toolLedger: this.toolLedger,
+      progress: this.taskProgress,
+      outputs: this.toolOutputs,
       maxIterations: options.maxIterations,
+      chatRuns: this.chatRuns,
+      canResumeRoom: async (agentId, roomId) => (await this.rooms.get(roomId))?.memberIds.includes(agentId) ?? false,
+      publishResumedPosts: (agentId, continuation, posts, opts) => this.roomDispatcher.publishResumedPosts(agentId, continuation, posts, opts),
+      onMemory: (agentId, runId, added, merged) => this.events.publish({ kind: 'agent', agentId, runId, payload: { type: 'memory', added, merged } }),
     });
 
     this.tools = [
       ...options.tools,
+      ...(options.tools.some(tool => tool.name === 'ReadToolOutput') ? [] : [createReadToolOutputTool()]),
       ...createWorkbenchTools(this.workbench),
       this.createSendToAgentTool(),
       ...createTaskTools({
         provider: this.agentService.providerFor(this.options.defaultModel),
         messages: this.messages,
-        workerTools: () => this.tools.filter((tool) => tool.name !== 'SendToUser'),
+        workerTools: async ownerId => {
+          const owner = ownerId ? await this.registry.get(ownerId) : undefined;
+          return owner ? this.tools.filter(tool => owner.toolNames.includes(tool.name)) : [];
+        },
+        providerFor: model => this.agentService.providerFor(this.agentService.resolveModel(model)),
+        ownerAuthority: async ownerId => {
+          const owner = await this.registry.get(ownerId);
+          return owner ? { toolNames: owner.toolNames, projectIds: owner.projectIds } : undefined;
+        },
         maxIterations: this.options.maxIterations,
         invocations: this.toolLedger,
+        dataDir: this.options.dataDir,
+        progress: this.taskProgress,
+        outputs: this.toolOutputs,
       }),
     ];
     // 新同事默认拿到全部工具——包括工作台那一组
     this.registry.setDefaultToolNames(this.tools.map((tool) => tool.name));
+    this.inboxScheduler = new InboxScheduler({ inbox: this.inbox,
+      busy: agentId => this.isBusy(agentId) || this.inboxProcessor.isProcessing(agentId),
+      exists: async agentId => Boolean(await this.registry.get(agentId)),
+      process: agentId => this.drainInbox(agentId) });
+  }
+
+  async close(): Promise<void> {
+    this.inboxScheduler.close();
+    await Promise.all([this.executor.close(), this.inboxProcessor.close()]);
   }
 
   // ── 智能体 ──────────────────────────────────────────
@@ -268,14 +362,8 @@ export class AgentRuntime {
       await this.registry.create(seed);
     }
 
-    const allTools = this.tools.map((tool) => tool.name);
-    const updated = await this.registry.list();
-    for (const record of updated) {
-      const missing = allTools.filter((name) => !record.toolNames.includes(name));
-      if (missing.length > 0) {
-        await this.registry.update(record.id, { toolNames: [...record.toolNames, ...missing] });
-      }
-    }
+    await this.registry.syncDefaultTools();
+    await this.migrateExistingAgents();
 
     const refreshed = await this.registry.list();
     const preferred = this.options.seed?.[this.options.seed.length - 1]?.name;
@@ -376,61 +464,51 @@ export class AgentRuntime {
 
   // ── 事件日志（E3.4：发送与订阅分离）───────────────
 
-  /**
-   * 把事件先写进事件日志，再交给本次调用的监听者。
-   * 订阅方拿到与调用方同源的事件（带 seq，可补发、可去重）。
-   */
-  private journaling(
-    options: SendOptions,
-    channel: { agentId?: string; roomId?: string },
-  ): SendOptions {
-    return {
-      ...options,
-      onEvent: (event) => {
-        this.events.publish({ kind: 'agent', ...channel, payload: event });
-        options.onEvent?.(event);
-      },
-      onDelta: (text) => {
-        // 流式增量是短暂事件：订阅方实时看到打字，落盘仍以最终消息为准
-        this.events.publish({ kind: 'agent', ...channel, payload: { type: 'delta', text } });
-        options.onDelta?.(text);
-      },
-      onRoomEvent: (event) => {
-        this.events.publish({ kind: 'room', ...channel, payload: event });
-        options.onRoomEvent?.(event);
-      },
-    };
-  }
-
-  private publishRunError(channel: { agentId?: string; roomId?: string }, error: unknown): void {
-    this.events.publish({
-      kind: 'run',
-      ...channel,
-      payload: {
-        phase: 'error',
-        busy: error instanceof AgentBusyError,
-        message: error instanceof Error ? error.message : String(error),
-      },
+  /** 恢复读模型。游标与运行快照一起返回，读取失败不推进游标。 */
+  async chatSnapshot(channelIds: string[]) {
+    if (channelIds.length > 100 || channelIds.some(id => !/^[\w-]{1,128}$/.test(id))) throw new Error('无效的频道列表');
+    return this.events.snapshot(async () => {
+      const channels: Record<string, { messages: ReturnType<typeof toDisplayMessages>; artifacts: ReturnType<typeof collectArtifacts> }> = {};
+      for (const id of new Set(channelIds)) {
+        const room = await this.rooms.get(id);
+        if (room) {
+          channels[id] = { messages: (await this.rooms.messages(id)).map(message => ({
+            id: message.id, role: message.senderKind === 'user' ? 'user' as const : 'assistant' as const,
+            content: message.text, senderName: message.senderName, senderColor: message.senderColor,
+            clientMessageId: message.clientMessageId, toolCalls: [], createdAt: new Date(message.createdAt).toISOString(),
+          })), artifacts: [] };
+        } else {
+          const messages = await this.messages.list(id);
+          channels[id] = { messages: await this.displayMessages(id, messages), artifacts: collectArtifacts(messages) };
+        }
+      }
+      const agentControls: Record<string, { autoActivation: 'enabled' | 'paused'; generation: number; lastStopId?: string }> = {};
+      for (const id of new Set(channelIds)) {
+        const view = this.controlView(id);
+        agentControls[id] = { autoActivation: view.autoActivation, generation: view.generation, lastStopId: view.lastStopId };
+      }
+      return { channels, runs: this.chatRuns.list(), interactions: this.broker.list(), agentControls };
     });
   }
 
-  /** 回合执行的事件收尾：done / error 都写进事件日志，订阅方据此收掉「忙」 */
-  private async runJournaled<T>(
-    channel: { agentId?: string; roomId?: string },
-    run: () => Promise<T>,
-    done: (result: T) => Record<string, unknown>,
-  ): Promise<T> {
-    try {
-      const result = await run();
-      this.events.publish({ kind: 'run', ...channel, payload: done(result) });
-      return result;
-    } catch (error) {
-      this.publishRunError(channel, error);
-      throw error;
-    }
+  // ── 收信与执行分离（E3.4 第二步）────────────────────
+
+  async displayMessages(agentId: string, raw?: Message[]) {
+    const transfers = (await this.correspondence.list(agentId)).map(toCorrespondenceView);
+    return [...toDisplayMessages(raw ?? await this.messages.list(agentId)), ...transfers]
+      .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
   }
 
-  // ── 收信与执行分离（E3.4 第二步）────────────────────
+  private async archiveLetter(item: InboxItem): Promise<void> {
+    if (item.kind && item.kind !== 'message') return;
+    const from = item.fromActor ?? { kind: 'agent' as const, id: item.fromAgentId, name: item.fromName };
+    const target = item.toActor ? undefined : await this.registry.get(item.toAgentId);
+    const to = item.toActor ?? { kind: 'agent' as const, id: item.toAgentId, name: target?.name ?? '已删除的智能体', color: target?.color, avatar: target?.avatar };
+    const transfer = { id: item.id, from, to, text: item.text, ...(item.images?.length ? { images: item.images } : {}), createdAt: item.createdAt };
+    await this.correspondence.record(transfer);
+    // 可以重复发布；快照和实时事件均按同一个投递 id 去重。
+    for (const agentId of new Set([from.id, to.id])) this.events.publish({ kind: 'agent', agentId, payload: { type: 'correspondence', transfer } });
+  }
 
   /**
    * 先持久接收：去重 → 落消息、写事件日志 → 回执。
@@ -442,12 +520,16 @@ export class AgentRuntime {
     text: string,
     options: SendOptions = {},
   ): Promise<AcceptedRun<SendResult>> {
-    const opts = this.journaling(options, { agentId });
+    return this.chatRuns.accept(`dm:${agentId}:${options.clientMessageId ?? randomUUID()}`,
+      () => this.acceptMessageInner(agentId, text, options));
+  }
+
+  private async acceptMessageInner(agentId: string, text: string, options: SendOptions): Promise<AcceptedRun<SendResult>> {
     const clientMessageId = options.clientMessageId;
 
     if (clientMessageId) {
       const existing = this.receivedStore.find(clientMessageId);
-      if (existing) {
+      if (existing && existing.agentId === agentId) {
         const original = (await this.messages.list(agentId)).find(
           (message) => message.id === existing.messageId,
         );
@@ -460,58 +542,68 @@ export class AgentRuntime {
               receiptSeq: this.events.latestSeq,
               duplicate: true,
             },
-            execute: () => this.duplicateRun(agentId, original, opts),
+            execute: () => this.duplicateRun(agentId, original, options),
           };
         }
       }
     }
 
-    // 见 docs/架构设计.md「插话、停止和等待」：认停止词是运行时的事，不让模型「想起来去通知别人」
-    if (this.stopCoordinator.isStopSentence(text)) {
-      return {
-        receipt: {
-          messageId: `stop-${randomUUID()}`,
-          agentId,
-          receiptSeq: this.events.latestSeq,
-          duplicate: false,
-        },
-        execute: () =>
-          this.runJournaled(
-            { agentId },
-            () => this.stopCoordinator.stopFromUser(agentId, text, opts),
-            (result) => ({ phase: 'done', stopReason: result.stopReason }),
-          ),
-      };
-    }
+    if (!(await this.registry.get(agentId))) throw new Error(`Unknown agent: ${agentId}`);
 
     // 用户新句作废还没回答的选项卡——不当答案（§2）
-    this.stopCoordinator.voidPendingInteractions(agentId, opts.onEvent);
+    let resumeTaskId = options.resumeTaskId;
+    if (!resumeTaskId && /^(继续|继续上个任务|继续刚才的任务|接着做|恢复上个任务)[。！!]?$/u.test(text.trim())) {
+      const latest = this.taskProgress.list(agentId)[0];
+      if (latest && ['incomplete', 'failed', 'interrupted', 'cancelled', 'parked'].includes(latest.status)) resumeTaskId = latest.id;
+    }
+    const previous = clientMessageId ? this.chatRuns.list().find(run => run.channelId === agentId && run.clientMessageId === clientMessageId) : undefined;
+    if (resumeTaskId && !previous) {
+      const checkpoint = this.taskProgress.get(resumeTaskId, agentId);
+      if (!checkpoint || checkpoint.scope !== 'dm' || checkpoint.status === 'running') throw new Error('找不到当前智能体已停止的任务进度');
+    }
+    const stop = this.stopCoordinator.isStopSentence(text);
+    if (!stop) {
+      await this.activation.acceptUserInput({
+        commandId: clientMessageId ?? randomUUID(),
+        agentId,
+        inputId: clientMessageId ?? randomUUID(),
+        text,
+      }).catch(() => undefined);
+    }
+    const { run, duplicate } = this.chatRuns.prepare({ channelId: agentId, agentId,
+      kind: stop ? 'stop' : 'agent', source: 'user', input: text,
+      clientMessageId, messageId: randomUUID(), parentRunId: resumeTaskId,
+    }, [options.model ?? '', options.resumeTaskId ?? '']);
+    const opts = this.chatRuns.bind(run, options);
 
     const task: Message = {
-      id: randomUUID(),
+      id: run.messageId!,
+      runId: run.runId,
       agentId,
       role: 'user',
       content: { type: 'text', text },
       createdAt: Date.now(),
       source: 'user',
+      sender: { kind: 'user', id: OWNER_ID, name: this.options.ownerName ?? DEFAULT_OWNER_NAME },
       ...(clientMessageId ? { clientMessageId } : {}),
     };
     // 先落盘再回执：客户端拿到 messageId 时消息已经在库里（E3.2/E3.4）
-    await this.messages.append(task);
-    opts.onEvent?.({ type: 'message', message: task });
-    if (clientMessageId) {
-      this.receivedStore.record(clientMessageId, { messageId: task.id, agentId });
+    if (!duplicate) {
+      try {
+        await this.messages.append(task);
+        opts.onEvent?.({ type: 'message', message: task });
+        this.stopCoordinator.voidPendingInteractions(agentId, opts.onEvent);
+      } catch (error) { this.chatRuns.fail(run.runId, error); throw error; }
     }
 
     return {
-      receipt: { messageId: task.id, agentId, receiptSeq: this.events.latestSeq, duplicate: false },
-      execute: () =>
-        this.runJournaled(
-          { agentId },
-          () =>
-            this.runTurn(agentId, task, { brief: undefined, skipPersist: true, onDelta: opts.onDelta }, opts),
-          (result) => ({ phase: 'done', stopReason: result.stopReason }),
-        ),
+      receipt: { runId: run.runId, taskId: run.taskId, run: this.chatRuns.get(run.runId), messageId: task.id, agentId, receiptSeq: this.events.latestSeq, duplicate },
+      execute: () => {
+        if (!isActiveChatRun(this.chatRuns.get(run.runId)!)) return this.duplicateRun(agentId, task, options);
+        this.executor.cancelMaintenance(agentId);
+        return stop ? this.chatRuns.execute(run.runId, () => this.stopCoordinator.stopFromUser(agentId, text, opts), result => result)
+          : this.runTurn(agentId, task, { skipPersist: true, resumeTaskId }, opts);
+      },
     };
   }
 
@@ -556,60 +648,44 @@ export class AgentRuntime {
     text: string,
     options: SendOptions = {},
   ): Promise<RoomRoundSummary> {
-    const accepted = await this.acceptRoomMessage(roomId, text, options);
+    // 进程内兼容接口仍可等待三波结果；HTTP 与模型工具不使用这条等待路径。
+    const accepted = await this.acceptRoomMessage(roomId, text, options, true);
     return accepted.execute();
   }
 
   /**
-   * 群消息的收信回执：这里只确认「已受理」（房间存在、幂等键未见），
-   * 入站消息与扇出都在 execute 里跑，进度走事件日志。
+   * HTTP 收信：先持久写时间线和收件箱，再回 202；execute 仅通知调度器。
    * 群消息的 messageId 由 room_message 事件带回来（客户端按内容/幂等键校正占位）。
    */
   async acceptRoomMessage(
     roomId: string,
     text: string,
     options: SendOptions = {},
+    waitForRounds = false,
   ): Promise<AcceptedRun<RoomRoundSummary>> {
-    const opts = this.journaling(options, { roomId });
-    const clientMessageId = options.clientMessageId;
-    const duplicate = clientMessageId ? this.receivedStore.find(clientMessageId) !== undefined : false;
-    return {
-      receipt: { roomId, receiptSeq: this.events.latestSeq, duplicate },
-      execute: () =>
-        this.runJournaled(
-          { roomId },
-          () => this.postToRoomInner(roomId, text, opts),
-          (summary) => {
-            const spoke = summary.outcomes.filter((outcome) => outcome.status === 'spoke').length;
-            return {
-              phase: 'done',
-              spoke,
-              silent: summary.outcomes.length - spoke,
-              queued: summary.queued.length,
-            };
-          },
-        ),
-    };
-  }
-
-  private async postToRoomInner(
-    roomId: string,
-    text: string,
-    options: SendOptions,
-  ): Promise<RoomRoundSummary> {
-    const clientMessageId = options.clientMessageId;
-    if (clientMessageId) {
-      const existing = this.receivedStore.find(clientMessageId);
-      if (existing) {
-        // E3.2：重复提交不再扇出，直接按已处理返回
-        return { roundId: '', roomId, roomName: roomId, outcomes: [], queued: [] };
-      }
-    }
-    const summary = await this.roomDispatcher.postToRoom(roomId, text, options);
-    if (clientMessageId) {
-      this.receivedStore.record(clientMessageId, { messageId: summary.roundId, agentId: roomId });
-    }
-    return summary;
+    return this.chatRuns.accept(`room:${roomId}:${options.clientMessageId ?? randomUUID()}`, async () => {
+      const { room, members } = await this.membersOf(roomId);
+      if (!room || members.length === 0) throw new Error('房间不存在或没有成员');
+      const { run, duplicate } = this.chatRuns.prepare({ channelId: roomId, roomId, kind: 'room',
+        source: options.roomSenderId ? 'agent' : 'user', input: text, clientMessageId: options.clientMessageId, messageId: randomUUID(),
+      }, [options.model ?? '', options.ownerName ?? '', options.excludeAgentIds ?? [], options.roomSenderId ?? '']);
+      const opts = this.chatRuns.bind(run, { ...options, messageId: run.messageId });
+      const queued = !waitForRounds && !duplicate
+        ? await this.chatRuns.execute(run.runId, () => this.roomDispatcher.enqueueMessage(roomId, text, opts), () => ({}))
+        : { roundId: run.runId, roomId, roomName: room.name, outcomes: [], queued: [] };
+      return {
+        receipt: { roomId, runId: run.runId, taskId: run.taskId, run: this.chatRuns.get(run.runId)!, messageId: run.messageId, receiptSeq: this.events.latestSeq, duplicate },
+        execute: () => {
+          if (!waitForRounds) {
+            for (const member of members) this.inboxScheduler.watch(member.id);
+            return Promise.resolve(queued);
+          }
+          return !isActiveChatRun(this.chatRuns.get(run.runId)!)
+          ? Promise.resolve({ roundId: run.runId, roomId, roomName: room.name, outcomes: [], queued: [] })
+          : this.chatRuns.execute(run.runId, () => this.roomDispatcher.postToRoom(roomId, text, opts), () => ({}));
+        },
+      };
+    });
   }
 
   // ── 启动恢复（E3.6）─────────────────────────────────
@@ -620,7 +696,29 @@ export class AgentRuntime {
    *   2) 上次进程领走却没确认的来信 → 一律作废重投（重启不重置尝试预算）；
    *   3) 有待处理来信的同事 → 立刻排一次消费，重启后接着办。
    */
+  private async migrateExistingAgents(): Promise<void> {
+    const agents = await this.registry.list();
+    await this.control.transact((draft) => {
+      if (draft.controlSeq === 0 && Object.keys(draft.agents).length === 0) return 'skip';
+      let changed = false;
+      for (const agent of agents) {
+        if (draft.agents[agent.id]) continue;
+        draft.agents[agent.id] = {
+          agentId: agent.id,
+          generation: 0,
+          autoActivation: 'paused',
+          revision: 0,
+          blockedAutoRootsThroughSeq: draft.controlSeq + 1,
+        };
+        changed = true;
+      }
+      if (!changed) return 'skip';
+    }).catch(() => undefined);
+  }
+
   async recover(): Promise<StartupReport> {
+    await this.migrateExistingAgents();
+    await this.projector.recover().catch(() => 0);
     const unresolvedInvocations: StartupReport['unresolvedInvocations'] = [];
     for (const record of await this.toolLedger.unfinished()) {
       if (record.status !== 'started') {
@@ -639,16 +737,20 @@ export class AgentRuntime {
         .reclaimAll(agent.id, { maxAttempts: this.options.deliveryMaxAttempts ?? DELIVERY_DEFAULTS.maxAttempts })
         .catch(() => 0);
       const items = await this.inbox.peek(agent.id).catch(() => []);
+      for (const item of items) await this.archiveLetter(item);
       const claimable = await this.inbox.claimableCount(agent.id).catch(() => 0);
       const claimed = items.filter((item) => item.status === 'claimed').length;
       const failed = await this.inbox.failedCount(agent.id).catch(() => 0);
       if (claimable === 0 && items.length === 0 && failed === 0) continue;
       pendingDeliveries.push({ agentId: agent.id, agentName: agent.name, claimable, claimed, failed });
-      if (claimable > 0) {
-        // 投递是「至少一次」：重启后接着办，重复处理由幂等键与检查点兜底
+      const paused = this.control.snapshot().agents[agent.id]?.autoActivation === 'paused';
+      if (claimable > 0 && this.control.allowsAutomaticExecution() && !paused) {
         void this.drainInbox(agent.id).catch(() => undefined);
       }
     }
+
+    this.executor.resumeRecovered((await this.registry.list()).map((agent) => agent.id));
+    this.inboxScheduler.start((await this.registry.list()).map(agent => agent.id));
 
     return { unresolvedInvocations, pendingDeliveries };
   }
@@ -659,59 +761,73 @@ export class AgentRuntime {
   private createSendToAgentTool() {
     return createSendToAgentTool({
       maxDepth: this.options.maxAgentChainDepth ?? DEFAULT_MAX_AGENT_DEPTH,
-      resolveTarget: async (wanted) => {
+      resolveTarget: async (wanted, callerId) => {
         const agents = await this.registry.list();
-        const agent =
-          agents.find((item) => item.id === wanted) ??
-          agents.find((item) => item.name === wanted.trim());
+        const agent = agents.find(item => item.id === wanted);
         if (agent) return { kind: 'agent' as const, id: agent.id, name: agent.name };
-
         const rooms = await this.workbench.listRooms();
-        const room =
-          rooms.find((item) => item.id === wanted) ??
-          rooms.find((item) => item.name === wanted.trim());
-        if (room) return { kind: 'room' as const, id: room.id, name: room.name };
-        return undefined;
+        const room = rooms.find(item => item.id === wanted);
+        if (room) {
+          if (!room.memberIds.includes(callerId)) throw new Error('你不在这个群');
+          return { kind: 'room' as const, id: room.id, name: room.name };
+        }
+        const matches = [
+          ...agents.filter(item => item.name === wanted).map(item => ({ kind: 'agent' as const, id: item.id, name: item.name })),
+          ...rooms.filter(item => item.memberIds.includes(callerId) && item.name === wanted).map(item => ({ kind: 'room' as const, id: item.id, name: item.name })),
+        ];
+        if (matches.length > 1) throw new Error(`收件方名称有歧义，请使用 id：${matches.map(item => `${item.kind === 'agent' ? '同事' : '群'}「${item.name}」id=${item.id}`).join('；')}`);
+        return matches[0];
       },
-      dispatch: async ({ targetId, kind, text, priority, callerId, correlationId }) => {
+      dispatch: async ({ targetId, kind, text, images, priority, callerId, correlationId, depth, signal }) => {
         if (kind === 'agent') {
           const sender = await this.registry.get(callerId);
           const target = await this.registry.get(targetId);
-          await this.inbox.enqueue({
+          signal?.throwIfAborted();
+          if (!sender || !target) throw new Error('发信方或收件方不存在');
+          const submitted = await this.deliveries.submit({
+            actorId: callerId,
+            inputId: correlationId ?? `${callerId}:${targetId}`,
+            chainId: correlationId ?? callerId,
+            target: { kind: 'agent', id: targetId, nameAtSend: target.name },
+            payload: text,
+          });
+          if (submitted.kind !== 'accepted') throw new Error(submitted.code);
+          const letter = await this.inbox.enqueue({
+            id: submitted.receipt.deliveryId,
             toAgentId: targetId,
             fromAgentId: callerId,
             fromName: sender?.name ?? '同事',
+            fromActor: { kind: 'agent', id: sender.id, name: sender.name, color: sender.color, avatar: sender.avatar },
+            toActor: { kind: 'agent', id: target.id, name: target.name, color: target.color, avatar: target.avatar },
             text,
+            ...(images?.length ? { images } : {}),
             priority,
-            depth: 0,
+            depth: depth ?? 1,
             kind: 'message',
             ...(correlationId ? { correlationId } : {}),
           });
-          return `已投递给「${target?.name ?? targetId}」；发出去就结束，回复会作为之后的一个新回合回来。`;
+          await this.archiveLetter(letter);
+          await this.projector.project(submitted.receipt.actionId, {
+            from: { kind: 'agent', id: sender.id, name: sender.name, color: sender.color, avatar: sender.avatar },
+            to: { kind: 'agent', id: target.id, name: target.name, color: target.color, avatar: target.avatar },
+          }).catch(() => undefined);
+          this.inboxScheduler.watch(targetId);
+          return `已投递给「${target.name}」；发出去就结束，回复是之后的新回合。`;
         }
-        const result = await this.workbench.postToRoom(callerId, targetId, text);
-        const busyNote =
-          result.queued.length > 0
-            ? `（${result.queued.join('、')} 正忙，已排队等它空下来处理）`
-            : '';
-        return `已发到「${result.roomName}」，${result.called} 人进入回合：${result.spoke} 开口 / ${result.silent} 沉默${busyNote}`;
+        const result = await this.workbench.postToRoom(callerId, targetId, text, depth, signal);
+        return `已发到「${result.roomName}」。`;
       },
     });
   }
 
   /** 消费积压的同事来信（领取 → 处理 → 确认；搬至 InboxProcessor，此处保持兼容入口） */
   async drainInbox(agentId: string, options: SendOptions = {}): Promise<TurnResult | null> {
-    const opts = this.journaling(options, { agentId });
-    const result = await this.inboxProcessor.process(agentId, opts);
-    if (result) {
-      // 有活才干：空转不写事件日志
-      this.events.publish({
-        kind: 'run',
-        agentId,
-        payload: { phase: 'done', stopReason: result.stopReason },
-      });
+    if (!this.control.allowsAutomaticExecution()) {
+      this.inboxScheduler.watch(agentId);
+      return null;
     }
-    return result;
+    try { return await this.inboxProcessor.process(agentId, options); }
+    finally { this.inboxScheduler.watch(agentId); }
   }
 
   /** 未处理的来信数（含领取中，不含 failed） */
@@ -731,6 +847,41 @@ export class AgentRuntime {
 
   isBusy(agentId: string): boolean {
     return this.locks.has(agentId);
+  }
+
+  controlView(agentId: string) {
+    const snap = this.control.snapshot();
+    const agent = snap.agents[agentId];
+    return {
+      agentId,
+      autoActivation: agent?.autoActivation ?? 'enabled',
+      generation: agent?.generation ?? 0,
+      lastStopId: agent?.lastStopId,
+      held: Object.values(snap.tickets).filter((ticket) => ticket.agentId === agentId && ticket.state === 'revoked').length,
+      faulted: this.control.faulted,
+    };
+  }
+
+  stopOperation(stopId: string) {
+    return this.control.snapshot().stops[stopId];
+  }
+
+  requestAgentStop(agentId: string, commandId: string) {
+    return this.activation.requestStop({
+      commandId,
+      requestedBy: { kind: 'user', id: 'owner' },
+      scope: { kind: 'agent', agentId },
+    });
+  }
+
+  resumeAgent(command: Parameters<ActivationCoordinator['resumeSelected']>[0]) {
+    return this.activation.resumeSelected(command);
+  }
+
+  deliveryReceipt(receiptId: string): DeliveryReceipt | undefined {
+    const value = this.control.snapshot().receipts[receiptId];
+    if (!value || typeof value !== 'object' || !('receiptId' in value)) return undefined;
+    return value as DeliveryReceipt;
   }
 
   // ── 回合执行（搬至 RunExecutor，此处保持兼容入口）──

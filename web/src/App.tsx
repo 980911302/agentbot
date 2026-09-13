@@ -7,6 +7,7 @@ import { SettingsDialog } from './components/SettingsDialog';
 import { CreateDialog } from './components/CreateDialog';
 import { ConfirmDialog } from './components/ConfirmDialog';
 import { BotProfileDialog } from './components/BotProfileDialog';
+import { BotProfileDrawer } from './components/BotProfileDrawer';
 import { RenameDialog } from './components/RenameDialog';
 import { MemberPanel } from './components/MemberPanel';
 import { MemoryPanel } from './components/MemoryPanel';
@@ -20,6 +21,7 @@ import { errorMessage, uid } from './features/chat/message-reducer';
 import { ensureNotifyPermission } from './notify';
 import { useInteractions } from './features/interactions/use-interactions';
 import { useChatStream } from './features/chat/use-chat-stream';
+import { useChatEngine } from './features/chat/use-chat-engine';
 import { useEventStream } from './features/events/use-event-stream';
 import { useWorkspace } from './features/workspace/use-workspace';
 import type {
@@ -39,7 +41,9 @@ export default function App() {
 
   // 侧边栏 = 群（扇出）+ 智能体（1:1），全部来自后端
   const [activeChannelId, setActiveChannelId] = useState<string>('');
-  const [channelHistories, setChannelHistories] = useState<Record<string, DisplayMessage[]>>({});
+  const chatEngine = useChatEngine();
+  const channelHistories = chatEngine.histories;
+  const setChannelHistories = chatEngine.setHistories;
 
   // 工作台状态（E2.5d 拆出）：频道、轮询、未读、reloadChannel
   const {
@@ -53,15 +57,14 @@ export default function App() {
     setChannels,
     sidebarChannels,
     syncWorkspace,
-    reloadChannel,
   } = useWorkspace({
     activeChannelId,
-    setChannelHistories,
   });
-  /** 群回合：正在进入回合的成员（谁的回合谁的气泡在动） */
-  const [roundActive, setRoundActive] = useState<{ id: string; name: string; color: string } | null>(
-    null,
-  );
+  /** 群成员进行中也由运行记录推导；丢 round_end 时仍可由快照收口。 */
+  const roomRun = [...chatEngine.runs.values()].reverse().find(run => run.roomId === activeChannelId &&
+    run.kind === 'agent' && (run.status === 'queued' || run.status === 'running'));
+  const roomAgent = roomRun ? backendAgents.find(agent => agent.id === roomRun.agentId) : undefined;
+  const roundActive = roomAgent ? { id: roomAgent.id, name: roomAgent.name, color: roomAgent.color } : null;
   /** 回合/回复刚结束的短暂绿勾（done 的在场感） */
   const [doneFlash, setDoneFlash] = useState(false);
   /** 这一轮谁沉默了（沉默是合法结果，只做轻提示，不进正文） */
@@ -74,12 +77,13 @@ export default function App() {
   const [screenFull, setScreenFull] = useState(false);
   /** 抽屉卸载前先播完退出动画 */
   const drawerPresence = usePresence(screenOpen);
-  const [drawerTab, setDrawerTab] = useState<'screen' | 'memory' | 'members'>('screen');
+  const [drawerTab, setDrawerTab] = useState<'screen' | 'memory' | 'members' | 'profile'>('screen');
   const [memoryToken, setMemoryToken] = useState(0);
   /** 正在等用户回答的卡片（E2.5b 拆出） */
-  const { interactions, handleRequest, handleClose: closeInteraction, answer: answerRequest } = useInteractions();
+  const { interactions, handleRequest, handleClose: closeInteraction, answer: answerRequest } = useInteractions(chatEngine);
 
-  const { send, handleEntry, busy, liveText, liveChannelId } = useChatStream({
+  const { send, handleEntry, busy, respondingChannelIds, reloadChannel, resync } = useChatStream({
+    engine: chatEngine,
     getSession: () => ({
       activeAgentId,
       activeChannel,
@@ -87,27 +91,19 @@ export default function App() {
       model,
       ownerName,
     }),
-    getChannel: (channelId) => channels.find((item) => item.id === channelId),
-    setChannelHistories,
     setArtifacts,
     setNotices,
-    setRoundActive,
     setSilentNotes,
     agentsRef,
     handleInteractionRequest: handleRequest,
     handleInteractionClosed: closeInteraction,
     onMemoryBump: () => setMemoryToken((token) => token + 1),
     syncWorkspace,
-    reloadChannel,
   });
   // 独立事件订阅（E3.4 第二步）：发送只收回执，回合进度与结果都从这里来
   useEventStream({
     onEntry: handleEntry,
-    onResync: () => {
-      // 游标太旧/后端重启过：先重新取快照，再继续收事件
-      void reloadChannel(activeChannelId);
-      void syncWorkspace();
-    },
+    onResync: resync,
   });
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [newBotOpen, setNewBotOpen] = useState(false);
@@ -118,10 +114,23 @@ export default function App() {
   const [editingBot, setEditingBot] = useState<BotSummary | null>(null);
   const [renamingChannel, setRenamingChannel] = useState<ChannelItem | null>(null);
   const [model, setModel] = useState('');
-  /** 主人显示名：本地发言、群消息、侧栏都用它；存 localStorage */
+  /** 用户显示名：本地发言、群消息、侧栏都用它；存 localStorage */
   const [ownerName, setOwnerNameState] = useState(
-    () => localStorage.getItem('agentbot.ownerName') || '主人',
+    () => {
+      const stored = localStorage.getItem('agentbot.ownerName');
+      return stored && stored !== '主人' ? stored : 'linlin zhang';
+    },
   );
+  /** 侧边栏宽度与是否拖拽中（支持拖拽拉动并在 <160px 锁定折叠） */
+  const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
+    const saved = localStorage.getItem('agentbot.sidebarWidth');
+    if (saved) {
+      const parsed = Number(saved);
+      if (Number.isFinite(parsed) && parsed >= 64 && parsed <= 500) return parsed;
+    }
+    return 260;
+  });
+  const [isResizing, setIsResizing] = useState(false);
   const prevBusyRef = useRef(false);
 
   const activeChannel = useMemo<ChannelItem>(
@@ -137,6 +146,9 @@ export default function App() {
   );
 
   const currentMessages = channelHistories[activeChannelId] ?? [];
+  /** 当前频道是否还在等一条可见回复；后台记忆收尾不算。 */
+  const activeResponding = respondingChannelIds.includes(activeChannelId);
+  const activeLiveText = chatEngine.liveFor(activeChannelId);
 
   useEffect(() => {
     agentsRef.current = backendAgents;
@@ -176,30 +188,9 @@ export default function App() {
 
     void (async () => {
       try {
-        if (activeChannel?.kind === 'room') {
-          const messages = await api.fetchRoomMessages(activeChannelId);
-          if (cancelled) return;
-          setChannelHistories((prev) => ({
-            ...prev,
-            [activeChannelId]: messages.map((message) => ({
-              id: message.id,
-              role: message.senderKind === 'user' ? 'user' : 'assistant',
-              content: message.text,
-              senderName: message.senderName,
-              senderColor: message.senderColor,
-              toolCalls: [],
-              createdAt: new Date(message.createdAt).toISOString(),
-            })),
-          }));
-          return;
-        }
-
-        const detail = await api.fetchSession(activeChannelId);
+        const snapshot = await reloadChannel(activeChannelId);
         if (cancelled) return;
-        setChannelHistories((prev) => ({
-          ...prev,
-          [activeChannelId]: detail.messages,
-        }));
+        setArtifacts(snapshot?.channels[activeChannelId]?.artifacts ?? []);
       } catch {
         // 保持现有内容
       }
@@ -208,7 +199,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [activeChannel?.kind, activeChannelId]);
+  }, [activeChannel?.kind, activeChannelId, reloadChannel]);
 
   /** 群 + 智能体 → 侧边栏条目 */
   useEffect(() => {
@@ -369,21 +360,35 @@ export default function App() {
   }, [deleting, pendingDelete, syncWorkspace]);
 
   /**
-   * 保存智能体资料（名字 / 职责 / 配色）。
-   * 成功就同步侧边栏与抽屉用的智能体表；失败把原因还给对话框展示。
+   * 保存智能体资料（名字 / 标签 / 描述 / 职责 / 配色）。
+   * 成功就同步侧边栏与抽屉用的智能体表；失败把原因还给调用方展示。
    */
   const saveBotProfile = useCallback(
-    async (input: { name: string; instructions: string; color: string }) => {
-      if (!editingBot) return '没有正在编辑的智能体';
+    async (
+      botId: string,
+      input: {
+        name?: string;
+        section?: string;
+        description?: string;
+        instructions?: string;
+        color?: string;
+        hidden?: boolean;
+      },
+    ) => {
       try {
-        const updated = await api.updateBot(editingBot.id, input);
+        const updated = await api.updateBot(botId, input);
         setBackendAgents((current) =>
           current.map((bot) => (bot.id === updated.id ? { ...bot, ...updated } : bot)),
         );
         setChannels((current) =>
           current.map((item) =>
             item.id === updated.id
-              ? { ...item, name: updated.name, color: updated.color, role: updated.role || item.role }
+              ? {
+                  ...item,
+                  name: updated.name ?? item.name,
+                  color: updated.color ?? item.color,
+                  role: updated.role || item.role,
+                }
               : item,
           ),
         );
@@ -392,7 +397,7 @@ export default function App() {
         return error instanceof Error ? error.message : String(error);
       }
     },
-    [editingBot],
+    [],
   );
 
   /** 群改名：群有独立的 PATCH；智能体改名走资料编辑 */
@@ -420,7 +425,7 @@ export default function App() {
   );
 
   const setOwnerName = useCallback((name: string) => {
-    const trimmed = name.trim() || '主人';
+    const trimmed = name.trim() || 'linlin zhang';
     localStorage.setItem('agentbot.ownerName', trimmed);
     setOwnerNameState(trimmed);
   }, []);
@@ -446,22 +451,28 @@ export default function App() {
     return {
       id: activeChannel.id,
       name: record?.name ?? activeChannel.name,
+      title: record?.title,
+      description: record?.description,
+      instructions: record?.instructions,
+      avatar: record?.avatar,
+      section: record?.section,
+      hidden: record?.hidden,
       role: record?.role ?? activeChannel.role ?? '',
       color: record?.color ?? activeChannel.color ?? '#a855f7',
-      status: busy ? (liveText ? 'thinking' : 'working') : (record?.status ?? 'idle'),
+      status: activeResponding ? (activeLiveText ? 'thinking' : 'working') : (record?.status ?? 'idle'),
       activity: runningTool ?? '',
       conversationCount: record?.conversationCount ?? 0,
       createdAt: record?.createdAt ?? '',
       updatedAt: record?.updatedAt ?? '',
     };
-  }, [activeChannel, backendAgents, busy, currentMessages, liveText]);
+  }, [activeChannel, activeLiveText, activeResponding, backendAgents, currentMessages]);
 
   /** 侧边栏数据 = 频道 + 未读数合并 */
 
   const composer = useMemo(
     () => (
       <Composer
-        busy={busy}
+        busy={activeResponding}
         botName={activeChannel.name}
         isGroup={activeChannel.kind === 'room'}
         members={activeChannel.members ?? []}
@@ -472,7 +483,7 @@ export default function App() {
         onModelChange={setModel}
       />
     ),
-    [activeChannel.name, activeChannel.kind, activeChannel.members, busy, model, models, send, tools],
+    [activeChannel.name, activeChannel.kind, activeChannel.members, activeResponding, model, models, send, tools],
   );
 
   const endpoint = useMemo(() => {
@@ -481,7 +492,10 @@ export default function App() {
   }, []);
 
   return (
-    <div className={`app${screenOpen && !screenFull ? ' with-screen' : ''}`}>
+    <div
+      className={`app${drawerPresence.mounted && !screenFull ? ' with-screen' : ''}${isResizing ? ' resizing' : ''}`}
+      style={{ '--sidebar-width': `${sidebarWidth}px` } as React.CSSProperties}
+    >
       {/* 1. 左侧导航栏 */}
       <Sidebar
         channels={sidebarChannels}
@@ -500,13 +514,24 @@ export default function App() {
         onEdit={(channel) => {
           if (busy) return;
           const bot = backendAgents.find((item) => item.id === channel.id) ?? null;
-          if (bot) setEditingBot(bot);
+          if (bot) {
+            setActiveChannelId(channel.id);
+            setDrawerTab('profile');
+            setScreenOpen(true);
+            setScreenFull(false);
+          }
         }}
         onRename={(channel) => {
           if (busy) return;
           setRenamingChannel(channel);
         }}
         ownerName={ownerName}
+        width={sidebarWidth}
+        onResize={(w) => {
+          setSidebarWidth(w);
+          localStorage.setItem('agentbot.sidebarWidth', String(w));
+        }}
+        onResizingChange={setIsResizing}
       />
 
       {/* 2. 主消息区 */}
@@ -517,11 +542,22 @@ export default function App() {
         channelTitle={activeChannel.name}
         messages={currentMessages}
         artifacts={artifacts}
-        busy={busy}
-        liveText={liveChannelId === activeChannelId ? liveText : ''}
+        busy={activeResponding}
+        liveText={activeLiveText}
         notices={notices[activeChannelId] ?? []}
         composer={composer}
-        onToggleInfo={() => setScreenOpen((prev) => !prev)}
+        onToggleInfo={() => {
+          if (screenOpen) {
+            if (drawerTab === 'profile') {
+              setDrawerTab('screen');
+            } else {
+              setScreenOpen(false);
+            }
+          } else {
+            setDrawerTab('screen');
+            setScreenOpen(true);
+          }
+        }}
         isGroup={activeChannel.kind === 'room'}
         members={activeChannel.members ?? []}
         channelKey={activeChannelId}
@@ -532,14 +568,19 @@ export default function App() {
           activeChannel.kind === 'room'
             ? undefined
             : () => {
-                const bot = backendAgents.find((item) => item.id === activeChannel.id) ?? null;
-                if (bot) setEditingBot(bot);
+                if (screenOpen && drawerTab === 'profile') {
+                  setScreenOpen(false);
+                } else {
+                  setDrawerTab('profile');
+                  setScreenOpen(true);
+                  setScreenFull(false);
+                }
               }
         }
-        onRetry={(text) => void send(text)}
+        onRetry={(text, clientMessageId) => void send(text, clientMessageId)}
       />
 
-      {/* 3. 右侧抽屉：Bot 的屏幕 / 它的记忆 */}
+      {/* 3. 右侧抽屉：Bot 的屏幕 / 它的记忆 / 资料 */}
       {drawerPresence.mounted ? (
         screenFull && drawerTab === 'screen' ? (
           <BotScreen
@@ -556,6 +597,15 @@ export default function App() {
         ) : (
           <div className={`drawer ${drawerPresence.state}`}>
             <div className="drawer-tabs">
+              {activeChannel.kind !== 'room' ? (
+                <button
+                  type="button"
+                  className={`drawer-tab${drawerTab === 'profile' ? ' active' : ''}`}
+                  onClick={() => setDrawerTab('profile')}
+                >
+                  资料
+                </button>
+              ) : null}
               <button
                 type="button"
                 className={`drawer-tab${drawerTab === 'screen' ? ' active' : ''}`}
@@ -593,37 +643,46 @@ export default function App() {
             </div>
 
             <div className="swap" key={drawerTab}>
-            {drawerTab === 'screen' ? (
-              <BotScreen
-                bot={currentBotSummary}
-                messages={currentMessages}
-                artifacts={artifacts}
-                fullscreen={false}
-                onToggleFullscreen={() => setScreenFull(true)}
-                onClose={() => setScreenOpen(false)}
-              />
-            ) : drawerTab === 'members' && activeRoom ? (
-              <MemberPanel
-                room={activeRoom}
-                agents={backendAgents}
-                memberLimit={roomMemberLimit}
-                busy={busy}
-                onSave={(ids) => void saveMembers(activeRoom.id, ids)}
-                onClose={() => setScreenOpen(false)}
-              />
-            ) : activeAgentId ? (
-              <MemoryPanel
-                agentId={activeAgentId}
-                agentName={activeChannel.name}
-                refreshToken={memoryToken}
-                onClose={() => setScreenOpen(false)}
-              />
-            ) : (
-              <div className="drawer">
-                <p className="memory-empty">后端未连接，暂时读不到记忆</p>
-              </div>
-            )}
-            </div>
+              {drawerTab === 'profile' ? (
+                <BotProfileDrawer
+                  bot={currentBotSummary}
+                  onClose={() => {
+                    setScreenOpen(false);
+                    setScreenFull(false);
+                  }}
+                  onSave={saveBotProfile}
+                />
+              ) : drawerTab === 'screen' ? (
+                    <BotScreen
+                      bot={currentBotSummary}
+                      messages={currentMessages}
+                      artifacts={artifacts}
+                      fullscreen={false}
+                      onToggleFullscreen={() => setScreenFull(true)}
+                      onClose={() => setScreenOpen(false)}
+                    />
+                  ) : drawerTab === 'members' && activeRoom ? (
+                    <MemberPanel
+                      room={activeRoom}
+                      agents={backendAgents}
+                      memberLimit={roomMemberLimit}
+                      busy={busy}
+                      onSave={(ids) => void saveMembers(activeRoom.id, ids)}
+                      onClose={() => setScreenOpen(false)}
+                    />
+                  ) : activeAgentId ? (
+                    <MemoryPanel
+                      agentId={activeAgentId}
+                      agentName={activeChannel.name}
+                      refreshToken={memoryToken}
+                      onClose={() => setScreenOpen(false)}
+                    />
+                  ) : (
+                    <div className="drawer">
+                      <p className="memory-empty">后端未连接，暂时读不到记忆</p>
+                    </div>
+                  )}
+                </div>
           </div>
         )
       ) : null}
@@ -678,17 +737,18 @@ export default function App() {
       <BotProfileDialog
         bot={editingBot}
         onClose={() => setEditingBot(null)}
-        onSave={saveBotProfile}
+        onSave={(input) =>
+          editingBot ? saveBotProfile(editingBot.id, input) : Promise.resolve('没有正在编辑的智能体')
+        }
       />
 
-      {renamingChannel ? (
-        <RenameDialog
-          title="重命名群"
-          initial={renamingChannel.name}
-          onClose={() => setRenamingChannel(null)}
-          onSubmit={submitRoomRename}
-        />
-      ) : null}
+      <RenameDialog
+        title="重命名群"
+        initial={renamingChannel?.name ?? ''}
+        open={renamingChannel !== null}
+        onClose={() => setRenamingChannel(null)}
+        onSubmit={submitRoomRename}
+      />
     </div>
   );
 }

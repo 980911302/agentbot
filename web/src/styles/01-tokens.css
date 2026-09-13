@@ -7,6 +7,7 @@
     'Microsoft YaHei', sans-serif;
   --mono: 'JetBrains Mono', 'Fira Code', 'IBM Plex Mono', SFMono-Regular, Menlo, Consolas, monospace;
   --ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
 
   --r-xs: 4px;
@@ -24,52 +25,59 @@
 /* ── Dark Theme (Default) ─────────────────────────────────── */
 :root,
 :root[data-theme='dark'] {
-  --bg: #0d0f14;
-  --bg-sidebar: #11141b;
-  --sidebar-border: #1a1e28;
-  --panel: #161922;
-  --raised: #1c202c;
-  --sunken: #090a0e;
-  --hover: rgba(255, 255, 255, 0.06);
-  --active: rgba(255, 255, 255, 0.1);
+  --bg: #000000;                     /* 聊天主界面大背景：极致纯黑 #000000 */
+  --bg-sidebar: #111111;             /* 侧边栏背景：深黑灰 #111111 */
+  --sidebar-border: rgba(255, 255, 255, 0.06);
+  --panel: #000000;                  /* 顶栏/窗口栏：极致纯黑 #000000 */
+  --raised: #2f2f2f;
+  --sunken: #232323;                 /* 搜索框等内凹块：#232323 */
+  --hover: rgba(255, 255, 255, 0.05);
+  --active: #313131;                 /* 选中项背景：#313131 */
 
-  --fg: #f3f4f6;
-  --fg-muted: #949ca9;
-  --fg-faint: #5d6575;
+  --fg: #ededed;
+  --fg-muted: #8e8e93;
+  --fg-faint: #636366;
 
-  --line: rgba(255, 255, 255, 0.08);
-  --line-strong: rgba(255, 255, 255, 0.16);
+  --line: rgba(255, 255, 255, 0.07);
+  --line-strong: rgba(255, 255, 255, 0.14);
 
-  --accent: #a855f7;
-  --accent-hover: #b86bf9;
-  --accent-soft: rgba(168, 85, 247, 0.16);
-  --accent-glow: rgba(168, 85, 247, 0.35);
+  --accent: #8b5cf6;
+  --accent-hover: #9d74f8;
+  --accent-soft: rgba(139, 92, 246, 0.16);
+  --accent-glow: rgba(139, 92, 246, 0.35);
 
-  --bubble-user: #26233a;
-  --bubble-user-border: rgba(168, 85, 247, 0.3);
-  --bubble-user-fg: #f5f3ff;
+  --pill-blue: #469ffe;              /* 未读药丸与指示蓝点：#469ffe */
+  --pill-blue-hover: #3b8fe8;
 
-  --bubble-assistant: #171a23;
+  --bubble-user: #343438;            /* 用户消息气泡：深灰 #343438 */
+  --bubble-user-border: rgba(255, 255, 255, 0.08);
+  --bubble-user-fg: #ffffff;
+
+  --bubble-assistant: #202024;       /* 机器人消息气泡：深灰黑圆角气泡 #202024 */
   --bubble-assistant-border: rgba(255, 255, 255, 0.07);
-  --bubble-assistant-fg: #e2e8f0;
+  --bubble-assistant-fg: #ededed;
 
-  --composer-bg: #161922;
-  --composer-border: rgba(255, 255, 255, 0.1);
-  --composer-fade: linear-gradient(to top, #0d0f14 65%, transparent 100%);
+  --code-inline-bg: #4f393b;         /* 行内代码背景：暗灰红 #4f393b */
+  --code-inline-fg: #ff5767;         /* 行内代码文字：草莓红 #ff5767 */
+  --code-inline-border: transparent;
 
-  --card-bg: #141720;
-  --card-border: rgba(255, 255, 255, 0.08);
+  --composer-bg: #2f2f2f;            /* 输入框胶囊背景：#2f2f2f */
+  --composer-border: rgba(255, 255, 255, 0.08);
+  --composer-fade: linear-gradient(to top, #000000 70%, rgba(0, 0, 0, 0) 100%);
 
-  --code-bg: #090a0e;
-  --code-border: rgba(255, 255, 255, 0.08);
+  --card-bg: #202020;
+  --card-border: rgba(255, 255, 255, 0.07);
 
-  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.3);
-  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.45);
-  --shadow-lg: 0 20px 60px rgba(0, 0, 0, 0.65);
+  --code-bg: #1a1a1a;
+  --code-border: rgba(255, 255, 255, 0.07);
 
-  --ok: #34d399;
-  --warn: #fbbf24;
-  --bad: #f87171;
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.25);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.38);
+  --shadow-lg: 0 20px 60px rgba(0, 0, 0, 0.55);
+
+  --ok: #30d158;
+  --warn: #ffd60a;
+  --bad: #ff453a;
 }
 
 /* ── Light Theme ─────────────────────────────────────────── */

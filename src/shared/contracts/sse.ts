@@ -25,14 +25,18 @@ export type MessageContent =
       result: string;
       durationMs: number;
       ok: boolean;
+      /** 可选以兼容旧消息；新执行不再根据 result 的文字前缀判断状态。 */
+      outcome?: Omit<import('./tool-result.js').ToolResult, 'content'>;
     };
 
 /** 一条消息的线上形状（后端持久化与 SSE 下发共用） */
 export interface Message {
   id: string;
+  runId?: string;
   agentId: string;
   role: MessageRole;
   content: MessageContent;
+  images?: import('./input-image.js').InputImage[];
   createdAt: number;
   /** 这一轮来自哪个房间；私聊为空 */
   roomId?: string;
@@ -41,6 +45,10 @@ export interface Message {
   speaker?: string;
   /** 这一轮是由什么触发的 */
   source?: 'user' | 'room' | 'agent';
+  /** 真实发送者，与模型 role 分离；旧消息缺省按 source 保守展示。 */
+  sender?: import('./message-identity.js').MessageActor;
+  /** 关联原始来信；UI 使用往来记录，避免将模型输入再显示一次。 */
+  correspondenceIds?: string[];
   /** 客户端幂等键（E3.2：重复提交返回原消息） */
   clientMessageId?: string;
 }
@@ -92,6 +100,7 @@ export interface MemoryAddedRef {
 
 /** AgentEvent —— `event: event` 帧的载荷（私聊 + 群回合共用） */
 export type AgentEvent =
+  | { type: 'correspondence'; transfer: import('./message-identity.js').Correspondence }
   | { type: 'context'; stats: ContextStats }
   | { type: 'interaction'; request: InteractionRequest }
   | { type: 'interaction_closed'; id: string; answered: boolean }
@@ -105,6 +114,7 @@ export type AgentEvent =
 export type StopReason =
   | 'final_answer'
   | 'max_iterations'
+  | 'tool_limit'
   | 'parked'
   | 'stopped'
   | 'cancelled'
@@ -116,12 +126,14 @@ export interface RunResult {
   iterations: number;
   stopReason: StopReason;
   usedTools?: string[];
+  taskId?: string;
 }
 
 /** SSE 帧名 */
 export type SseFrameName = 'event' | 'room' | 'done' | 'error';
 
 const AGENT_EVENT_TYPES = new Set([
+  'correspondence',
   'context',
   'interaction',
   'interaction_closed',

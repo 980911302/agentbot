@@ -57,6 +57,13 @@ export interface AgentRuntimeOptions {
 }
 
 export interface SendOptions {
+  /** 内部运行身份；不从 HTTP 请求直接接受。 */
+  runId?: string;
+  messageId?: string;
+  /** 仅内部代群发言传入；HTTP 不接收此字段，发送者必须仍在群里。 */
+  roomSenderId?: string;
+  /** 显式续接已停止任务，不自动重放副作用。 */
+  resumeTaskId?: string;
   model?: string;
   onEvent?: AgentEventHandler;
   onRoomEvent?: RoomEventHandler;
@@ -67,6 +74,8 @@ export interface SendOptions {
   ownerName?: string;
   /** 这些成员跳过这一轮（工作台代发时排除调用者自己） */
   excludeAgentIds?: string[];
+  /** 内部协作链深度，群转发不能把计数清零。 */
+  agentChainDepth?: number;
   /** 幂等键（E3.2）：重复提交返回原消息 */
   clientMessageId?: string;
 }
@@ -84,14 +93,7 @@ export type TaskTree = RunTreeRecord;
  * 收信回执（E3.4 第二步）：HTTP 立刻 202 返回这个，回合在后台继续跑。
  * receiptSeq 是受理时的日志游标——客户端从这里往后订阅就不会漏事件。
  */
-export interface Receipt {
-  /** 已落盘的用户消息（私聊）；群消息的 id 由 room_message 事件带回 */
-  messageId?: string;
-  agentId?: string;
-  roomId?: string;
-  receiptSeq: number;
-  duplicate: boolean;
-}
+export type Receipt = import('../../shared/contracts/chat-state.js').ChatReceipt;
 
 /** 已受理、待执行的回合：execute 由调用方决定何时跑（HTTP 后台；CLI/测试立刻） */
 export interface AcceptedRun<T> {
@@ -120,7 +122,7 @@ export interface PendingStop {
   options: SendOptions;
   /** true = 发起者是用户（要回「在停/停完了」）；false = 上级停止令（要回 stop-ack） */
   notifyUser: boolean;
-  replyTo?: { agentId: string; name: string };
+  replyTo?: { agentId: string; name: string; treeId?: string };
   resolve?: (result: SendResult) => void;
 }
 

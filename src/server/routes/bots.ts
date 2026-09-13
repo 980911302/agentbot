@@ -72,7 +72,11 @@ export async function handleBotItem(
     const updated = await context.runtime.registry.update(record.id, {
       name: readString(body.name),
       instructions: readString(body.instructions) ?? readString(body.role),
+      description: readString(body.description),
+      section: readString(body.section),
       color: readString(body.color),
+      avatar: readString(body.avatar),
+      hidden: typeof body.hidden === 'boolean' ? body.hidden : undefined,
     });
     json(response, 200, {
       bot: updated

@@ -1,7 +1,35 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
 import { composeIdentity } from '../src/context/builder.js';
-import { buildAgentBrief, buildRoomBrief } from '../src/room/turn.js';
+import { BASE_PROMPT, composeResumeBrief, composeSystem } from '../src/context/prompt-renderer.js';
+import { ROOM_SKILL, buildAgentBrief, buildRoomBrief } from '../src/room/turn.js';
+
+describe('产品层提示词', () => {
+  it('BASE_PROMPT 在身份和职责之前，且允许持续推进大项目', () => {
+    const system = composeSystem({ identity: 'IDENTITY', instructions: 'DUTY' });
+    assert.ok(system.startsWith(BASE_PROMPT));
+    assert.ok(system.indexOf(BASE_PROMPT) < system.indexOf('IDENTITY'));
+    assert.ok(system.indexOf('IDENTITY') < system.indexOf('DUTY'));
+    assert.ok(BASE_PROMPT.includes('大项目'));
+    assert.ok(BASE_PROMPT.includes('end_turn=true'));
+    assert.ok(BASE_PROMPT.includes('问候、闲聊、简短确认'));
+    assert.ok(BASE_PROMPT.includes('一条答完'));
+    assert.ok(BASE_PROMPT.includes('不自动改写成“可执行任务”'));
+  });
+
+  it('群规则只使用统一出口，零出口就是沉默', () => {
+    assert.ok(ROOM_SKILL.includes('SendToUser'));
+    assert.ok(ROOM_SKILL.includes('沉默'));
+    assert.ok(!ROOM_SKILL.includes('stay_silent'));
+  });
+
+  it('恢复简报带回原任务并要求避免重做', () => {
+    const brief = composeResumeBrief('继续改登录模块');
+    assert.ok(brief.includes('继续改登录模块'));
+    assert.ok(brief.includes('不要重做'));
+    assert.ok(brief.includes('最新意图'));
+  });
+});
 
 /**
  * 回归：智能体必须知道「我是谁」。
@@ -105,5 +133,8 @@ describe('群回合里的自我认知', () => {
     const brief = buildAgentBrief({ fromName: '知识库服务', depth: 1, maxDepth: 3 });
     assert.ok(brief.includes('知识库服务'));
     assert.ok(brief.includes('1/3'));
+    assert.ok(brief.includes('问候、闲聊'));
+    assert.ok(brief.includes('只有明确请求你做事时才开始执行'));
+    assert.ok(brief.includes('不再转发'));
   });
 });

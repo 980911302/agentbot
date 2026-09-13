@@ -74,3 +74,24 @@ describe('OpenAIProvider 流式（onDelta）', () => {
     }
   });
 });
+
+describe('模型响应资源边界', () => {
+  for (const [name, payload, stream, pattern] of [
+    ['流提前断开不能当作完成', 'data: {"choices":[{"delta":{"content":"半截"}}]}\n\n', true, /结束标记/],
+    ['非法 SSE JSON 明确报错', 'data: {bad-json}\n\n', true, /非法 JSON/],
+    ['超长正文停止聚合', 'data: ' + JSON.stringify({ choices: [{ delta: { content: 'x'.repeat(64001) } }] }) + '\n\n', true, /64000/],
+    ['超大 JSON 响应停止读取', 'x'.repeat(512 * 1024 + 1), false, /512KiB/],
+  ] as const) {
+    it(name, async () => {
+      const server = createServer((_request, response) => {
+        response.writeHead(200, { 'content-type': stream ? 'text/event-stream' : 'application/json' });
+        response.end(payload);
+      });
+      await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+      try {
+        const provider = new OpenAIProvider({ apiKey: 'test-only', model: 'fake', baseURL: `http://127.0.0.1:${(server.address() as AddressInfo).port}` });
+        await assert.rejects(() => provider.chat([{ role: 'user', content: 'test' }], stream ? { onDelta: () => undefined } : {}), pattern);
+      } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
+    });
+  }
+});

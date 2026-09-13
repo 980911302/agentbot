@@ -72,6 +72,7 @@ export interface DeliveryRoomContext {
   roomId: string;
   roomName: string;
   roundId: string;
+  model?: string;
   /** 这条消息由谁触发（主人名或同事名） */
   speaker: string;
   /** 是否被点名（决定「必须开口」） */
@@ -86,8 +87,12 @@ export interface DeliveryItem {
   toAgentId: string;
   fromAgentId: string;
   fromName: string;
+  /** 发送时的身份快照，改名后历史仍可按稳定 id 追踪。 */
+  fromActor?: import('../shared/contracts/message-identity.js').MessageActor;
+  toActor?: import('../shared/contracts/message-identity.js').MessageActor;
   text: string;
   priority: boolean;
+  images?: import('../shared/contracts/input-image.js').InputImage[];
   depth: number;
   /** stop = 停止令（排最前、不进模型）；stop-ack = 下级回报；room = 排队的群回合；缺省 = 普通信 */
   kind?: 'message' | 'stop' | 'stop-ack' | 'room';
@@ -112,9 +117,23 @@ export interface DeliveryItem {
   leaseUntil?: number;
   lastError?: string;
   checkpoint?: DeliveryCheckpoint;
+  /** 执行处置与投递状态分离：暂停不能当成网络错误重试 */
+  disposition?: 'eligible' | 'held' | 'cancelled';
+  holdReason?:
+    | 'agent_paused'
+    | 'chain_paused'
+    | 'budget_exhausted'
+    | 'manual_review'
+    | 'legacy_unscoped'
+    | 'stale_activation'
+    | 'cancelled';
+  chainId?: string;
+  inputId?: string;
 }
 
 export interface DeliveryClaimInput {
+  /** 消费者一次只领一封，避免占住后续信的租约。缺省兼容批量管理接口。 */
+  limit?: number;
   /** 领取者标识（回合 / 执行实例） */
   owner: string;
   /** 领取期限（毫秒）：到期未确认视为中断 */
@@ -132,29 +151,39 @@ export interface DeliveryFailureInput {
   now?: number;
 }
 
+export interface DeliveryLease {
+  owner: string;
+  epoch: number;
+  /** 测试可注入时钟；业务调用省略。 */
+  now?: number;
+}
+
 export interface DeliveryPort {
-  enqueue(item: Omit<DeliveryItem, 'id' | 'createdAt'>): Promise<DeliveryItem>;
+  enqueue(item: Omit<DeliveryItem, 'id' | 'createdAt'> & { id?: string }): Promise<DeliveryItem>;
   /**
    * 原子领取：带执行权（owner）与期限（leaseMs），并取得递增 epoch。
    * 领取不删除内容；同一 agent 同一时刻只应有一个有效领取（活的租约会挡住后来的领取）。
    */
   claim(agentId: string, input: DeliveryClaimInput): Promise<DeliveryItem[]>;
   /** 处理形成持久检查点后确认；确认即出队（JSON 阶段不留在队列里） */
-  ack(agentId: string, ids: string[]): Promise<number>;
+  ack(agentId: string, ids: string[], lease: DeliveryLease): Promise<number>;
   /** 失败退回：有限退避；到达上限进 failed，不再自动重试 */
   nack(
     agentId: string,
     ids: string[],
     error: string,
     input: DeliveryFailureInput,
+    lease: DeliveryLease,
   ): Promise<{ failed: string[]; pending: string[] }>;
   /** 归还领取（忙等非失败原因）：不计次，立即回到可领取 */
-  release(agentId: string, ids: string[]): Promise<void>;
+  release(agentId: string, ids: string[], lease: DeliveryLease): Promise<void>;
+  renew(agentId: string, ids: string[], lease: DeliveryLease, leaseMs: number): Promise<void>;
   /** 记录持久检查点：这批信已被折成哪条消息 */
   checkpoint(
     agentId: string,
     ids: string[],
     patch: { messageId: string; turnId?: string; note?: string; at?: number },
+    lease: DeliveryLease,
   ): Promise<void>;
   /** 人工重试 failed：重置尝试预算 */
   retryFailed(agentId: string): Promise<number>;
@@ -205,6 +234,7 @@ export interface ToolInvocationRecord {
   durationMs?: number;
   resultSummary?: string;
   error?: string;
+  outcome?: Omit<import('../shared/contracts/tool-result.js').ToolResult, 'content'>;
 }
 
 export interface ToolInvocationStart {
@@ -222,7 +252,7 @@ export interface ToolInvocationPort {
   start(input: ToolInvocationStart): Promise<ToolInvocationRecord>;
   finish(
     id: string,
-    result: { status: 'ok' | 'error' | 'unknown'; summary?: string; error?: string; durationMs?: number },
+    result: { status: 'ok' | 'error' | 'unknown'; summary?: string; error?: string; durationMs?: number; outcome?: Omit<import('../shared/contracts/tool-result.js').ToolResult, 'content'> },
   ): Promise<ToolInvocationRecord | undefined>;
   /**
    * 没有结果的调用（started=本进程在飞；unknown=上次进程退出留下的）：
@@ -234,15 +264,16 @@ export interface ToolInvocationPort {
   list(limit?: number): Promise<ToolInvocationRecord[]>;
 }
 
-// ── Run 账本：回合/任务树记账（E3.1 先以内存实现作为唯一实现） ──
+// ── Run 账本：回合/任务树记账（运行时使用 JSON 持久实现） ──
 export interface RunTurnRecord {
   id: string;
+  continuation?: import('../agent/continuation.js').RunContinuation;
   agentId: string;
   source: 'user' | 'agent' | 'room' | 'resume';
   kind: 'normal' | 'stop';
   text: string;
   treeId: string;
-  status: 'running' | 'parked' | 'done' | 'cancelled';
+  status: 'running' | 'parked' | 'done' | 'cancelled' | 'incomplete' | 'failed' | 'resuming';
   /** 开始执行时取得的 epoch（E3.6）：旧执行的迟到写入凭它被拒 */
   leaseEpoch?: number;
   createdAt: number;
@@ -252,8 +283,15 @@ export interface RunTreeRecord {
   id: string;
   rootTurnId: string;
   agentId: string;
-  children: Array<{ agentId: string; via: 'dm' | 'room'; roomId?: string }>;
-  status: 'open' | 'cancelling' | 'cancelled';
+  children: Array<{
+    agentId: string;
+    via: 'dm' | 'room';
+    roomId?: string;
+    status?: 'pending' | 'completed' | 'failed';
+  }>;
+  /** 根回合已结束，但仍可能在等子投递收尾。 */
+  rootFinished?: boolean;
+  status: 'open' | 'completed' | 'failed' | 'cancelling' | 'cancelled' | 'incomplete';
   /** 自动续跑次数上限 3，防止打断-续跑打乒乓 */
   resumeCount: number;
   createdAt: number;

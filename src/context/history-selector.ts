@@ -1,6 +1,8 @@
 import type { Message, WorkingFile } from '../agent/types.js';
 import { messageText } from '../agent/types.js';
 import { estimateTokens } from './budget.js';
+import { attributedText } from '../shared/contracts/message-identity.js';
+import { IMAGE_CONTEXT_RESERVE } from '../shared/contracts/input-image.js';
 
 /**
  * history-selector（E2.4）：最近原文的挑选与度量。
@@ -32,14 +34,23 @@ export function groupMessages(messages: Message[]): MessageGroup[] {
       if (!group) continue; // 找不到父亲，丢弃
       group.messages.push(message);
       group.tokens += cost(message);
+      pending.delete(message.content.callId);
       continue;
     }
 
     groups.push({ messages: [message], tokens: cost(message) });
   }
 
-  // 补齐：有些 tool_calls 可能没等到结果（比如被中断），保留其调用记录即可
-  return groups;
+  // 未配齐的调用不能原样发给模型：只保留已完成的 call/result 对。
+  return groups.flatMap(group => {
+    const first = group.messages[0];
+    if (first?.content.type !== 'tool_calls') return [group];
+    const completed = new Set(group.messages.flatMap(message => message.content.type === 'tool_result' ? [message.content.callId] : []));
+    const calls = first.content.calls.filter(call => completed.has(call.id));
+    if (!calls.length) return [];
+    const messages = [{ ...first, content: { ...first.content, calls } }, ...group.messages.slice(1)];
+    return [{ messages, tokens: messages.reduce((total, message) => total + cost(message), 0) }];
+  });
 }
 
 export function trimRecentGroups(
@@ -54,7 +65,7 @@ export function trimRecentGroups(
   for (let index = groups.length - 1; index >= 0; index -= 1) {
     const group = groups[index];
     if (!group) continue;
-    if (kept.length > 0 && tokens + group.tokens > maxTokens) break;
+    if (tokens + group.tokens > maxTokens) break;
     kept.unshift(group);
     tokens += group.tokens;
   }
@@ -64,7 +75,7 @@ export function trimRecentGroups(
 }
 
 function cost(message: Message): number {
-  return estimateTokens(messageText(message)) + 8;
+  return estimateTokens(messageText(message)) + 8 + (message.images?.length ?? 0) * IMAGE_CONTEXT_RESERVE;
 }
 
 /** 从最近消息的 tool_calls 参数里提取工作文件（最近 12 个） */
@@ -95,8 +106,5 @@ export function renderMessages(messages: Message[]): string {
  * 用「这是哪个房间」标一下（文档第 2 节）。
  */
 function renderMessage(message: Message): string {
-  const text = messageText(message);
-  if (!message.roomName) return text;
-  const who = message.speaker ? `${message.speaker} 在「${message.roomName}」` : `「${message.roomName}」`;
-  return `[${who}] ${text}`;
+  return attributedText(message, messageText(message));
 }

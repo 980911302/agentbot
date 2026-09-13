@@ -1,6 +1,7 @@
-import { createReadTool } from '../tools/builtin/files.js';
+import { createFileTools } from '../tools/builtin/files.js';
 import { createSendToUserTool } from '../tools/builtin/send-to-user.js';
 import { createShellTools } from '../tools/builtin/shell.js';
+import { createReadToolOutputTool } from '../tools/builtin/tool-output.js';
 import { createUpdateStateTools } from '../tools/builtin/update-state.js';
 import { createMemoryTools } from '../tools/builtin/memory.js';
 import { createWebTools } from '../tools/builtin/web.js';
@@ -9,6 +10,7 @@ import type { InteractionBroker } from '../interaction/broker.js';
 import type { MemoryStore } from '../memory/store.js';
 import type { SecretStore } from '../secret/store.js';
 import type { Tool } from '../tools/tool.js';
+import type { FinalizeResult } from './runtime/reply-finalizer.js';
 
 export interface AgentToolAccess {
   /** 工具需要知道同事叫什么（弹卡片时显示） */
@@ -26,6 +28,12 @@ export interface AgentToolAccess {
       projectIds?: string[];
     },
   ) => Promise<unknown>;
+  finalizeReply?: (input: {
+    actorId: string;
+    content: string;
+    deliveryRefs?: string[];
+    source?: 'user' | 'inbox' | 'room';
+  }) => Promise<FinalizeResult>;
 }
 
 export interface AgentToolOptions {
@@ -60,14 +68,22 @@ export function createAgentTools(options: AgentToolOptions): {
   };
 
   const tools: Tool<any>[] = [
-    ...createShellTools(),
-    createReadTool(),
+    createReadToolOutputTool(),
+    ...createShellTools(options.rootDir),
+    ...createFileTools(options.rootDir),
     createSendToUserTool({
       rootDir: options.rootDir,
       broker: options.broker,
       secrets: options.secrets,
       agentName: (agentId) => requireAccess().agentName(agentId),
       artifacts: new ArtifactService(),
+      finalizeReply: (input) => {
+        const finalize = requireAccess().finalizeReply;
+        if (!finalize) {
+          return Promise.resolve({ kind: 'ok', verifiedWholeText: false, statusLines: [] });
+        }
+        return finalize(input);
+      },
     }),
     ...createUpdateStateTools({
       memory: options.memory,

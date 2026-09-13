@@ -15,9 +15,12 @@ export function pickTier(
   const limit = TIER_POLICY[tier].inView;
   return refs
     .filter((ref) => ref.entry.tier === tier && filter(ref))
-    .sort((left, right) => scopeRank(left) - scopeRank(right) || right.entry.updatedAt - left.entry.updatedAt)
+    .sort((left, right) => scopeRank(left) - scopeRank(right) || right.entry.updatedAt - left.entry.updatedAt ||
+      compare(left.ownerId, right.ownerId) || compare(left.entry.id, right.entry.id))
     .slice(0, limit);
 }
+
+function compare(left: string, right: string): number { return left < right ? -1 : left > right ? 1 : 0; }
 
 function scopeRank(ref: MemoryRef): number {
   if (ref.scope === 'self') return 0;

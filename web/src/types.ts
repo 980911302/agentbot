@@ -39,6 +39,9 @@ export interface ArtifactView {
 
 export interface DisplayMessage {
   id: string;
+  runId?: string;
+  clientMessageId?: string;
+  retryClientMessageId?: string;
   role: 'user' | 'assistant';
   content: string;
   toolCalls: ToolCallView[];
@@ -49,6 +52,10 @@ export interface DisplayMessage {
   senderName?: string;
   senderColor?: string;
   senderAvatar?: string;
+  source?: WireMessage['source'];
+  sender?: import('../../src/shared/contracts/message-identity.js').MessageActor;
+  originLabel?: string;
+  correspondence?: import('../../src/shared/contracts/message-identity.js').Correspondence;
 }
 
 export interface SessionSummary {
@@ -66,6 +73,8 @@ export interface BotSummary {
   name: string;
   /** 一行简介 */
   title?: string;
+  /** 详细描述 */
+  description?: string;
   role: string;
   /** 完整职责文本（进系统提示词的那份）；编辑资料时用 */
   instructions?: string;
@@ -156,6 +165,7 @@ export interface RoomView {
 }
 
 export interface RoomMessage {
+  clientMessageId?: string;
   id: string;
   roomId: string;
   roundId: string;

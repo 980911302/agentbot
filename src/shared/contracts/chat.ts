@@ -6,6 +6,7 @@
  */
 
 export interface SendMessageInput {
+  resumeTaskId?: string;
   text: string;
   /** 幂等键：同键重复提交返回原消息（E3.2） */
   clientMessageId?: string;
@@ -40,10 +41,19 @@ export function parseSendMessageInput(body: unknown): ParseResult<SendMessageInp
   const botId = pickString(raw, ['botId', 'agentId']);
   const model = pickString(raw, ['model']);
   const clientMessageId = pickString(raw, ['clientMessageId']);
+  if (raw.clientMessageId !== undefined && (typeof raw.clientMessageId !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(raw.clientMessageId))) {
+    return { ok: false, error: 'clientMessageId 必须是 1–128 位字母、数字、下划线或连字符' };
+  }
+  if (text.length > 200_000) return { ok: false, error: '消息过长，请拆分发送' };
+  const resumeTaskId = pickString(raw, ['resumeTaskId']);
+  if (raw.resumeTaskId !== undefined && (typeof raw.resumeTaskId !== 'string' || !/^[0-9a-f-]{36}$/.test(raw.resumeTaskId))) {
+    return { ok: false, error: 'resumeTaskId 必须是有效的任务 id' };
+  }
   return {
     ok: true,
     value: {
       text,
+      ...(resumeTaskId ? { resumeTaskId } : {}),
       ...(botId !== undefined ? { botId } : {}),
       ...(model !== undefined ? { model } : {}),
       ...(clientMessageId !== undefined ? { clientMessageId } : {}),

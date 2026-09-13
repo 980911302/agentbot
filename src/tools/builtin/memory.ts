@@ -48,7 +48,7 @@ export function resolveProjectOwner(
  */
 export function createMemoryTools(memory: MemoryStore) {
   return [
-    defineTool<{ query: string; scope?: 'agent' | 'user' | 'all'; limit?: number }>({
+    defineTool<{ query: string; scope?: 'agent' | 'user' | 'all'; limit?: number; offset?: number; full?: boolean }>({
       name: 'RecallMemory',
       description: [
         '搜长期记忆：不在当前提示词里的旧日志、淡掉的笔记、以及所有助手写下的共用用户事实。',
@@ -59,20 +59,23 @@ export function createMemoryTools(memory: MemoryStore) {
         type: 'object',
         properties: {
           query: { type: 'string', description: '关键词' },
-          scope: { type: 'string', description: 'agent | user | all，默认 all' },
-          limit: { type: 'number', description: '最多返回几条，1~50，默认 20' },
+          scope: { type: 'string', enum: ['agent', 'user', 'all'], description: '默认 all' },
+          limit: { type: 'integer', minimum: 1, maximum: 20, description: '默认 10，最多 20 条；每条预览 400 字符' },
+          offset: { type: 'integer', minimum: 0, maximum: 1000 },
+          full: { type: 'boolean', description: '返回完整原文以便 forget 核对；启用时最多返回 4 条' },
         },
         required: ['query'],
       },
-      async execute({ query, scope, limit }, context) {
+      async execute({ query, scope, limit, offset = 0, full }, context) {
         const keyword = query?.trim();
         if (!keyword) throw new Error('query 不能为空');
-        const capped = Math.min(Math.max(limit ?? 20, 1), 50);
+        const capped = full ? Math.min(limit ?? 4, 4) : limit ?? 10;
 
         const refs = await memory.visibleTo(context.agentId, { projectIds: context.projectIds });
         const filtered =
           scope && scope !== 'all' ? refs.filter((ref) => ref.scope === (scope === 'agent' ? 'self' : scope)) : refs;
-        const hits = retrieveMemories(filtered, keyword, capped);
+        const found = retrieveMemories(filtered, keyword, offset + capped + 1);
+        const hits = found.slice(offset, offset + capped);
         if (hits.length === 0) return '没有找到相关记忆';
 
         await memory.touch(
@@ -84,9 +87,9 @@ export function createMemoryTools(memory: MemoryStore) {
         return hits
           .map((ref) => {
             const where = ref.scope === 'self' ? '我的笔记' : ref.scope === 'user' ? '共用' : '项目';
-            return `- [${where}/${ref.entry.tier}] ${ref.entry.text}`;
+            return `- [${where}/${ref.entry.tier}] ${full ? ref.entry.text : ref.entry.text.slice(0, 400)}${!full && ref.entry.text.length > 400 ? '…[预览截断，用 full=true 核对完整原文]' : ''}`;
           })
-          .join('\n');
+          .join('\n') + (found.length > offset + capped ? `\nnext_offset=${offset + capped}` : '');
       },
     }),
   ];

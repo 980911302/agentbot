@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { FakeProvider } from './fakes/fake-provider.js';
-import { waitFor } from './fakes/test-env.js';
+import { until, waitFor } from './fakes/test-env.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
@@ -70,7 +70,16 @@ describe('插话抢占式调度（见 docs/架构设计.md「插话、停止和�
     const firstResult = await first;
     assert.equal(firstResult.stopReason, 'parked');
 
-    // 每棵树最多续 3 次：不再出现新的调用
+    await until(async () => {
+      const raw = JSON.parse(await readFile(join(dir, 'runs', 'ledger.json'), 'utf8')) as {
+        trees: Array<{ agentId: string; status: string }>;
+      };
+      return raw.trees
+        .filter((tree) => tree.agentId === agentId)
+        .every((tree) => tree.status === 'completed');
+    }, '原回合和续跑回合的任务树都已收口');
+
+    // 续跑正常完成后不再出现新的调用
     await new Promise((resolve) => setTimeout(resolve, 120));
     assert.equal(fake.pendingCount, 3, '不应继续补跑');
   });
@@ -141,20 +150,15 @@ describe('停止令（见 docs/架构设计.md「插话、停止和等待」）'
     assert.equal(kidInbox[0]!.priority, true);
   });
 
-  it('停止令撞上正在跑的用户回合：排队等，回合结束立刻处理', async () => {
+  it('停止令撞上正在跑的用户回合：立即撤销，不等模型自然完成', async () => {
     const callIndex = fake.calls.length;
     const busy = runtime.send(agentId, '一件长活');
     await waitFor(() => fake.calls.length > callIndex, '长活开始');
 
-    const stopPromise = runtime.send(agentId, '停');
-    await new Promise((resolve) => setTimeout(resolve, 80));
-    assert.equal((await inbox.peek('kid')).length, 1, '排队期间不应已经下发');
-
-    fake.release(callIndex, TEXT);
-    await busy;
-    const stopResult = await stopPromise;
+    const stopResult = await runtime.send(agentId, '停');
     assert.equal(stopResult.stopReason, 'stopped');
-    assert.equal((await inbox.peek('kid')).length, 1, '长活没派过人，排队期间不应凭空下发');
+    const busyResult = await busy;
+    assert.notEqual(busyResult.stopReason, 'final_answer');
   });
 
   it('空闲时停止：回「在停/停完了」，没有树也照常收场', async () => {

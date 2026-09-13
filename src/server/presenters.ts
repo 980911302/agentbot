@@ -1,4 +1,5 @@
 import type { AgentRecord, Message } from '../agent/types.js';
+import { messageIdentity, type MessageIdentity, type Correspondence } from '../shared/contracts/message-identity.js';
 
 /**
  * Presenters（E2.1）：把领域对象折成 HTTP 响应的视图形状。
@@ -20,10 +21,14 @@ export function toBotView(record: AgentRecord, source: BotViewSource) {
     id: record.id,
     name: record.name,
     title: record.title,
+    description: record.description,
     role: record.title || record.instructions.slice(0, 30),
     /** 完整职责文本，资料编辑要用；role 只是展示截断 */
     instructions: record.instructions,
     color: record.color,
+    avatar: record.avatar,
+    section: record.section,
+    hidden: record.hidden,
     status: source.busy ? 'working' : 'idle',
     activity: '',
     conversationCount: source.conversationCount,
@@ -32,8 +37,10 @@ export function toBotView(record: AgentRecord, source: BotViewSource) {
   };
 }
 
-export interface DisplayMessageView {
+export interface DisplayMessageView extends MessageIdentity {
   id: string;
+  runId?: string;
+  clientMessageId?: string;
   role: 'user' | 'assistant';
   content: string;
   senderName?: string;
@@ -48,6 +55,12 @@ export interface DisplayMessageView {
   }>;
   createdAt: string;
   error?: boolean;
+  correspondence?: Correspondence;
+}
+
+export function toCorrespondenceView(transfer: Correspondence): DisplayMessageView {
+  return { id: `correspondence:${transfer.id}`, role: 'assistant', content: '', toolCalls: [],
+    createdAt: new Date(transfer.createdAt).toISOString(), correspondence: transfer };
 }
 
 /**
@@ -61,13 +74,15 @@ export function toDisplayMessages(raw: Message[]): DisplayMessageView[] {
     const content = message.content;
 
     if (content.type === 'text') {
+      if (message.role === 'user' && message.correspondenceIds?.length) continue;
       const text = content.text.trim();
       if (!text) continue;
       out.push({
         id: message.id,
-        role: message.role === 'user' ? 'user' : 'assistant',
+        runId: message.runId,
+        clientMessageId: message.clientMessageId,
+        ...messageIdentity(message),
         content: text,
-        senderName: message.speaker,
         toolCalls: [],
         createdAt: new Date(message.createdAt).toISOString(),
       });
@@ -77,6 +92,7 @@ export function toDisplayMessages(raw: Message[]): DisplayMessageView[] {
     if (content.type === 'tool_calls') {
       out.push({
         id: message.id,
+        runId: message.runId,
         role: 'assistant',
         content: '',
         toolCalls: content.calls.map((call) => ({
@@ -111,25 +127,32 @@ export interface ArtifactChip {
   createdAt: string;
 }
 
-/** 从最近消息里抽出「产物」清单（文件读写类工具的 path 参数） */
+const DELIVERED_FILE_PREFIX = '📎 已交付文件：';
+
+/** Read 的 path 是输入；只有 SendToUser 已交付的路径才是用户产物。 */
+export function deliveredFilePath(text: string): string | undefined {
+  for (const line of text.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith(DELIVERED_FILE_PREFIX)) continue;
+    const path = trimmed.slice(DELIVERED_FILE_PREFIX.length).trim();
+    if (path) return path;
+  }
+  return undefined;
+}
+
+/** 从对话里抽出真正已交付的文件，不把 Read 过的源码当产物。 */
 export function collectArtifacts(raw: Message[]): ArtifactChip[] {
   const seen = new Map<string, ArtifactChip>();
   for (const message of raw) {
     const content = message.content;
-    if (content.type !== 'tool_calls') continue;
-    for (const call of content.calls) {
-      let path: string | undefined;
-      try {
-        const parsed = JSON.parse(call.arguments || '{}') as { path?: unknown };
-        if (typeof parsed.path === 'string' && parsed.path) path = parsed.path;
-      } catch {
-        // 参数还不是合法 JSON
-      }
-      if (!path) continue;
-      if (!seen.has(path)) {
-        seen.set(path, { path, tool: call.name, createdAt: new Date(message.createdAt).toISOString() });
-      }
-    }
+    if (message.role !== 'assistant' || content.type !== 'text') continue;
+    const path = deliveredFilePath(content.text);
+    if (!path || seen.has(path)) continue;
+    seen.set(path, {
+      path,
+      tool: '文件',
+      createdAt: new Date(message.createdAt).toISOString(),
+    });
   }
   return [...seen.values()];
 }

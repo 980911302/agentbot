@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { PING_INTERVAL_MS, sse } from '../transport/index.js';
+import type { JournalEntry } from '../events/journal.js';
 import type { RouteContext } from './context.js';
 
 /**
@@ -18,6 +19,7 @@ export function handleEventsRoute(
   context: RouteContext,
 ): void {
   const raw = new URL(request.url ?? '/', 'http://localhost').searchParams.get('after');
+  const epoch = new URL(request.url ?? '/', 'http://localhost').searchParams.get('epoch');
   const parsed = raw === null || raw === '' ? Number.NaN : Number.parseInt(raw, 10);
   const after = Number.isFinite(parsed) ? parsed : context.runtime.events.latestSeq;
 
@@ -28,11 +30,22 @@ export function handleEventsRoute(
     'x-accel-buffering': 'no',
   });
 
+  // 先订阅再重放：避免事件恰好发生在 since() 和 subscribe() 之间而永久丢失。
+  // 当前操作都是同步的，buffer 主要防未来 sse 封装出现可重入调用。
+  let replaying = true;
+  const buffered: JournalEntry[] = [];
+  const unsubscribe = context.runtime.events.subscribe((entry) => {
+    if (replaying) buffered.push(entry);
+    else sse(response, 'entry', entry);
+  });
   const replay = context.runtime.events.since(after);
-  sse(response, 'ready', { latestSeq: replay.latestSeq, resync: replay.resync });
+  if (epoch && epoch !== context.runtime.events.epoch) { replay.resync = true; replay.entries = []; }
+  sse(response, 'ready', { epoch: context.runtime.events.epoch, latestSeq: replay.latestSeq, resync: replay.resync });
   for (const entry of replay.entries) sse(response, 'entry', entry);
-
-  const unsubscribe = context.runtime.events.subscribe((entry) => sse(response, 'entry', entry));
+  replaying = false;
+  for (const entry of buffered) {
+    if (entry.seq > replay.latestSeq) sse(response, 'entry', entry);
+  }
   const ping = setInterval(() => {
     if (!response.writableEnded && !response.destroyed) response.write(': ping\n\n');
   }, PING_INTERVAL_MS);

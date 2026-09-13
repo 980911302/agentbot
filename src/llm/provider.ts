@@ -3,6 +3,7 @@ import type { ToolCall, ToolSchema } from '../agent/types.js';
 export interface LLMMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string | null;
+  images?: import('../shared/contracts/input-image.js').InputImage[];
   toolCalls?: ToolCall[];
   toolCallId?: string;
 }

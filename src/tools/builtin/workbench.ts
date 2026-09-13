@@ -1,8 +1,8 @@
 import { defineTool } from '../tool.js';
 import type { Workbench } from '../../workbench/service.js';
 
-/** 每个回合最多新建几个同事，防止「偷偷建一堆没人要的」 */
-export const MAX_AGENTS_PER_TURN = 2;
+/** 每个用户请求默认最多新建几个同事；不再用 2 卡住明确的三人创建。 */
+export const MAX_AGENTS_PER_TURN = 6;
 
 /**
  * 工作台工具 —— 参见 docs/工具参考.md「协作与后台任务」。
@@ -12,17 +12,17 @@ export const MAX_AGENTS_PER_TURN = 2;
  * 同事/群的定位支持 id 或名字（名字回退解析在 SendToAgent / 工具内部完成）。
  */
 export function createWorkbenchTools(workbench: Workbench) {
-  const listSections = defineTool<Record<string, never>>({
+  const listSections = defineTool<{ offset?: number; limit?: number }>({
     name: 'ListSections',
     description: [
-      '列出侧边栏的分组（id + 显示名）。',
+      '分页列出侧边栏分组名称（名称就是当前 section_id），默认 20、最多 50 条。',
       'CreateAgent 可以用返回的 id 把新同事放进某个分组。当前还没有分组功能时返回空表。',
     ].join(' '),
-    parameters: { type: 'object', properties: {} },
-    async execute() {
+    parameters: { type: 'object', properties: { offset: { type: 'integer', minimum: 0 }, limit: { type: 'integer', minimum: 1, maximum: 50 } } },
+    async execute({ offset = 0, limit = 20 }) {
       const sections = await workbench.listSections();
       if (sections.length === 0) return '（还没有任何分组）';
-      return sections.join('\n');
+      return sections.slice(offset, offset + limit).map(section => section.slice(0, 150)).join('\n') + (offset + limit < sections.length ? `\nnext_offset=${offset + limit}` : '');
     },
   });
 
@@ -31,7 +31,7 @@ export function createWorkbenchTools(workbench: Workbench) {
     description: [
       '给用户新建一个同事（智能体）。它会有自己的记忆和对话线，建完立刻出现在侧边栏。',
       '返回 id，随即可用 SendToAgent 私发。',
-      '没有删除工具——用户会在侧边栏右键删。只在用户明确要求「建一个…」时调用；一个回合最多建 2 个。',
+      '没有删除工具——用户会在侧边栏右键删。只在用户明确要求「建一个…」时调用；同一用户请求最多建 6 个。',
       '如果只是想改现有同事，用 UpdateAgent，不要重名再建。',
     ].join(' '),
     parameters: {
@@ -101,7 +101,7 @@ export function createWorkbenchTools(workbench: Workbench) {
       type: 'object',
       properties: {
         name: { type: 'string', description: '群名' },
-        member_ids: { type: 'string', description: '成员 id 列表（JSON 数组），至少 1 个' },
+        member_ids: { type: 'array', minItems: 1, maxItems: 6, items: { type: 'string', maxLength: 100 }, description: '成员 id 数组，1–6 个' },
       },
       required: ['name', 'member_ids'],
     },
@@ -143,8 +143,8 @@ export function createWorkbenchTools(workbench: Workbench) {
       type: 'object',
       properties: {
         channel_id: { type: 'string', description: '群 id' },
-        add_member_ids: { type: 'string', description: '要拉进来的成员 id 列表（JSON 数组）' },
-        remove_member_ids: { type: 'string', description: '要移出的成员 id 列表（JSON 数组）' },
+        add_member_ids: { type: 'array', maxItems: 6, items: { type: 'string', maxLength: 100 } },
+        remove_member_ids: { type: 'array', maxItems: 6, items: { type: 'string', maxLength: 100 } },
       },
       required: ['channel_id'],
     },

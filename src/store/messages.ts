@@ -1,81 +1,36 @@
-import { mkdir, readFile, writeFile, rm } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import type { Message } from '../agent/types.js';
-
 import type { MessageRepositoryPort } from '../storage/ports.js';
+import { JsonlLog } from '../storage/jsonl-log.js';
 
 export class MessageStore implements MessageRepositoryPort {
-  private readonly cache = new Map<string, Message[]>();
-  private readonly messageDir: string;
+  private readonly log: JsonlLog<Message>;
+  constructor(dataDir: string) { this.log = new JsonlLog(join(dataDir, 'messages')); }
 
-  constructor(private readonly dataDir: string) {
-    this.messageDir = join(dataDir, 'messages');
-  }
-
-  private file(agentId: string): string {
-    return join(this.messageDir, `${agentId}.jsonl`);
-  }
-
-  async append(message: Message): Promise<void> {
-    const list = await this.load(message.agentId);
-    list.push(message);
-    const file = this.file(message.agentId);
-    await mkdir(dirname(file), { recursive: true });
-    await writeFile(file, `${JSON.stringify(message)}\n`, { flag: 'a' });
-  }
+  append(message: Message): Promise<void> { return this.log.append(message.agentId, message); }
 
   async list(agentId: string, limit?: number): Promise<Message[]> {
-    const list = await this.load(agentId);
-    if (!limit || limit >= list.length) return [...list];
-    return list.slice(list.length - limit);
+    const list = await this.log.list(agentId);
+    return !limit || limit >= list.length ? list : list.slice(-limit);
   }
 
   async recent(agentId: string, limit: number, excludeId?: string): Promise<Message[]> {
-    const list = await this.load(agentId);
-    const filtered = excludeId ? list.filter((message) => message.id !== excludeId) : list;
+    const list = await this.log.list(agentId);
+    const filtered = excludeId ? list.filter(message => message.id !== excludeId) : list;
     return filtered.slice(Math.max(0, filtered.length - limit));
   }
 
+  /** 自动续跑必须带回最近一次真实用户要求。 */
+  async latestUser(agentId: string): Promise<Message | undefined> {
+    return (await this.log.list(agentId)).findLast(message => message.role === 'user' && message.content.type === 'text' &&
+      (!message.source || message.source === 'user'));
+  }
+
   async olderThan(agentId: string, newestKeep: number, coveredUpTo: number): Promise<Message[]> {
-    const list = await this.load(agentId);
-    const cutoffIndex = Math.max(0, list.length - newestKeep);
-    return list
-      .slice(0, cutoffIndex)
-      .filter((message) => message.createdAt > coveredUpTo);
+    const list = await this.log.list(agentId);
+    return list.slice(0, Math.max(0, list.length - newestKeep)).filter(message => message.createdAt > coveredUpTo);
   }
 
-  async count(agentId: string): Promise<number> {
-    return (await this.load(agentId)).length;
-  }
-
-  async clear(agentId: string): Promise<void> {
-    this.cache.set(agentId, []);
-    await rm(this.file(agentId), { force: true });
-  }
-
-  private async load(agentId: string): Promise<Message[]> {
-    const cached = this.cache.get(agentId);
-    if (cached) return cached;
-
-    let raw = '';
-    try {
-      raw = await readFile(this.file(agentId), 'utf8');
-    } catch {
-      this.cache.set(agentId, []);
-      return this.cache.get(agentId) as Message[];
-    }
-
-    const list: Message[] = [];
-    for (const line of raw.split('\n')) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      try {
-        list.push(JSON.parse(trimmed) as Message);
-      } catch {
-        // skip corrupted line
-      }
-    }
-    this.cache.set(agentId, list);
-    return list;
-  }
+  async count(agentId: string): Promise<number> { return (await this.log.list(agentId)).length; }
+  clear(agentId: string): Promise<void> { return this.log.clear(agentId); }
 }

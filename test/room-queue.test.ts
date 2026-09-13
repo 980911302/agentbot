@@ -4,6 +4,7 @@ import { AgentRuntime } from '../src/server/runtime.js';
 import { DEFAULT_BUDGET } from '../src/context/budget.js';
 import { FakeProvider } from './fakes/fake-provider.js';
 import { tempDataDir, until, waitFor } from './fakes/test-env.js';
+import { defineTool } from '../src/tools/tool.js';
 
 /**
  * E3.7 群可靠投递：
@@ -13,12 +14,40 @@ import { tempDataDir, until, waitFor } from './fakes/test-env.js';
  */
 
 const TEXT = (text: string) => ({ content: text, toolCalls: [], finishReason: 'stop', usage: null });
+const OUT = (text: string) => ({
+  content: null,
+  toolCalls: [
+    {
+      id: `out-${text}`,
+      name: 'SendToUser',
+      arguments: JSON.stringify({ type: 'text', content: text, end_turn: true }),
+    },
+  ],
+  finishReason: 'tool_calls',
+  usage: null,
+});
 
 async function makeRoomRuntime(prefix: string) {
   const env = await tempDataDir(prefix);
   const fake = new FakeProvider();
   const runtime = new AgentRuntime({
-    tools: [],
+    tools: [
+      defineTool<{ type: string; content: string; end_turn?: boolean }>({
+        name: 'SendToUser',
+        description: '测试用统一出口',
+        parameters: { type: 'object', properties: { type: { type: 'string' }, content: { type: 'string' }, end_turn: { type: 'boolean' } }, required: ['type', 'content'] },
+        ephemeral: true,
+        execute: async (args, context) => {
+          await context.room?.publish?.(args.content);
+          context.room?.posts.push(args.content);
+          if (context.turnState && args.end_turn) {
+            context.turnState.lastVisibleText = args.content;
+            context.turnState.endTurnRequested = true;
+          }
+          return '已发送';
+        },
+      }),
+    ],
     createProvider: () => fake,
     dataDir: env.dir,
     defaultModel: 'fake',
@@ -51,7 +80,7 @@ describe('群可靠投递（E3.7）', () => {
 
       const round = runtime.postToRoom(room.id, `@甲 @乙 说个事`);
       await waitFor(() => fake.pendingCount >= 2, '甲进入回合');
-      fake.release(1, TEXT('甲收到'));
+      fake.release(1, OUT('甲收到'));
 
       const summary = await round;
       assert.deepEqual(
@@ -77,7 +106,7 @@ describe('群可靠投递（E3.7）', () => {
       fake.release(0, TEXT('长活做完了'));
       await busy;
       await waitFor(() => fake.pendingCount >= 3, '乙处理排队的群消息');
-      fake.release(2, TEXT('乙也收到'));
+      fake.release(2, OUT('乙也收到'));
       await until(async () => (await runtime.pendingMail(beta.id)) === 0, '排队的投递被确认');
       await until(
         async () => (await runtime.inbox.peek(beta.id)).every((item) => item.kind !== 'room'),
@@ -91,6 +120,14 @@ describe('群可靠投递（E3.7）', () => {
       );
       assert.ok(betaPost, '忙完之后发言要落回群里');
       assert.equal(betaPost.roundId, summary.roundId);
+      const deliveryEvent = runtime.events.since(0).entries.find(entry => entry.kind === 'room' &&
+        (entry.payload as any).message?.id === betaPost.id);
+      assert.ok(deliveryEvent?.runId, '延迟发言必须经过统一事件出口，不能只落库');
+      const deliveryRun = runtime.chatRuns.get(deliveryEvent.runId)!;
+      assert.equal(deliveryRun.parentRunId, undefined, '投递回合不挂发送者父运行；roundId 保留在群消息上');
+      assert.equal(deliveryRun.status, 'succeeded');
+      assert.equal(runtime.events.since(0).entries.filter(entry => entry.kind === 'room' &&
+        (entry.payload as any).message?.id === betaPost.id).length, 1, '子回合不能重复调用父日志包装器');
     } finally {
       await env.cleanup();
     }
@@ -166,7 +203,7 @@ describe('群可靠投递（E3.7）', () => {
 
       const round = runtime.postToRoom(room.id, '@甲 你安排一下');
       await waitFor(() => fake.pendingCount >= 2, '甲进入回合');
-      fake.release(1, TEXT(`好的 @${beta.name} 你来跟进`));
+      fake.release(1, OUT(`好的 @${beta.name} 你来跟进`));
       const summary = await round;
       await waitFor(
         () =>

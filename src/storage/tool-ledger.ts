@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import type {
   ToolInvocationPort,
   ToolInvocationRecord,
   ToolInvocationStart,
 } from './ports.js';
+import { isMissingFile, writeJsonAtomic } from './atomic-json.js';
 
 /**
  * 工具执行账本（E3.5）：JSON 实现。
@@ -19,8 +20,7 @@ export class JsonToolInvocationLedger implements ToolInvocationPort {
   private readonly limit: number;
   private records: ToolInvocationRecord[] = [];
   private loaded = false;
-  /** 顺序落盘：start/finish 可能并发，最后写入的胜出 */
-  private writing: Promise<void> = Promise.resolve();
+  private loading?: Promise<void>;
 
   constructor(dataDir: string, options: { limit?: number } = {}) {
     this.file = join(dataDir, 'tools', 'invocations.json');
@@ -44,7 +44,7 @@ export class JsonToolInvocationLedger implements ToolInvocationPort {
 
   async finish(
     id: string,
-    result: { status: 'ok' | 'error' | 'unknown'; summary?: string; error?: string; durationMs?: number },
+    result: { status: 'ok' | 'error' | 'unknown'; summary?: string; error?: string; durationMs?: number; outcome?: ToolInvocationRecord['outcome'] },
   ): Promise<ToolInvocationRecord | undefined> {
     await this.load();
     const record = this.records.find((item) => item.id === id);
@@ -54,6 +54,7 @@ export class JsonToolInvocationLedger implements ToolInvocationPort {
     if (result.durationMs !== undefined) record.durationMs = result.durationMs;
     if (result.summary) record.resultSummary = truncate(result.summary, 500);
     if (result.error) record.error = truncate(result.error, 500);
+    if (result.outcome) record.outcome = result.outcome;
     await this.save();
     return record;
   }
@@ -76,35 +77,37 @@ export class JsonToolInvocationLedger implements ToolInvocationPort {
 
   private async load(): Promise<void> {
     if (this.loaded) return;
-    this.loaded = true;
+    if (!this.loading) {
+      this.loading = (async () => {
+        try {
+          const raw = await readFile(this.file, 'utf8');
+          const parsed = JSON.parse(raw) as unknown;
+          if (Array.isArray(parsed)) this.records = parsed as ToolInvocationRecord[];
+        } catch (error) {
+          if (!isMissingFile(error)) throw error;
+        }
+        this.loaded = true;
+      })();
+    }
     try {
-      const raw = await readFile(this.file, 'utf8');
-      const parsed = JSON.parse(raw) as unknown;
-      if (Array.isArray(parsed)) this.records = parsed as ToolInvocationRecord[];
-    } catch {
-      // 还没有账本
+      await this.loading;
+    } finally {
+      if (this.loaded) this.loading = undefined;
     }
   }
 
   private prune(): void {
     if (this.records.length <= this.limit) return;
-    const open = this.records.filter((item) => item.status === 'started');
-    const closed = this.records.filter((item) => item.status !== 'started');
+    const open = this.records.filter((item) => item.status === 'started' || item.status === 'unknown');
+    const closed = this.records.filter((item) => item.status !== 'started' && item.status !== 'unknown');
     const room = Math.max(0, this.limit - open.length);
-    const kept = [...closed.slice(-room), ...open];
+    const kept = [...(room > 0 ? closed.slice(-room) : []), ...open];
     kept.sort((left, right) => left.startedAt - right.startedAt);
     this.records = kept;
   }
 
   private async save(): Promise<void> {
-    const payload = JSON.stringify(this.records, null, 2);
-    this.writing = this.writing
-      .then(async () => {
-        await mkdir(dirname(this.file), { recursive: true });
-        await writeFile(this.file, payload, 'utf8');
-      })
-      .catch(() => undefined);
-    await this.writing;
+    await writeJsonAtomic(this.file, this.records);
   }
 }
 

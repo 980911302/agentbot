@@ -1,6 +1,9 @@
 import { existsSync } from 'node:fs';
+import { setTimeout as delay } from 'node:timers/promises';
+import { resolve } from 'node:path';
 import { defineTool } from '../tool.js';
 import { ShellSessionManager } from '../services/shell-session-manager.js';
+import type { ToolResult } from '../result.js';
 
 /**
  * Shell / AwaitShell —— 对齐《内置工具清单.md》1.6 / H. AwaitShell。
@@ -10,16 +13,24 @@ import { ShellSessionManager } from '../services/shell-session-manager.js';
  * 同步等待与展示。停止令经任务树 registerJob 能杀掉同一个进程。
  */
 
-const SYNC_WAIT_CAP_MS = 300_000;
+const SYNC_WAIT_CAP_MS = 60_000;
 
-export function createShellTools() {
+export function createShellTools(rootDir = process.cwd()) {
   const manager = new ShellSessionManager();
 
-  const summarize = (shell: ReturnType<ShellSessionManager['start']>): string => {
-    const status = shell.done ? `已结束（exit ${shell.code ?? '?'}）` : '仍在后台运行';
-    return `shell_id: ${shell.id}\n命令：${shell.command}\n状态：${status}\n输出：\n${
-      manager.clip(shell.output) || '（暂无输出）'
-    }`;
+  const summarize = (shell: ReturnType<ShellSessionManager['start']>, offset?: number): ToolResult => {
+    const status = shell.done ? `已结束：${shell.state}（exit ${shell.code ?? '?'}）` : `${shell.state}（等待进程退出/仍在后台运行）`;
+    let record: ReturnType<ReturnType<ShellSessionManager['outputStore']>['get']> | undefined;
+    try { record = manager.outputStore().get(shell.id, shell.ownerId ?? ''); }
+    catch { /* 旧日志可按保留策略清理；不能因此把已执行的命令说成执行失败。 */ }
+    const failed = shell.state !== 'running' && (shell.state !== 'exited' || shell.code !== 0);
+    return { status: failed ? 'error' : shell.done ? 'ok' : 'running',
+      execution: { id: shell.id, state: shell.state, exitCode: shell.code, ...(shell.signal ? { signal: shell.signal } : {}) },
+      ...(failed ? { error: { code: shell.state === 'exited' ? 'SHELL_EXIT_NONZERO' : `SHELL_${shell.state.toUpperCase()}`, message: shell.logError ?? `命令 ${shell.state}，exit=${shell.code ?? 'unknown'}` } } : {}),
+      output: { truncated: !record || record.totalBytes > 8000, ...(record ? { handle: shell.id, totalBytes: record.totalBytes, retainedBytes: record.retainedBytes } : {}), storageTruncated: !record || record.storageTruncated },
+      content: `shell_id: ${shell.id}\n${record ? `output_id: ${shell.id}（ReadToolOutput 可分页/搜索原文；其 offset 为 UTF-8 字节）` : '[持久日志已清理或不可读；命令执行状态不变，勿因此重跑]'}\n${record?.storageTruncated ? '[存储配额已满，原文未完整保存]\n' : ''}${shell.logError ? shell.logError + '\n' : ''}命令摘要：${shell.command.slice(0, 240)}${shell.command.length > 240 ? '…[已省略完整命令]' : ''}\n状态：${status}\n输出：\n${
+      manager.read(shell, offset)
+    }${shell.done ? '' : '\n用 AwaitShell 继续等结果，后台运行不代表验证通过。'}` };
   };
 
   const shell = defineTool<{
@@ -27,11 +38,12 @@ export function createShellTools() {
     working_directory?: string;
     block_until_ms?: number;
     description?: string;
+    timeout_ms?: number;
   }>({
     name: 'Shell',
     description: [
       '在本机终端跑一条命令（git / npm / docker 等），直接执行、真出真回。',
-      '不要用它读文件、列目录或 sleep——那些有专用工具或不值得。',
+      '读写文件和定位代码优先用 Read / Write / Edit / ListFiles / SearchFiles。默认最长运行 10 分钟，硬上限 30 分钟。原始输出自动落盘，用 ReadToolOutput 分页/搜索；单日志最多 32MiB，总量 256MiB，默认保留 7 天，达到配额会明确标注。',
       '命令跑在用户的真实机器上：不要更新 git config，未经用户要求不要 commit / push，不要执行删除性、联网下载可执行文件这类高危操作。',
       '长命令把 block_until_ms 设 0（立刻转后台），用 AwaitShell 等结果。',
     ].join(' '),
@@ -40,7 +52,8 @@ export function createShellTools() {
       properties: {
         command: { type: 'string', description: '要执行的完整命令' },
         working_directory: { type: 'string', description: '工作目录（绝对路径），默认运行时根目录' },
-        block_until_ms: { type: 'number', description: '同步等待的毫秒数，默认 30000；0 = 立刻转后台' },
+        block_until_ms: { type: 'integer', minimum: 0, maximum: 60000, description: '同步等待，默认 30000；最多 60000；0 = 立刻转后台' },
+        timeout_ms: { type: 'integer', minimum: 1000, maximum: 1800000 },
         description: { type: 'string', description: '5~10 个字，说明这条命令干什么' },
       },
       required: ['command'],
@@ -48,19 +61,19 @@ export function createShellTools() {
     async execute(args, context) {
       const command = args.command?.trim();
       if (!command) throw new Error('command 不能为空');
-      const cwd = args.working_directory?.trim() || undefined;
+      const cwd = resolve(rootDir, args.working_directory?.trim() || '.');
       if (cwd && !existsSync(cwd)) throw new Error(`working_directory 不存在：${cwd}`);
 
       const started = manager.start(command, cwd, (abort, label) =>
         context.turnState?.registerJob?.(abort, label),
+        { signal: context.signal, timeoutMs: args.timeout_ms, ownerId: context.agentId, outputs: context.outputs },
       );
       const requested = Math.max(0, args.block_until_ms ?? 30_000);
       const deadline = Date.now() + Math.min(requested, SYNC_WAIT_CAP_MS);
       while (!started.done && Date.now() < deadline) {
-        await new Promise((resolve) => setTimeout(resolve, 200));
+        await delay(100, undefined, { signal: context.signal });
       }
-      if (started.done) return summarize(started);
-      return `命令仍在后台运行。\n${summarize(started)}\n用 AwaitShell（shell_id: ${started.id}）继续等它。`;
+      return summarize(started);
     },
   });
 
@@ -68,10 +81,12 @@ export function createShellTools() {
     shell_id?: string;
     block_until_ms?: number;
     pattern?: string;
+    offset?: number;
+    stop?: boolean;
   }>({
     name: 'AwaitShell',
     description: [
-      '等一个后台 Shell 结束（或等到输出里出现某个正则），再拿到全部输出。',
+      '等后台 Shell 结束，或输出出现指定字面文本；只返回新增输出，避免反复塞入旧日志。可指定 offset 重读缓冲内内容。stop=true 终止进程组。',
       '不要用它干等 Task 工人——那有 CheckSubagent。',
       '不传 shell_id 就等最新启动、还没结束的那个。',
     ].join(' '),
@@ -79,22 +94,25 @@ export function createShellTools() {
       type: 'object',
       properties: {
         shell_id: { type: 'string', description: 'Shell 返回的 id' },
-        block_until_ms: { type: 'number', description: '最多等多久，默认 30000' },
-        pattern: { type: 'string', description: 'RE2 正则：输出里一出现就提前返回' },
+        block_until_ms: { type: 'integer', minimum: 0, maximum: 60000, description: '默认 30000，最多 60000' },
+        pattern: { type: 'string', description: '字面文本，不是正则，出现即返回' },
+        offset: { type: 'integer', minimum: 0 },
+        stop: { type: 'boolean' },
       },
     },
-    async execute(args) {
-      const target = args.shell_id ? manager.get(args.shell_id) : manager.latestRunning();
+    async execute(args, context) {
+      const target = args.shell_id ? manager.get(args.shell_id, context.agentId, context.outputs) : manager.latestRunning(context.agentId);
       if (!target) {
-        throw new Error(`找不到这个 shell_id；最近的 shell：${manager.recentIds().join('、') || '（无）'}`);
+        throw new Error('找不到这个 shell_id，请使用 Shell 返回的完整 id');
       }
-      const pattern = args.pattern ? new RegExp(args.pattern) : null;
+      if (target.ownerId !== context.agentId) throw new Error('不能访问其他智能体的 Shell');
+      if (args.stop) target.kill();
       const deadline = Date.now() + Math.min(Math.max(args.block_until_ms ?? 30_000, 0), SYNC_WAIT_CAP_MS);
       while (!target.done && Date.now() < deadline) {
-        if (pattern && pattern.test(target.output)) break;
-        await new Promise((resolve) => setTimeout(resolve, 200));
+        if (args.pattern && target.output.includes(args.pattern)) break;
+        await delay(100, undefined, { signal: context.signal });
       }
-      return summarize(target);
+      return summarize(target, args.offset);
     },
   });
 

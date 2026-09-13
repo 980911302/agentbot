@@ -6,7 +6,7 @@
  *   - 传 ack：领取后确认再退出（模拟处理已提交）
  * 输出一行 JSON：{ claimed: string[] }
  */
-import { AgentInbox } from '../../src/agent/inbox.js';
+import { AgentInbox, leaseOf } from '../../src/agent/inbox.js';
 
 const [dir, agentId, leaseMsRaw, mode] = process.argv.slice(2);
 if (!dir || !agentId) {
@@ -30,7 +30,7 @@ const claimed = await inbox.claim(agentId, {
   leaseMs: Number(leaseMsRaw ?? 60_000),
   maxAttempts: 3,
 });
-if (mode === 'ack') await inbox.ack(agentId, claimed.map((item) => item.id));
+if (mode === 'ack') await inbox.ack(agentId, claimed.map((item) => item.id), leaseOf(claimed[0]!));
 
 console.log(JSON.stringify({ sent: sent.id, claimed: claimed.map((item) => item.id) }));
 process.exit(0);

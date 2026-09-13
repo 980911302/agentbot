@@ -45,6 +45,8 @@ export interface AgentRecord {
   description: string;
   instructions: string;
   toolNames: string[];
+  /** 显式工具清单（含空清单）不得在启动时重新授权。 */
+  toolPolicy?: 'default' | 'explicit';
   color: string;
   /** 头像；一期只支持 emoji / 短字符 */
   avatar?: string;

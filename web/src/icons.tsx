@@ -61,6 +61,15 @@ export function IconArrowUp(props: IconProps) {
   );
 }
 
+export function IconArrowDown(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M12 5v14" />
+      <path d="m19 12-7 7-7-7" />
+    </svg>
+  );
+}
+
 export function IconStop(props: IconProps) {
   return (
     <svg {...base({ ...props, fill: 'currentColor' })} stroke="none">
@@ -212,6 +221,55 @@ export function IconGrid(props: IconProps) {
       <rect x="14" y="3" width="7" height="7" rx="1.5" />
       <rect x="3" y="14" width="7" height="7" rx="1.5" />
       <rect x="14" y="14" width="7" height="7" rx="1.5" />
+    </svg>
+  );
+}
+
+export function IconShare(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M4 12v6a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-6" />
+      <polyline points="16 6 12 2 8 6" />
+      <line x1="12" y1="2" x2="12" y2="15" />
+    </svg>
+  );
+}
+
+export function IconSidebar(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <line x1="15" y1="3" x2="15" y2="21" />
+    </svg>
+  );
+}
+
+export function IconSmile(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M8 14s1.5 2 4 2 4-2 4-2" />
+      <line x1="9" y1="9" x2="9.01" y2="9" strokeWidth="2.5" />
+      <line x1="15" y1="9" x2="15.01" y2="9" strokeWidth="2.5" />
+    </svg>
+  );
+}
+
+export function IconReply(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <polyline points="9 14 4 9 9 4" />
+      <path d="M20 20v-7a4 4 0 0 0-4-4H4" />
+    </svg>
+  );
+}
+
+export function IconMoreHorizontal(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none" />
+      <circle cx="19" cy="12" r="1.2" fill="currentColor" stroke="none" />
+      <circle cx="5" cy="12" r="1.2" fill="currentColor" stroke="none" />
     </svg>
   );
 }

@@ -13,17 +13,22 @@ import type { ReplayPolicy, ToolInvocationRecord } from '../storage/ports.js';
 /** 纯读取/搜索：可以重读，只需注明时间变化 */
 const RERUN_TOOLS = new Set([
   'Read',
+  'ListFiles',
+  'SearchFiles',
   'WebSearch',
   'WebFetch',
   'RecallMemory',
   'ListSections',
   'CheckSubagent',
   'AwaitShell',
+  'ReadToolOutput',
 ]);
 
 /** 本地写入（待办/资料/工作台）：先核对产物，再决定是否重做 */
 const VERIFY_TOOLS = new Set([
   'TodoWrite',
+  'Write',
+  'Edit',
   'update_state',
   'CreateAgent',
   'UpdateAgent',

@@ -13,6 +13,9 @@ import type {
 } from './types';
 
 import { errorMessage, readSseFrames, request } from './shared/transport';
+import type { ChatReceipt, JournalEntry, ChatSnapshot } from '../../src/shared/contracts/chat-state';
+import type { Ready } from './features/events/event-client';
+export type { JournalEntry } from '../../src/shared/contracts/chat-state';
 
 export function fetchHealth(): Promise<HealthInfo> {
   return request('/api/health');
@@ -39,7 +42,14 @@ export async function deleteBot(id: string): Promise<void> {
 /** 编辑智能体资料：名字 / 职责（instructions）/ 配色 */
 export async function updateBot(
   id: string,
-  input: { name?: string; instructions?: string; color?: string },
+  input: {
+    name?: string;
+    instructions?: string;
+    description?: string;
+    section?: string;
+    color?: string;
+    hidden?: boolean;
+  },
 ): Promise<BotSummary> {
   const data = await request<{ bot: BotSummary }>(`/api/bots/${encodeURIComponent(id)}`, {
     method: 'PATCH',
@@ -69,6 +79,11 @@ export function fetchSession(
   id: string,
 ): Promise<{ session: SessionSummary; messages: DisplayMessage[]; artifacts: ArtifactView[] }> {
   return request(`/api/sessions/${encodeURIComponent(id)}`);
+}
+
+export function fetchCorrespondence(agentId: string, peerId: string, before?: string, signal?: AbortSignal) {
+  return request<{ messages: import('../../src/shared/contracts/message-identity').Correspondence[]; nextBefore: string | null }>(
+    `/api/agents/${encodeURIComponent(agentId)}/correspondence/${encodeURIComponent(peerId)}${before ? `?before=${encodeURIComponent(before)}` : ''}`, { signal });
 }
 
 export async function deleteSession(id: string): Promise<void> {
@@ -190,22 +205,11 @@ export async function renameRoom(roomId: string, name: string): Promise<void> {
 // ── 发送与订阅（E3.4 第二步：发送只回执，事件走订阅）──
 
 /** 收信回执：受理成功就返回，回合在后台跑，结果从事件订阅看 */
-export interface Receipt {
-  messageId?: string;
-  agentId?: string;
-  roomId?: string;
-  receiptSeq: number;
-  duplicate: boolean;
-}
+export type Receipt = ChatReceipt;
 
 /** 一条界面事件（GET /api/events 的 entry 帧） */
-export interface JournalEntry {
-  seq: number;
-  at: number;
-  agentId?: string;
-  roomId?: string;
-  kind: 'agent' | 'room' | 'run';
-  payload: unknown;
+export function fetchChatSnapshot(channels: string[]): Promise<ChatSnapshot<DisplayMessage, ArtifactView>> {
+  return request(`/api/chat/state?channels=${encodeURIComponent(channels.join(','))}`);
 }
 
 /** 私聊发送：202 回执（messageId 已落盘）；回合照跑，事件走订阅 */
@@ -241,12 +245,12 @@ export async function sendRoomMessage(
  */
 export async function readEvents(
   handlers: {
-    onReady?: (info: { latestSeq: number; resync: boolean }) => void;
+    onReady?: (info: Ready) => void;
     onEntry: (entry: JournalEntry) => void;
   },
-  options: { after?: number; signal?: AbortSignal } = {},
+  options: { after?: number; epoch?: string; signal?: AbortSignal } = {},
 ): Promise<void> {
-  const suffix = options.after === undefined ? '' : `?after=${options.after}`;
+  const suffix = options.after === undefined ? '' : `?after=${options.after}&epoch=${encodeURIComponent(options.epoch ?? '')}`;
   const response = await fetch(`/api/events${suffix}`, { signal: options.signal });
   if (!response.ok) throw new Error(await errorMessage(response));
   if (!response.body) throw new Error('当前环境不支持流式响应');
@@ -266,10 +270,9 @@ export async function readEvents(
       return;
     }
     if (event === 'ready') {
-      handlers.onReady?.(data as { latestSeq: number; resync: boolean });
+      handlers.onReady?.(data as Ready);
       return;
     }
     if (event === 'entry') handlers.onEntry(data as JournalEntry);
   });
 }
-

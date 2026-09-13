@@ -63,10 +63,13 @@ async function createWindow() {
     minWidth: 920,
     minHeight: 620,
     show: false,
-    backgroundColor: '#0a0c11',
+    backgroundColor: '#000000',
     title: 'AgentBot',
-    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
-    trafficLightPosition: { x: 18, y: 20 },
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden',
+    trafficLightPosition: { x: 16, y: 18 },
+    ...(process.platform === 'win32'
+      ? { titleBarOverlay: { color: '#11141b', symbolColor: '#f3f4f6', height: 52 } }
+      : {}),
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,

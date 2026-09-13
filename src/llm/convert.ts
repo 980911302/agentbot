@@ -1,4 +1,5 @@
 import type { Message } from '../agent/types.js';
+import { attributedText } from '../shared/contracts/message-identity.js';
 import type { LLMMessage } from './provider.js';
 
 export function toLLMMessages(messages: Message[]): LLMMessage[] {
@@ -16,7 +17,8 @@ export function toLLMMessages(messages: Message[]): LLMMessage[] {
         }
       }
       if (!content.text && message.role === 'assistant') continue;
-      out.push({ role: message.role, content: content.text });
+      out.push({ role: message.role, content: attributedText(message, content.text),
+        ...(message.role === 'user' && message.images?.length ? { images: message.images } : {}) });
       continue;
     }
 

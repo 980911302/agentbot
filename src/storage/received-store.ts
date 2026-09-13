@@ -1,5 +1,6 @@
-import { existsSync, readFileSync, writeFile } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { writeJsonAtomic } from './atomic-json.js';
 
 /**
  * ReceivedStore（E3.2）：接收幂等日志。
@@ -14,6 +15,7 @@ export interface ReceivedRecord {
 export class ReceivedStore {
   private readonly file: string;
   private readonly cache: Map<string, ReceivedRecord>;
+  private mutation: Promise<void> = Promise.resolve();
 
   constructor(dataDir: string) {
     this.file = join(dataDir, 'received', 'index.json');
@@ -23,8 +25,8 @@ export class ReceivedStore {
         const parsed = JSON.parse(readFileSync(this.file, 'utf8')) as Record<string, ReceivedRecord>;
         for (const [key, value] of Object.entries(parsed)) this.cache.set(key, value);
       }
-    } catch {
-      // 损坏文件视为空日志
+    } catch (error) {
+      throw new Error(`接收幂等日志损坏：${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
@@ -34,22 +36,25 @@ export class ReceivedStore {
   }
 
   /** 登记幂等键 → 原消息映射 */
-  record(clientMessageId: string, record: ReceivedRecord): void {
-    this.cache.set(clientMessageId, record);
-    this.flush();
+  async record(clientMessageId: string, record: ReceivedRecord): Promise<void> {
+    const operation = this.mutation.catch(() => undefined).then(async () => {
+      const previous = this.cache.get(clientMessageId);
+      this.cache.set(clientMessageId, record);
+      try {
+        await this.flush();
+      } catch (error) {
+        if (previous) this.cache.set(clientMessageId, previous);
+        else this.cache.delete(clientMessageId);
+        throw error;
+      }
+    });
+    this.mutation = operation;
+    await operation;
   }
 
-  private flush(): void {
-    try {
-      const obj: Record<string, ReceivedRecord> = {};
-      for (const [key, value] of this.cache) obj[key] = value;
-      const dir = dirname(this.file);
-      import('node:fs').then((fs) => {
-        fs.mkdirSync(dir, { recursive: true });
-        writeFile(this.file, JSON.stringify(obj, null, 2), () => undefined);
-      });
-    } catch {
-      // 落盘失败不阻塞回合（下次 flush 会重试）
-    }
+  private async flush(): Promise<void> {
+    const obj: Record<string, ReceivedRecord> = {};
+    for (const [key, value] of this.cache) obj[key] = value;
+    await writeJsonAtomic(this.file, obj);
   }
 }

@@ -33,7 +33,7 @@ describe('工作台写操作', () => {
       ownerName: '主人',
       postToRoom: async (roomId, text, excludeAgentIds) => {
         posted.push({ roomId, text, exclude: excludeAgentIds });
-        return { roomName: '测试群', called: 2, spoke: 1, silent: 1, skipped: [] };
+        return { roomName: '测试群', roundId: 'round-test' };
       },
     });
 
@@ -72,9 +72,12 @@ describe('工作台写操作', () => {
       );
     });
 
-    it('新同事默认继承全套工具', async () => {
-      const created = await workbench.createAgent({ name: '工具继承验证员' });
-      assert.deepEqual(created.toolNames, ['calculator', 'remember']);
+    it('同一创建动作重试返回已创建资源，不另建副本', async () => {
+      const first = await workbench.createAgent({ name: '幂等同事', resourceId: 'agent-fixed' });
+      const second = await workbench.createAgent({ name: '幂等同事', resourceId: 'agent-fixed' });
+      assert.equal(first.id, 'agent-fixed');
+      assert.equal(second.id, first.id);
+      assert.equal((await registry.list()).filter((item) => item.name === '幂等同事').length, 1);
     });
   });
 
@@ -227,7 +230,7 @@ describe('工作台写操作', () => {
       const result = await workbench.postToRoom(caller.id, room.id, '同步一下状态');
       assert.equal(posted.length, 1);
       assert.deepEqual(posted[0]?.exclude, [caller.id], '应排除调用者自己');
-      assert.equal(result.called, 2);
+      assert.equal(result.roundId, 'round-test');
     });
 
     it('空内容被拒', async () => {

@@ -1,19 +1,29 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { usePresence } from '../motion';
 
 interface RenameDialogProps {
   /** 对话框标题，如「重命名群」 */
   title: string;
   initial: string;
+  open: boolean;
   onClose: () => void;
   /** App 负责调 API 与同步状态；成功返回 null，失败返回错误文案 */
   onSubmit: (name: string) => Promise<string | null>;
 }
 
 /** 单输入改名框（群重命名用；智能体走资料编辑） */
-export function RenameDialog({ title, initial, onClose, onSubmit }: RenameDialogProps) {
+export function RenameDialog({ title, initial, open, onClose, onSubmit }: RenameDialogProps) {
   const [name, setName] = useState(initial);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const presence = usePresence(open);
+
+  useEffect(() => {
+    if (!open) return;
+    setName(initial);
+    setSaving(false);
+    setError(null);
+  }, [open, initial]);
 
   const submit = async () => {
     const trimmed = name.trim();
@@ -26,9 +36,11 @@ export function RenameDialog({ title, initial, onClose, onSubmit }: RenameDialog
     else onClose();
   };
 
+  if (!presence.mounted) return null;
+
   return (
     <div
-      className="scrim"
+      className={`scrim ${presence.state}`}
       role="presentation"
       onMouseDown={(event) => event.target === event.currentTarget && onClose()}
     >

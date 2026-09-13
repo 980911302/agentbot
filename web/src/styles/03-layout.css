@@ -1,16 +1,21 @@
 /* ── Main Application Grid Layout ─────────────────────────── */
 .app {
   display: grid;
-  grid-template-columns: 280px minmax(0, 1fr);
+  grid-template-columns: var(--sidebar-width, 260px) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   height: 100%;
   width: 100%;
   overflow: hidden;
   background: var(--bg);
-  transition: grid-template-columns var(--dur-slow) var(--ease);
+  transition: grid-template-columns 180ms ease;
+}
+
+.app.resizing {
+  transition: none !important;
 }
 
 .app.with-screen {
-  grid-template-columns: 280px minmax(0, 1fr) 350px;
+  grid-template-columns: var(--sidebar-width, 260px) minmax(0, 1fr) var(--drawer-width, 380px);
 }
 
 /* ── Group Round Status & Silent Indicators ───────────────── */
@@ -28,6 +33,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  color: var(--fg-muted);
 }
 
 .working-label {
@@ -287,6 +293,7 @@
 
 .chat-header-title-box.clickable {
   cursor: pointer;
+  -webkit-app-region: no-drag;
 }
 
 .chat-header-title-box.clickable:hover .chat-header-title {

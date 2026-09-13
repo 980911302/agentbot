@@ -42,7 +42,11 @@ export function SettingsDialog({
   if (!presence.mounted) return null;
 
   return (
-    <div className="scrim" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+    <div
+      className={`scrim ${presence.state}`}
+      role="presentation"
+      onMouseDown={(event) => event.target === event.currentTarget && onClose()}
+    >
       <div className="dialog" role="dialog" aria-label="设置">
         <nav className="dialog-nav">
           <button

@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { randomUUID } from 'node:crypto';
 import type { MemoryScope, MemoryTier } from '../../memory/types.js';
 import { json, readJson } from '../transport/index.js';
 import { messageOf, readString, type RouteContext } from './context.js';
@@ -73,6 +74,35 @@ export async function handleAgentRoute(
     return;
   }
 
+  const correspondenceMatch = /^\/correspondence\/([\w-]{1,128})$/.exec(rest);
+  if (correspondenceMatch && method === 'GET') {
+    const params = new URL(request.url ?? '/', 'http://x').searchParams;
+    const limit = Number(params.get('limit') ?? 30);
+    const before = params.get('before') ?? undefined;
+    if (!Number.isInteger(limit) || limit < 1 || limit > 50 || (before && !/^[\w-]{1,128}$/.test(before))) {
+      json(response, 400, { error: '无效的往来分页参数' }); return;
+    }
+    try { json(response, 200, await runtime.correspondence.page(agentId, correspondenceMatch[1]!, before, limit)); }
+    catch (error) { json(response, 400, { error: messageOf(error) }); }
+    return;
+  }
+
+  if (rest === '/tasks' && method === 'GET') {
+    const params = new URL(request.url ?? '/', 'http://x').searchParams;
+    const offset = Number(params.get('offset') ?? 0);
+    if (!Number.isSafeInteger(offset) || offset < 0) { json(response, 400, { error: 'offset 必须是非负整数' }); return; }
+    const tasks = runtime.taskProgress.list(agentId);
+    // 列表只给摘要；完整检查点按 id 单独查询，避免把全部工具记录塞进响应。
+    json(response, 200, { tasks: tasks.slice(offset, offset + 20).map(task => ({ id: task.id, status: task.status, stopReason: task.stopReason, goal: task.goal.slice(0, 300), updatedAt: task.updatedAt })), nextOffset: offset + 20 < tasks.length ? offset + 20 : null });
+    return;
+  }
+  const taskMatch = /^\/tasks\/([0-9a-f-]{36})$/.exec(rest);
+  if (taskMatch && method === 'GET') {
+    const progress = runtime.taskProgress.get(taskMatch[1]!, agentId);
+    json(response, progress ? 200 : 404, progress ? { task: progress } : { error: 'task not found' });
+    return;
+  }
+
   // 同事私发进来的积压消息（1:1 队列）：未处理的 + 处理失败的
   if (rest === '/inbox' && method === 'GET') {
     json(response, 200, {
@@ -83,8 +113,52 @@ export async function handleAgentRoute(
   }
 
   if (rest === '/inbox' && method === 'POST') {
+    const control = runtime.controlView(agentId);
+    if (control.autoActivation === 'paused') {
+      json(response, 202, { ok: false, held: true, reason: 'agent_paused' });
+      return;
+    }
     await runtime.drainInbox(agentId);
-    json(response, 200, { ok: true });
+    json(response, 202, { ok: true });
+    return;
+  }
+
+  if (rest === '/stop' && method === 'POST') {
+    const body = await readJson(request);
+    const commandId = readString(body.commandId) ?? randomUUID();
+    const stop = await runtime.requestAgentStop(agentId, commandId);
+    json(response, 202, { stopId: stop.stopId, state: stop.state, committedSeq: stop.committedSeq });
+    return;
+  }
+
+  if (rest === '/resume' && method === 'POST') {
+    const body = await readJson(request);
+    const commandId = readString(body.commandId) ?? randomUUID();
+    const selection = body.selection && typeof body.selection === 'object' ? body.selection as { kind?: string; inputId?: string; taskId?: string; chainId?: string } : undefined;
+    const kind = selection?.kind;
+    if (kind !== 'input' && kind !== 'task' && kind !== 'chain' && kind !== 'enable_future') {
+      json(response, 400, { error: 'selection 必须是 input/task/chain/enable_future' });
+      return;
+    }
+    const chosen = selection ?? {};
+    const resume = await runtime.resumeAgent({
+      commandId,
+      requestedBy: { kind: 'user', id: 'owner' },
+      agentId,
+      selection: kind === 'input'
+        ? { kind, inputId: chosen.inputId ?? '' }
+        : kind === 'task'
+          ? { kind, taskId: chosen.taskId ?? '' }
+          : kind === 'chain'
+            ? { kind, chainId: chosen.chainId ?? '' }
+            : { kind: 'enable_future' },
+    });
+    json(response, 202, resume);
+    return;
+  }
+
+  if (rest === '/control' && method === 'GET') {
+    json(response, 200, runtime.controlView(agentId));
     return;
   }
 
@@ -180,4 +254,3 @@ export async function handleAgentRoute(
 
   json(response, 404, { error: `no route for ${method} /api/agents/:id${rest}` });
 }
-

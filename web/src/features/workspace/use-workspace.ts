@@ -10,7 +10,6 @@ import type { ChannelItem } from '../../components/Sidebar';
  */
 export function useWorkspace(deps: {
   activeChannelId: string;
-  setChannelHistories: (updater: (prev: Record<string, DisplayMessage[]>) => Record<string, DisplayMessage[]>) => void;
 }) {
   const [backendAgents, setBackendAgents] = useState<BotSummary[]>([]);
   const [rooms, setRooms] = useState<RoomView[]>([]);
@@ -20,10 +19,25 @@ export function useWorkspace(deps: {
   const seenRoomsRef = useRef<Map<string, number>>(new Map());
   const activeChannelIdRef = useRef('');
   const agentsRef = useRef<BotSummary[]>([]);
+  const roomsRef = useRef<RoomView[]>([]);
+  const channelsRef = useRef<ChannelItem[]>([]);
+  const roomMemberLimitRef = useRef(6);
 
   useEffect(() => {
     agentsRef.current = backendAgents;
   }, [backendAgents]);
+
+  useEffect(() => {
+    roomsRef.current = rooms;
+  }, [rooms]);
+
+  useEffect(() => {
+    roomMemberLimitRef.current = roomMemberLimit;
+  }, [roomMemberLimit]);
+
+  useEffect(() => {
+    channelsRef.current = channels;
+  }, [channels]);
 
   useEffect(() => {
     activeChannelIdRef.current = deps.activeChannelId;
@@ -38,7 +52,7 @@ export function useWorkspace(deps: {
       api.fetchRooms().catch(() => null),
       api.fetchBots().catch(() => null),
     ]);
-    if (!roomData && !agents) return [];
+    if (!roomData && !agents) return channelsRef.current;
 
     if (agents) setBackendAgents(agents);
     if (roomData) {
@@ -63,15 +77,21 @@ export function useWorkspace(deps: {
         }
       }
       if (Object.keys(updates).length > 0) {
-        setUnread((current) => ({ ...current, ...updates }));
+        setUnread((current) => {
+          const next = { ...current };
+          for (const [roomId, increment] of Object.entries(updates)) {
+            next[roomId] = Math.min((current[roomId] ?? 0) + increment, 99);
+          }
+          return next;
+        });
       }
     } else if (agents) {
       // 房间拉取失败但智能体成功：保持智能体更新（rooms 由上次状态保留）
     }
 
     const rebuilt: ChannelItem[] = [
-      ...roomList(roomData ?? { rooms: [], memberLimit: 0 }),
-      ...agentList(agents ?? []),
+      ...roomList(roomData ?? { rooms: roomsRef.current, memberLimit: roomMemberLimitRef.current }),
+      ...agentList(agents ?? agentsRef.current),
     ];
     setChannels(rebuilt);
     return rebuilt;
@@ -105,36 +125,6 @@ export function useWorkspace(deps: {
     }
   }, []);
 
-  const reloadChannel = useCallback(
-    async (channelId: string) => {
-      if (!channelId) return;
-      const isRoom = rooms.some((room) => room.id === channelId);
-      try {
-        if (isRoom) {
-          const messages = await api.fetchRoomMessages(channelId);
-          deps.setChannelHistories((prev) => ({
-            ...prev,
-            [channelId]: messages.map((message) => ({
-              id: message.id,
-              role: message.senderKind === 'user' ? 'user' : 'assistant',
-              content: message.text,
-              senderName: message.senderName,
-              senderColor: message.senderColor,
-              toolCalls: [],
-              createdAt: new Date(message.createdAt).toISOString(),
-            })),
-          }));
-          return;
-        }
-        const detail = await api.fetchSession(channelId);
-        deps.setChannelHistories((prev) => ({ ...prev, [channelId]: detail.messages }));
-      } catch {
-        // 保持现有内容
-      }
-    },
-    [rooms, deps.setChannelHistories],
-  );
-
   const sidebarChannels = useMemo(
     () => channels.map((item) => ({ ...item, unread: unread[item.id] ?? 0 })),
     [channels, unread],
@@ -151,6 +141,5 @@ export function useWorkspace(deps: {
     setChannels,
     sidebarChannels,
     syncWorkspace,
-    reloadChannel,
   };
 }

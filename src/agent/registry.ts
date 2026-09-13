@@ -1,7 +1,8 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import type { AgentRecord } from './types.js';
+import { isMissingFile, writeJsonAtomic } from '../storage/atomic-json.js';
 
 function clone(record: AgentRecord): AgentRecord {
   return { ...record, toolNames: [...record.toolNames], projectIds: [...record.projectIds] };
@@ -34,6 +35,7 @@ import type { AgentRegistryPort } from '../storage/ports.js';
 export class AgentRegistry implements AgentRegistryPort {
   private agents: AgentRecord[] = [];
   private loaded = false;
+  private loading?: Promise<void>;
   private readonly file: string;
 
   private defaultToolNames: string[];
@@ -46,6 +48,21 @@ export class AgentRegistry implements AgentRegistryPort {
   /** 运行时装配完工具后再补：新同事默认拿到全套 */
   setDefaultToolNames(names: string[]): void {
     this.defaultToolNames = names;
+  }
+
+  /** 只升级仍选择默认工具集的智能体，不覆盖用户显式设定的权限。 */
+  async syncDefaultTools(): Promise<void> {
+    await this.load();
+    let changed = false;
+    for (const record of this.agents) {
+      if (record.toolPolicy !== 'default') continue;
+      const missing = this.defaultToolNames.filter(name => !record.toolNames.includes(name));
+      if (!missing.length) continue;
+      record.toolNames = [...record.toolNames, ...missing];
+      record.updatedAt = Date.now();
+      changed = true;
+    }
+    if (changed) await this.save();
   }
 
   /**
@@ -87,8 +104,9 @@ export class AgentRegistry implements AgentRegistryPort {
       description: (input.description ?? '').trim(),
       instructions:
         (input.instructions ?? '').trim() ||
-        '用用户的语言、以第一人称回复，语气直接简洁。需要更准确时优先调用工具。',
+        '通用助手，先按当前话意自然交流；用户明确交办任务时，使用可用能力推进并交付可验证的结果。',
       toolNames: input.toolNames ?? [...this.defaultToolNames],
+      toolPolicy: input.toolNames === undefined ? 'default' : 'explicit',
       color: input.color ?? COLORS[index % COLORS.length] ?? COLORS[0]!,
       avatar: input.avatar,
       section: input.section,
@@ -99,6 +117,37 @@ export class AgentRegistry implements AgentRegistryPort {
     this.agents.push(record);
     await this.save();
     return record;
+  }
+
+  async createIfAbsent(id: string, input: CreateAgentInput = {}): Promise<AgentRecord> {
+    await this.load();
+    const existing = this.agents.find((agent) => agent.id === id);
+    if (existing) {
+      const name = (input.name ?? '').trim();
+      if (name && existing.name !== name) throw new Error('AGENT_ID_CONFLICT');
+      return clone(existing);
+    }
+    const now = Date.now();
+    const record: AgentRecord = {
+      id,
+      name: (input.name ?? '').trim() || `Agent ${this.agents.length + 1}`,
+      title: (input.title ?? '').trim(),
+      description: (input.description ?? '').trim(),
+      instructions:
+        (input.instructions ?? '').trim() ||
+        '通用助手，先按当前话意自然交流；用户明确交办任务时，使用可用能力推进并交付可验证的结果。',
+      toolNames: input.toolNames ?? [...this.defaultToolNames],
+      toolPolicy: input.toolNames === undefined ? 'default' : 'explicit',
+      color: input.color ?? COLORS[this.agents.length % COLORS.length] ?? COLORS[0]!,
+      avatar: input.avatar,
+      section: input.section,
+      projectIds: input.projectIds ?? [],
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.agents.push(record);
+    await this.save();
+    return clone(record);
   }
 
   /**
@@ -124,13 +173,14 @@ export class AgentRegistry implements AgentRegistryPort {
     if (description !== undefined) record.description = description;
     const instructions = text(patch.instructions);
     if (instructions !== undefined) record.instructions = instructions;
-    const avatar = text(patch.avatar);
+    const avatar = patch.avatar === '' ? '' : text(patch.avatar);
     if (avatar !== undefined) record.avatar = avatar;
     const section = text(patch.section);
     if (section !== undefined) record.section = section;
     if (patch.color !== undefined && patch.color.trim() !== '') record.color = patch.color.trim();
-    if (patch.toolNames !== undefined && patch.toolNames.length > 0) {
-      record.toolNames = patch.toolNames;
+    if (patch.toolNames !== undefined) {
+      record.toolNames = [...patch.toolNames];
+      record.toolPolicy = 'explicit';
     }
     if (patch.hidden !== undefined) record.hidden = patch.hidden;
     if (patch.projectIds !== undefined) record.projectIds = patch.projectIds;
@@ -158,6 +208,7 @@ export class AgentRegistry implements AgentRegistryPort {
       description: record.description ?? '',
       instructions: record.instructions ?? '',
       toolNames: record.toolNames ?? [],
+      toolPolicy: record.toolPolicy ?? (record.toolNames === undefined ? 'default' : 'explicit'),
       color: record.color ?? COLORS[0]!,
       avatar: record.avatar,
       section: record.section,
@@ -170,23 +221,32 @@ export class AgentRegistry implements AgentRegistryPort {
 
   private async load(): Promise<void> {
     if (this.loaded) return;
-    this.loaded = true;
+    if (!this.loading) {
+      this.loading = (async () => {
+        try {
+          const raw = await readFile(this.file, 'utf8');
+          const parsed = JSON.parse(raw) as unknown;
+          if (Array.isArray(parsed)) {
+            this.agents = parsed.map((item) =>
+              AgentRegistry.normalize(item as Partial<AgentRecord> & { id: string; name: string }),
+            );
+          }
+        } catch (error) {
+          if (!isMissingFile(error)) throw error;
+          this.agents = [];
+        }
+        this.loaded = true;
+      })();
+    }
     try {
-      const raw = await readFile(this.file, 'utf8');
-      const parsed = JSON.parse(raw) as unknown;
-      if (Array.isArray(parsed)) {
-        this.agents = parsed.map((item) =>
-          AgentRegistry.normalize(item as Partial<AgentRecord> & { id: string; name: string }),
-        );
-      }
-    } catch {
-      this.agents = [];
+      await this.loading;
+    } finally {
+      if (this.loaded) this.loading = undefined;
     }
   }
 
   private async save(): Promise<void> {
-    await mkdir(dirname(this.file), { recursive: true });
-    await writeFile(this.file, JSON.stringify(this.agents, null, 2), 'utf8');
+    await writeJsonAtomic(this.file, this.agents);
   }
 }
 

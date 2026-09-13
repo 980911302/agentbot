@@ -4,12 +4,12 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, it } from 'node:test';
-import { AgentInbox } from '../src/agent/inbox.js';
+import { AgentInbox, leaseOf } from '../src/agent/inbox.js';
 import { AgentRuntime } from '../src/server/runtime.js';
 import { DEFAULT_BUDGET } from '../src/context/budget.js';
 import type { LLMProvider, LLMMessage } from '../src/llm/provider.js';
 import { FakeProvider } from './fakes/fake-provider.js';
-import { tempDataDir, waitFor } from './fakes/test-env.js';
+import { tempDataDir, waitFor, until } from './fakes/test-env.js';
 
 /**
  * E3.3 投递领取与确认：
@@ -65,10 +65,10 @@ describe('投递领取与确认（E3.3）', () => {
     assert.equal(await inbox.count('a'), 1);
     assert.equal(await inbox.claimableCount('a'), 0);
 
-    await inbox.checkpoint('a', [sent.id], { messageId: 'msg-1' });
+    await inbox.checkpoint('a', [sent.id], { messageId: 'msg-1' }, leaseOf(first[0]!));
     assert.equal((await inbox.peek('a'))[0]!.checkpoint?.messageId, 'msg-1');
 
-    assert.equal(await inbox.ack('a', [sent.id]), 1);
+    assert.equal(await inbox.ack('a', [sent.id], leaseOf(first[0]!)), 1);
     assert.equal(await inbox.count('a'), 0);
     assert.equal((await inbox.peek('a')).length, 0);
     assert.equal((await inbox.claim('a', { owner: 'run-3', leaseMs: 1000, maxAttempts: 3 })).length, 0);
@@ -100,7 +100,7 @@ describe('投递领取与确认（E3.3）', () => {
     assert.ok((reclaimed[0]!.lastError ?? '').includes('超时'));
     assert.ok((reclaimed[0]!.leaseEpoch ?? 0) > beforeEpoch);
 
-    await reopened.ack('b', [reclaimed[0]!.id]);
+    await reopened.ack('b', [reclaimed[0]!.id], { ...leaseOf(reclaimed[0]!), now: later });
     assert.equal(await reopened.count('b'), 0);
   });
 
@@ -108,9 +108,9 @@ describe('投递领取与确认（E3.3）', () => {
     const { inbox } = await make();
     const sent = await inbox.enqueue(letter('c'));
     const claimed = await inbox.claim('c', { owner: 'r1', leaseMs: 1000, maxAttempts: 3 });
-    const t0 = (claimed[0]!.leaseUntil ?? 0) + 1;
+    const t0 = (claimed[0]!.leaseUntil ?? 0) - 1;
 
-    const first = await inbox.nack('c', [sent.id], '模型超时', { maxAttempts: 3, baseDelayMs: 1000, now: t0 });
+    const first = await inbox.nack('c', [sent.id], '模型超时', { maxAttempts: 3, baseDelayMs: 1000, now: t0 }, leaseOf(claimed[0]!));
     assert.deepEqual(first.pending, [sent.id]);
     const afterFirst = (await inbox.peek('c'))[0]!;
     assert.equal(afterFirst.status, 'pending');
@@ -119,16 +119,16 @@ describe('投递领取与确认（E3.3）', () => {
     assert.equal(await inbox.claimableCount('c', t0), 0);
     assert.equal(await inbox.claimableCount('c', t0 + 1000), 1);
 
-    await inbox.claim('c', { owner: 'r2', leaseMs: 1000, maxAttempts: 3, now: t0 + 1000 });
+    const second = await inbox.claim('c', { owner: 'r2', leaseMs: 1000, maxAttempts: 3, now: t0 + 1000 });
     const t1 = t0 + 1000 + 1;
-    await inbox.nack('c', [sent.id], '还是失败', { maxAttempts: 3, baseDelayMs: 1000, now: t1 });
+    await inbox.nack('c', [sent.id], '还是失败', { maxAttempts: 3, baseDelayMs: 1000, now: t1 }, leaseOf(second[0]!));
     const afterSecond = (await inbox.peek('c'))[0]!;
     assert.equal(afterSecond.attempts, 2);
     assert.equal(afterSecond.availableAt, t1 + 2000, '第二次失败等 2 个基数');
 
     const t2 = t1 + 2000;
-    await inbox.claim('c', { owner: 'r3', leaseMs: 1000, maxAttempts: 3, now: t2 });
-    const third = await inbox.nack('c', [sent.id], '第三次失败', { maxAttempts: 3, baseDelayMs: 1000, now: t2 + 1 });
+    const thirdClaim = await inbox.claim('c', { owner: 'r3', leaseMs: 1000, maxAttempts: 3, now: t2 });
+    const third = await inbox.nack('c', [sent.id], '第三次失败', { maxAttempts: 3, baseDelayMs: 1000, now: t2 + 1 }, leaseOf(thirdClaim[0]!));
     assert.deepEqual(third.failed, [sent.id]);
     assert.equal(await inbox.failedCount('c'), 1);
     assert.equal(await inbox.count('c'), 0, 'failed 不算未处理');
@@ -146,7 +146,7 @@ describe('投递领取与确认（E3.3）', () => {
     const { inbox } = await make();
     await inbox.enqueue(letter('d'));
     const claimed = await inbox.claim('d', { owner: 'r1', leaseMs: 60_000, maxAttempts: 3 });
-    await inbox.release('d', [claimed[0]!.id]);
+    await inbox.release('d', [claimed[0]!.id], leaseOf(claimed[0]!));
     const item = (await inbox.peek('d'))[0]!;
     assert.equal(item.status, 'pending');
     assert.equal(item.attempts, 0);
@@ -221,7 +221,7 @@ describe('真实进程强退后的恢复（E3.3）', () => {
       assert.equal(reclaimed.length, 1);
       assert.equal(reclaimed[0]!.attempts, 1);
       assert.equal(reclaimed[0]!.text, '这条信要在强退后被找回来');
-      await reopened.ack('kid', [reclaimed[0]!.id]);
+      await reopened.ack('kid', [reclaimed[0]!.id], { ...leaseOf(reclaimed[0]!), now: later });
       assert.equal(await reopened.count('kid'), 0);
     } finally {
       await env.cleanup();
@@ -256,7 +256,7 @@ describe('来信回合：保留作者与关联、失败退避重试（E3.3）', 
     while (cleanups.length > 0) await cleanups.pop()!();
   });
 
-  it('多封来信逐封署名，处理后确认出队', async () => {
+  it('多封来信各开一轮，按各自作者简报，逐封确认出队', async () => {
     const env = await tempDataDir('delivery-runtime');
     cleanups.push(env.cleanup);
     const fake = new FakeProvider();
@@ -280,18 +280,22 @@ describe('来信回合：保留作者与关联、失败退避重试（E3.3）', 
     await waitFor(() => fake.pendingCount >= 1, '来信回合开始');
     const prompt = fake.lastCallText();
     assert.ok(prompt.includes('测试运维'), '第一封信的作者要在上下文里');
-    assert.ok(prompt.includes('知识库服务'), '第二封信的作者也要在，不能被第一封盖掉');
+    assert.ok(!prompt.includes('知识库服务'), '第二封信尚未领取，不能合并进第一轮');
     fake.release(0, TEXT);
     await draining;
-
-    const batch = (await runtime.messages.list(agentId)).find(
+    await waitFor(() => fake.pendingCount >= 2, '第二封来信独立开一轮');
+    assert.match(fake.lastCallText(), /智能体「知识库服务」私发给你一条消息/);
+    fake.release(1, TEXT);
+    await until(async () => (await runtime.pendingMail(agentId)) === 0, '两封信已处理');
+    const batch = (await runtime.messages.list(agentId)).filter(
       (message) => message.source === 'agent' && message.content.type === 'text',
     );
-    assert.ok(batch, '来信要折成一条消息存进对话线');
-    assert.equal(batch.content.type === 'text' && batch.content.text.includes('「测试运维」说：'), true);
-    assert.equal(batch.content.type === 'text' && batch.content.text.includes('「知识库服务」说：'), true);
-    assert.equal(batch.speaker, '测试运维、知识库服务');
+    const inputs = batch.filter(message => message.role === 'user');
+    assert.equal(inputs.length, 2);
+    assert.deepEqual(inputs.map(message => message.speaker), ['测试运维', '知识库服务']);
+    assert.deepEqual(inputs.map(message => message.content.type === 'text' && message.content.text), ['登录接口好了', '压测要等今晚']);
     assert.equal(await runtime.pendingMail(agentId), 0, '处理完的投递要确认出队');
+    await runtime.close();
   });
 
   it('处理失败：有限退避后自动重试成功；检查点在进模型前已写下', async () => {
@@ -332,10 +336,9 @@ describe('来信回合：保留作者与关联、失败退避重试（E3.3）', 
     // 退避期内不重复开回合
     assert.equal(await runtime.drainInbox(agentId), null);
 
-    await waitFor(() => Date.now() >= (failedAttempt.availableAt ?? 0), '退避结束');
     failing = false;
-    const retried = await runtime.drainInbox(agentId);
-    assert.equal(retried?.stopReason, 'final_answer');
+    await waitFor(() => runtime.chatRuns.list().some(run => run.status === 'succeeded'), '无需手动 drain，退避后自动重试');
+    await runtime.close();
     assert.equal(await runtime.pendingMail(agentId), 0);
     assert.equal(await runtime.failedMail(agentId), 0);
   });

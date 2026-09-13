@@ -21,6 +21,8 @@ export interface Room {
   id: string;
   name: string;
   memberIds: string[];
+  /** 新成员只接收加入后的群消息；旧数据缺省使用建群时间。 */
+  memberJoinedAt?: Record<string, number>;
   createdAt: number;
   updatedAt: number;
 }

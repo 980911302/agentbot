@@ -13,7 +13,19 @@ import { sleep, tempDataDir, waitFor } from './fakes/test-env.js';
  * 发送与订阅分离——断线只断订阅；客户端凭 seq 补发、去重；游标太旧要求重取快照。
  */
 
-const TEXT = { content: '收到', toolCalls: [], finishReason: 'stop', usage: null };
+const OUT = (text: string) => ({
+  content: null,
+  toolCalls: [
+    {
+      id: `out-${text}`,
+      name: 'SendToUser',
+      arguments: JSON.stringify({ type: 'text', content: text, end_turn: true }),
+    },
+  ],
+  finishReason: 'tool_calls',
+  usage: null,
+});
+const TEXT = OUT('收到');
 
 describe('EventJournal（E3.4）', () => {
   it('seq 单调递增；since 补发 after 之后的事件', () => {
@@ -254,7 +266,7 @@ describe('事件订阅（E3.4 第一步：发送与订阅分离）', () => {
     await post.json();
 
     await waitFor(() => fake.pendingCount > callIndex, '模型调用发生');
-    fake.release(callIndex, { content: '断线也做完', toolCalls: [], finishReason: 'stop', usage: null });
+    fake.release(callIndex, OUT('断线也做完'));
 
     await until(
       async () =>
@@ -273,8 +285,8 @@ describe('事件订阅（E3.4 第一步：发送与订阅分离）', () => {
   });
 });
 
-describe('增量事件（E3.4）', () => {
-  it('流式增量也进事件日志，并带频道归属', async () => {
+describe('兼容正文兜底（E3.4）', () => {
+  it('最终正文可以兜底，但判断出口前不泄露普通正文增量', async () => {
     const env = await tempDataDir('events-delta');
     try {
       const provider: LLMProvider = {
@@ -302,11 +314,12 @@ describe('增量事件（E3.4）', () => {
       const deltas = runtime.events
         .since(0)
         .entries.filter((entry) => (entry.payload as { type?: string }).type === 'delta');
-      assert.deepEqual(
-        deltas.map((entry) => (entry.payload as { text: string }).text),
-        ['你', '好'],
+      assert.deepEqual(deltas, []);
+      const messages = await runtime.messages.list(agentId);
+      assert.ok(
+        messages.some((message) => message.content.type === 'text' && message.content.text === '你好'),
+        '整轮没有调用出口时，最终正文仍要兜底落盘',
       );
-      assert.equal(deltas[0]!.agentId, agentId, '订阅方要能按频道路由');
     } finally {
       await env.cleanup();
     }

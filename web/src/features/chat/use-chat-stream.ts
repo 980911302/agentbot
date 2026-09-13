@@ -1,338 +1,95 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import * as api from '../../api';
-import { applyEvent, errorMessage, now } from './message-reducer';
-import type {
-  AgentEvent,
-  ArtifactView,
-  BotSummary,
-  DisplayMessage,
-  InteractionRequest,
-  RoomEvent,
-} from '../../types';
+import { artifactFromEvent } from './artifacts';
+import type { ChatEngine } from './chat-engine';
+import type { AgentEvent, ArtifactView, BotSummary, InteractionRequest, RoomEvent } from '../../types';
 import type { ChannelItem } from '../../components/Sidebar';
 
-/**
- * useChatStream（E2.5c 拆出，E3.4 第二步改为「发送只回执、事件走订阅」）。
- *
- * 发送：乐观占位 + POST 202 回执（失败才写错误气泡）。
- * 事件：由 useEventStream 推来 handleEntry，按 agentId/roomId 路由到频道：
- *   - agent 事件 → 消息 reducer、流式增量、交互卡、产物
- *   - room 事件 → 群消息、回合气泡、沉默提示
- *   - run 事件 → 忙闲、挂起提示、忙完拉真相
- */
+/** UI 适配器：命令交给 API，消息/运行交给 engine，交互卡和通知交给页面。 */
 export function useChatStream(input: {
-  getSession: () => {
-    activeAgentId: string | null;
-    activeChannel: ChannelItem;
-    activeChannelId: string;
-    model: string;
-    ownerName: string;
-  };
-  /** 事件按频道路由时取频道信息（名字/颜色） */
-  getChannel: (channelId: string) => ChannelItem | undefined;
-  setChannelHistories: (updater: (prev: Record<string, DisplayMessage[]>) => Record<string, DisplayMessage[]>) => void;
+  engine: ChatEngine;
+  getSession: () => { activeAgentId: string | null; activeChannel: ChannelItem; activeChannelId: string; model: string; ownerName: string };
   setArtifacts: (updater: (curr: ArtifactView[]) => ArtifactView[]) => void;
   setNotices: (updater: (prev: Record<string, string[]>) => Record<string, string[]>) => void;
-  setRoundActive: (member: { id: string; name: string; color: string } | null) => void;
   setSilentNotes: (updater: (prev: Record<string, string[]>) => Record<string, string[]>) => void;
   agentsRef: React.MutableRefObject<BotSummary[]>;
   handleInteractionRequest: (request: InteractionRequest) => void;
   handleInteractionClosed: (id: string) => void;
   onMemoryBump: () => void;
   syncWorkspace: () => Promise<unknown>;
-  reloadChannel: (channelId: string) => Promise<void>;
 }) {
-  const deps = input;
-  const [busy, setBusy] = useState(false);
-  /** 每个频道正在跑的回合数：忙是「有人发起的回合在跑」 */
-  const busyCountsRef = useRef(new Map<string, number>());
-  const [liveText, setLiveText] = useState('');
-  const [liveChannelId, setLiveChannelId] = useState('');
-  const liveChannelRef = useRef('');
-  /** 每个频道最后发出去的原话：错误气泡的「重试」要用 */
-  const pendingTextRef = useRef(new Map<string, string>());
+  const ref = useRef(input); ref.current = input;
+  const engine = input.engine;
 
-  const bumpBusy = useCallback((channelId: string, delta: 1 | -1) => {
-    const counts = busyCountsRef.current;
-    const next = (counts.get(channelId) ?? 0) + delta;
-    if (next > 0) counts.set(channelId, next);
-    else counts.delete(channelId);
-    setBusy(counts.size > 0);
-  }, []);
+  const reloadChannel = useCallback(async (channelId: string) => {
+    if (!channelId) return;
+    return engine.load(() => api.fetchChatSnapshot([channelId]));
+  }, [engine]);
 
-  const clearLive = useCallback((channelId: string) => {
-    if (liveChannelRef.current !== channelId) return;
-    liveChannelRef.current = '';
-    setLiveChannelId('');
-    setLiveText('');
-  }, []);
+  const resync = useCallback(async () => {
+    const active = ref.current.getSession().activeChannelId;
+    const channels = [...new Set([...Object.keys(engine.histories), active,
+      ...[...engine.runs.values()].map(run => run.channelId)].filter(Boolean))];
+    const snapshot = await engine.load(() => api.fetchChatSnapshot(channels));
+    void ref.current.syncWorkspace().catch(() => undefined);
+    if (ref.current.getSession().activeChannelId === active && snapshot.channels[active]) ref.current.setArtifacts(() => snapshot.channels[active]!.artifacts);
+    return snapshot.cursor;
+  }, [engine]);
 
-  const isActiveChannel = useCallback(
-    (channelId: string) => deps.getSession().activeChannelId === channelId,
-    [deps],
-  );
+  const send = useCallback(async (text: string, retryClientMessageId?: string) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    const { activeAgentId, activeChannel, activeChannelId, model, ownerName } = ref.current.getSession();
+    if (!activeChannelId) return;
+    const key = retryClientMessageId ?? crypto.randomUUID();
+    engine.beginSend(activeChannelId, key, trimmed, ownerName);
+    if (activeChannel.kind === 'room') ref.current.setSilentNotes(prev => ({ ...prev, [activeChannelId]: [] }));
+    try {
+      if (!activeAgentId) throw new Error('后端未连接，找不到智能体');
+      const receipt = activeChannel.kind === 'room'
+        ? await api.sendRoomMessage(activeChannelId, { text: trimmed, model: model || undefined, ownerName, clientMessageId: key })
+        : await api.sendChat({ botId: activeAgentId, message: trimmed, model: model || undefined, clientMessageId: key });
+      engine.acceptReceipt(receipt);
+    } catch (error) { engine.sendFailed(key, error instanceof Error ? error.message : String(error)); }
+  }, [engine]);
 
-  /** 发一句话：先落占位、后端回执；回合照跑，其余都靠事件回来 */
-  const send = useCallback(
-    async (text: string) => {
-      const trimmed = text.trim();
-      if (!trimmed) return;
-      // 幂等键：同一键重复提交，服务端返回原消息（E3.2）
-      const clientMessageId = crypto.randomUUID();
-      const { activeAgentId, activeChannel, activeChannelId, model, ownerName } = deps.getSession();
-      if (!activeAgentId) {
-        deps.setChannelHistories((prev) => ({
-          ...prev,
-          [activeChannelId]: [
-            ...(prev[activeChannelId] ?? []),
-            errorMessage(activeChannel, '后端未连接，找不到这个频道对应的智能体'),
-          ],
-        }));
-        return;
-      }
-
-      const placeholder: DisplayMessage = {
-        id: `pending-${clientMessageId}`,
-        role: 'user',
-        senderName: ownerName,
-        content: trimmed,
-        toolCalls: [],
-        createdAt: now(),
-      };
-      deps.setChannelHistories((prev) => ({
-        ...prev,
-        [activeChannelId]: [...(prev[activeChannelId] ?? []), placeholder],
-      }));
-      pendingTextRef.current.set(activeChannelId, trimmed);
-      bumpBusy(activeChannelId, 1);
-      if (activeChannel.kind === 'room') {
-        deps.setSilentNotes((prev) => ({ ...prev, [activeChannelId]: [] }));
-      } else {
-        liveChannelRef.current = activeChannelId;
-        setLiveChannelId(activeChannelId);
-        setLiveText('');
-      }
-
-      try {
-        if (activeChannel.kind === 'room') {
-          await api.sendRoomMessage(activeChannelId, {
-            text: trimmed,
-            model: model || undefined,
-            ownerName,
-            clientMessageId,
-          });
-        } else {
-          const receipt = await api.sendChat({
-            botId: activeAgentId,
-            message: trimmed,
-            model: model || undefined,
-            clientMessageId,
-          });
-          if (receipt.duplicate) {
-            // 重复提交：占位换成原消息；历史里已经有就只摘占位，不重复渲染
-            deps.setChannelHistories((prev) => {
-              const list = prev[activeChannelId] ?? [];
-              if (list.some((item) => item.id === receipt.messageId)) {
-                return {
-                  ...prev,
-                  [activeChannelId]: list.filter((item) => item.id !== placeholder.id),
-                };
-              }
-              return {
-                ...prev,
-                [activeChannelId]: list.map((item) =>
-                  item.id === placeholder.id ? { ...item, id: receipt.messageId ?? item.id } : item,
-                ),
-              };
-            });
-          }
-        }
-      } catch (error) {
-        const reason = error instanceof Error ? error.message : String(error);
-        pendingTextRef.current.delete(activeChannelId);
-        bumpBusy(activeChannelId, -1);
-        clearLive(activeChannelId);
-        deps.setChannelHistories((prev) => ({
-          ...prev,
-          [activeChannelId]: [
-            ...(prev[activeChannelId] ?? []),
-            errorMessage(activeChannel, `发送失败：${reason}`, trimmed),
-          ],
-        }));
-      }
-    },
-    [deps, bumpBusy, clearLive],
-  );
-
-  const handleAgentEvent = useCallback(
-    (channelId: string, event: AgentEvent) => {
-      if (event.type === 'delta') {
-        if (liveChannelRef.current === channelId) setLiveText((current) => current + event.text);
-        return;
-      }
-      if (event.type === 'interaction') {
-        deps.handleInteractionRequest(event.request);
-        return;
-      }
-      if (event.type === 'interaction_closed') {
-        deps.handleInteractionClosed(event.id);
-        return;
-      }
-      if (event.type === 'message' && event.message.role === 'assistant' && event.message.content.type === 'text') {
-        if (liveChannelRef.current === channelId) setLiveText('');
-      }
-      deps.setChannelHistories((prev) => ({
-        ...prev,
-        [channelId]: applyEvent(prev[channelId] ?? [], event),
-      }));
-      if (event.type === 'message' && event.message.content.type === 'tool_calls') {
-        for (const call of event.message.content.calls) {
-          try {
-            const args = JSON.parse(call.arguments || '{}') as { path?: unknown };
-            if (typeof args.path !== 'string' || !args.path) continue;
-            const path = args.path;
-            deps.setArtifacts((curr) =>
-              curr.some((item) => item.path === path)
-                ? curr
-                : [...curr, { path, tool: call.name, createdAt: now() }],
-            );
-          } catch {
-            // 参数还不是合法 JSON
-          }
-        }
-      }
-    },
-    [deps],
-  );
-
-  const handleRoomEvent = useCallback(
-    (channelId: string, event: RoomEvent) => {
-      if (event.type === 'room_message') {
-        const message = event.message;
-        deps.setChannelHistories((prev) => {
-          const list = prev[channelId] ?? [];
-          if (message.senderKind === 'user') {
-            const index = list.findIndex(
-              (item) => item.id.startsWith('pending-') && item.content === message.text,
-            );
-            if (index >= 0) {
-              const next = [...list];
-              next[index] = {
-                ...next[index]!,
-                id: message.id,
-                senderName: message.senderName,
-                createdAt: new Date(message.createdAt).toISOString(),
-              };
-              return { ...prev, [channelId]: next };
-            }
-          }
-          if (list.some((item) => item.id === message.id)) return prev;
-          return {
-            ...prev,
-            [channelId]: [
-              ...list,
-              {
-                id: message.id,
-                role: message.senderKind === 'user' ? 'user' : 'assistant',
-                content: message.text,
-                senderName: message.senderName,
-                senderColor: message.senderColor,
-                toolCalls: [],
-                createdAt: new Date(message.createdAt).toISOString(),
-              },
-            ],
-          };
-        });
-        return;
-      }
-      if (event.type === 'round_start') {
-        // 只在正看着这个群时播放「谁在回合中」，后台回合不打扰当前频道
-        if (!isActiveChannel(channelId)) return;
-        const color =
-          deps.agentsRef.current.find((bot) => bot.id === event.agentId)?.color ?? '#8b5cf6';
-        deps.setRoundActive({ id: event.agentId, name: event.agentName, color });
-        return;
-      }
+  const handleEntry = useCallback((entry: api.JournalEntry) => {
+    if (!engine.applyEntry(entry)) return;
+    const deps = ref.current;
+    const channelId = entry.roomId ?? entry.agentId;
+    if (!channelId) return;
+    if (entry.kind === 'agent') {
+      const event = entry.payload as AgentEvent;
+      if (event.type === 'interaction' && engine.interactions.some(item => item.id === event.request.id)) deps.handleInteractionRequest(event.request);
+      if (event.type === 'interaction_closed' && !engine.interactions.some(item => item.id === event.id)) deps.handleInteractionClosed(event.id);
+      const artifact = artifactFromEvent(event);
+      if (artifact && deps.getSession().activeChannelId === channelId) deps.setArtifacts(curr => curr.some(item => item.path === artifact.path) ? curr : [...curr, artifact]);
+    } else if (entry.kind === 'room') {
+      const event = entry.payload as RoomEvent;
       if (event.type === 'round_end') {
-        const outcome = event.outcome;
-        if (isActiveChannel(channelId)) deps.setRoundActive(null);
-        if (outcome.status !== 'spoke') {
-          deps.setSilentNotes((prev) => ({
-            ...prev,
-            [channelId]: [
-              ...(prev[channelId] ?? []),
-              `${outcome.agentName} ${outcome.status === 'error' ? '出错' : '看过，没开口'}`,
-            ],
-          }));
-        }
-        return;
+        if (event.outcome.status !== 'spoke') deps.setSilentNotes(prev => ({ ...prev, [channelId]: [...(prev[channelId] ?? []).slice(-19),
+          `${event.outcome.agentName} ${event.outcome.status === 'error' ? '出错' : '看过，没开口'}`] }));
       }
-      // fanout_done：这一轮结束，收掉回合气泡
-      if (isActiveChannel(channelId)) deps.setRoundActive(null);
-    },
-    [deps, isActiveChannel],
-  );
-
-  /** 订阅推来的事件：按频道路由（E3.4 第二步） */
-  const handleEntry = useCallback(
-    (entry: api.JournalEntry) => {
-      const channelId = entry.roomId ?? entry.agentId;
-      if (!channelId) return;
-
-      if (entry.kind === 'room') {
-        handleRoomEvent(channelId, entry.payload as RoomEvent);
-        return;
-      }
-      if (entry.kind === 'agent') {
-        // 群回合里的 agent 事件只关心交互卡；群消息走 room 事件
-        if (entry.roomId) {
-          const event = entry.payload as AgentEvent;
-          if (event.type === 'interaction') deps.handleInteractionRequest(event.request);
-          else if (event.type === 'interaction_closed') deps.handleInteractionClosed(event.id);
-          return;
-        }
-        handleAgentEvent(channelId, entry.payload as AgentEvent);
-        return;
-      }
-
-      const payload = entry.payload as { phase?: string; stopReason?: string; message?: string };
-      if (payload.phase === 'done') {
-        bumpBusy(channelId, -1);
-        pendingTextRef.current.delete(channelId);
-        clearLive(channelId);
-        if (payload.stopReason === 'parked') {
-          deps.setNotices((prev) => ({
-            ...prev,
-            [channelId]: [
-              ...(prev[channelId] ?? []).slice(-4),
-              '⏸ 有一条任务被新指令插队挂起，做完手头的事会自动接着做',
-            ],
-          }));
-        }
-        // 忙完拉真相：历史取服务端为准，侧边栏/未读一起对齐
-        void deps.reloadChannel(channelId);
-        void deps.syncWorkspace();
+    } else {
+      const payload = entry.payload as { phase?: string; stopReason?: string };
+      if (payload.phase === 'done' || payload.phase === 'error') {
+        if (payload.stopReason === 'parked') deps.setNotices(prev => ({ ...prev, [channelId]: [...(prev[channelId] ?? []).slice(-4), '⏸ 原任务已挂起，新任务结束后会继续。'] }));
+        void reloadChannel(channelId).catch(() => undefined);
+        void deps.syncWorkspace().catch(() => undefined);
         deps.onMemoryBump();
-        return;
       }
-      if (payload.phase === 'error') {
-        bumpBusy(channelId, -1);
-        clearLive(channelId);
-        const retryText = pendingTextRef.current.get(channelId);
-        pendingTextRef.current.delete(channelId);
-        const channel =
-          deps.getChannel(channelId) ?? { id: channelId, name: '同事', time: '', lastMessage: '' };
-        deps.setChannelHistories((prev) => ({
-          ...prev,
-          [channelId]: [
-            ...(prev[channelId] ?? []),
-            errorMessage(channel, `执行出错：${payload.message ?? '未知错误'}`, retryText),
-          ],
-        }));
-      }
-    },
-    [deps, bumpBusy, clearLive, handleAgentEvent, handleRoomEvent],
-  );
+    }
+  }, [engine, reloadChannel]);
 
-  return { send, handleEntry, busy, liveText, liveChannelId };
+  // 控制面对账：最后一个终态事件丢失或半开连接也不会永远显示“处理中”。
+  useEffect(() => {
+    let inFlight = false;
+    const timer = setInterval(() => {
+      if (!engine.busy || inFlight) return;
+      inFlight = true;
+      void resync().catch(() => undefined).finally(() => { inFlight = false; });
+    }, 10_000);
+    return () => clearInterval(timer);
+  }, [engine, resync]);
+  return { send, handleEntry, reloadChannel, resync, busy: engine.busy, respondingChannelIds: engine.respondingChannelIds };
 }

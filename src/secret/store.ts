@@ -1,5 +1,6 @@
-import { mkdir, readFile, writeFile, chmod } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { readFile, chmod } from 'node:fs/promises';
+import { join } from 'node:path';
+import { isMissingFile, writeJsonAtomic } from '../storage/atomic-json.js';
 
 interface SecretRecord {
   name: string;
@@ -20,6 +21,7 @@ interface SecretRecord {
  */
 export class SecretStore {
   private cache: SecretRecord[] | null = null;
+  private loading?: Promise<SecretRecord[]>;
   private readonly file: string;
 
   constructor(dataDir: string) {
@@ -68,22 +70,30 @@ export class SecretStore {
 
   private async load(): Promise<SecretRecord[]> {
     if (this.cache) return this.cache;
-    let list: SecretRecord[] = [];
-    try {
-      const raw = await readFile(this.file, 'utf8');
-      const parsed = JSON.parse(raw) as unknown;
-      if (Array.isArray(parsed)) list = parsed as SecretRecord[];
-    } catch {
-      list = [];
+    if (!this.loading) {
+      this.loading = (async () => {
+        let list: SecretRecord[] = [];
+        try {
+          const raw = await readFile(this.file, 'utf8');
+          const parsed = JSON.parse(raw) as unknown;
+          if (Array.isArray(parsed)) list = parsed as SecretRecord[];
+        } catch (error) {
+          if (!isMissingFile(error)) throw error;
+        }
+        this.cache = list;
+        return list;
+      })();
     }
-    this.cache = list;
-    return list;
+    try {
+      return await this.loading;
+    } finally {
+      this.loading = undefined;
+    }
   }
 
   private async save(list: SecretRecord[]): Promise<void> {
     this.cache = list;
-    await mkdir(dirname(this.file), { recursive: true });
-    await writeFile(this.file, JSON.stringify(list, null, 2), { encoding: 'utf8', mode: 0o600 });
+    await writeJsonAtomic(this.file, list, { mode: 0o600 });
     await chmod(this.file, 0o600).catch(() => undefined);
   }
 }

@@ -1,4 +1,7 @@
 import { defineTool } from '../tool.js';
+import type { DeliveryAttempt } from '../tool.js';
+import { validateInputImages, type InputImage } from '../../shared/contracts/input-image.js';
+import { ControlError } from '../../storage/runtime-control-store.js';
 
 /**
  * SendToAgent —— 参见 docs/工具参考.md「协作与后台任务」。
@@ -6,14 +9,14 @@ import { defineTool } from '../tool.js';
  * 私发另一个智能体，或发到自己所在的群。发出去立刻返回，不等回复；
  * 回复是之后的一个新回合（见 docs/架构设计.md「插话、停止和等待」：投递即结束）。
  *
- * 与 Grok 的差异记录：images 参数接受但忽略（消息面还没有附件气泡）；
- * priority=true 只表达紧急/叫停，插队用；真正的停止传播由运行时按任务树下发。
+ * 1:1 支持图片 URL；priority 只插队，不打断正在执行的回合。
+ * 投递不是派工，不进入发送方停止树。
  * target_id 支持同事 id / 名字、群 id / 群名（群里被 @ 时简报里带 id）。
  */
 
 export function createSendToAgentTool(options: {
   maxDepth: number;
-  resolveTarget: (targetId: string) => Promise<
+  resolveTarget: (targetId: string, callerId: string) => Promise<
     | { kind: 'agent'; id: string; name: string }
     | { kind: 'room'; id: string; name: string }
     | undefined
@@ -22,10 +25,13 @@ export function createSendToAgentTool(options: {
     targetId: string;
     kind: 'agent' | 'room';
     text: string;
+    images?: InputImage[];
     priority: boolean;
     callerId: string;
-    /** 发信来源（发起回合的树 id）：收件侧保留这场传话的关联 */
+    /** 仅可观测关联，不是停止树所有权。 */
     correlationId?: string;
+    depth?: number;
+    signal?: AbortSignal;
   }) => Promise<string>;
 }) {
   return defineTool<{
@@ -45,53 +51,68 @@ export function createSendToAgentTool(options: {
       type: 'object',
       properties: {
         target_id: { type: 'string', description: '同事的 id 或名字；群则给群 id 或群名（必须是你所在的群）' },
-        message: { type: 'string', description: '要传的话，只转可执行的那一句' },
+        message: { type: 'string', description: '要发送的正文：可以是问候、问题、信息或明确请求。用户指定原话时按原意和措辞发送，不要擅自补成任务' },
         images: {
           type: 'array',
-          description: '暂不支持附件，传了会被忽略',
-          properties: {
-            url: { type: 'string' },
-            alt: { type: 'string' },
-          },
+          maxItems: 4,
+          description: '仅 1:1 支持，最多 4 张 HTTP(S) 图片 URL，收件模型须支持视觉；不支持本地路径/base64',
+          items: { type: 'object', required: ['url'], properties: {
+            url: { type: 'string', maxLength: 2048 },
+            alt: { type: 'string', maxLength: 300 },
+          } },
         },
         priority: { type: 'boolean', description: '紧急/叫停时插队' },
       },
       required: ['target_id', 'message'],
     },
     async execute({ target_id, message, images, priority }, context) {
+      const attachments = validateInputImages(images);
       if ((context.agentChainDepth ?? 0) >= options.maxDepth) {
-        throw new Error('传话链已达上限，请直接把结论说给用户');
+        throw new ControlError('传话链已达上限，请停止继续转发；只有主人需要知道的实质结论才单独告知', 'CHAIN_DEPTH_EXCEEDED');
       }
       const text = typeof message === 'string' ? message.trim() : '';
-      if (!text) throw new Error('message 不能为空');
+      if (!text) throw new ControlError('message 不能为空', 'INVALID_ARGUMENTS');
       const wanted = target_id?.trim();
-      if (!wanted) throw new Error('target_id 不能为空');
+      if (!wanted) throw new ControlError('target_id 不能为空', 'INVALID_ARGUMENTS');
+      const attempt: DeliveryAttempt = { target: wanted, status: 'pending' };
+      context.turnState?.deliveryAttempts?.push(attempt);
+      if (context.turnState && !context.turnState.deliveryAttempts) context.turnState.deliveryAttempts = [attempt];
 
-      const target = await options.resolveTarget(wanted);
-      if (!target) {
-        throw new Error(`找不到收件方「${wanted}」：既不是同事（id 或名字），也不是你所在的群`);
+      try {
+        const target = await options.resolveTarget(wanted, context.agentId);
+        if (!target) {
+          throw new ControlError(`找不到收件方「${wanted}」：既不是同事（id 或名字），也不是你所在的群`, 'TARGET_NOT_FOUND');
+        }
+        attempt.kind = target.kind;
+        attempt.targetId = target.id;
+        attempt.targetName = target.name;
+        if (target.kind === 'agent' && target.id === context.agentId) {
+          throw new ControlError('不要发给自己', 'UNAUTHORIZED_ACTION');
+        }
+        if (target.kind === 'room' && target.id === context.room?.roomId) {
+          throw new ControlError('当前群请用 SendToUser 发言，不要重新群发唤醒整组', 'UNAUTHORIZED_ACTION');
+        }
+        if (target.kind === 'room' && attachments.length) {
+          throw new ControlError('群里只有纯文本；图片请 1:1 发给同事', 'INVALID_IMAGE');
+        }
+        context.signal?.throwIfAborted();
+        const result = await options.dispatch({
+          targetId: target.id,
+          kind: target.kind,
+          text,
+          ...(attachments.length ? { images: attachments } : {}),
+          priority: target.kind === 'agent' && priority === true,
+          callerId: context.agentId,
+          correlationId: context.turnState?.treeId,
+          depth: (context.agentChainDepth ?? 0) + 1,
+          signal: context.signal,
+        });
+        attempt.status = 'ok';
+        return result;
+      } catch (error) {
+        attempt.status = 'error';
+        throw error;
       }
-      if (target.kind === 'agent' && target.id === context.agentId) {
-        throw new Error('不要发给自己');
-      }
-
-      // 派活记账（见 docs/架构设计.md「插话、停止和等待」）：停止令沿这笔记往下传
-      context.turnState?.registerChild?.({
-        agentId: target.id,
-        via: target.kind === 'agent' ? 'dm' : 'room',
-        roomId: target.kind === 'room' ? target.id : undefined,
-      });
-
-      const reply = await options.dispatch({
-        targetId: target.id,
-        kind: target.kind,
-        text,
-        priority: priority === true,
-        callerId: context.agentId,
-        correlationId: context.turnState?.treeId,
-      });
-      const note = Array.isArray(images) && images.length > 0 ? '（附件暂不支持，已忽略）' : '';
-      return `${reply}${note}`;
     },
   });
 }

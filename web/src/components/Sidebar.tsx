@@ -32,6 +32,9 @@ interface SidebarProps {
   onRename: (channel: ChannelItem) => void;
   /** 主人显示名（设置里可改） */
   ownerName?: string;
+  width?: number;
+  onResize?: (width: number) => void;
+  onResizingChange?: (resizing: boolean) => void;
 }
 
 interface MenuState {
@@ -54,7 +57,11 @@ export function Sidebar({
   onEdit,
   onRename,
   ownerName = '主人',
+  width = 260,
+  onResize,
+  onResizingChange,
 }: SidebarProps) {
+  const isMini = width <= 90;
   const [query, setQuery] = useState('');
   const [menu, setMenu] = useState<MenuState | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -79,13 +86,54 @@ export function Sidebar({
     };
   }, [menu, closeMenu]);
 
+  const onMouseDownResizer = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      const startX = e.clientX;
+      const startWidth = width;
+      onResizingChange?.(true);
+
+      const onMouseMove = (moveEvent: MouseEvent) => {
+        const delta = moveEvent.clientX - startX;
+        let newWidth = startWidth + delta;
+
+        // 拉到小于 160px，自动吸附锁定为 70px (Mini 折叠模式)
+        if (newWidth < 160) {
+          newWidth = 70;
+        } else {
+          newWidth = Math.min(450, Math.max(200, newWidth));
+        }
+
+        onResize?.(newWidth);
+      };
+
+      const onMouseUp = () => {
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        onResizingChange?.(false);
+      };
+
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
+    },
+    [width, onResize, onResizingChange],
+  );
+
+  const onDoubleClickResizer = useCallback(() => {
+    onResize?.(isMini ? 260 : 70);
+  }, [isMini, onResize]);
+
   const keyword = query.trim().toLowerCase();
   const visibleChannels = keyword
     ? channels.filter((item) => item.name.toLowerCase().includes(keyword) || item.lastMessage.toLowerCase().includes(keyword))
     : channels;
 
   return (
-    <aside className="app-sidebar">
+    <aside className={`app-sidebar${isMini ? ' mini' : ''}`} style={{ width }}>
       {/* 1. macOS 系统原生红绿灯占位区域 + Plus Action */}
       <div className="sidebar-window-header">
         <div className="traffic-lights-spacer" />
@@ -109,7 +157,7 @@ export function Sidebar({
             type="text"
             className="sidebar-search-input"
             value={query}
-            placeholder="搜索会话与智能体…"
+            placeholder="搜索"
             onChange={(e) => setQuery(e.target.value)}
           />
           {query ? (
@@ -167,7 +215,7 @@ export function Sidebar({
                   <BotAvatar
                     name={channel.name}
                     color={channel.color || '#8b5cf6'}
-                    size={38}
+                    size={36}
                   />
                 </div>
 
@@ -179,10 +227,8 @@ export function Sidebar({
                         <span className="channel-tag group">群</span>
                       ) : null}
                     </div>
-                    {channel.unread ? (
-                      <span className="channel-unread">
-                        {channel.unread > 99 ? '99+' : channel.unread}
-                      </span>
+                    {isActive || channel.unread ? (
+                      <span className="channel-blue-dot" />
                     ) : (
                       <span className="channel-time">{channel.time}</span>
                     )}
@@ -206,7 +252,17 @@ export function Sidebar({
           title="模型服务与环境配置"
         >
           <IconGrid size={17} />
-          <span>设置与模型</span>
+          <span>市场</span>
+        </button>
+
+        {/* Mini 模式下的居中新建按钮 */}
+        <button
+          type="button"
+          className="sidebar-mini-plus-btn"
+          onClick={onNew}
+          title="新建会话或智能体"
+        >
+          <IconPlus size={18} />
         </button>
 
         <button
@@ -216,11 +272,21 @@ export function Sidebar({
           title="用户与模型偏好设置"
         >
           <div className="user-avatar-badge">
-            {ownerName.replace(/\s+/g, '').slice(0, 2).toUpperCase() || '主'}
+            {ownerName.trim().split(/\s+/).length >= 2
+              ? (ownerName.trim().split(/\s+/)[0]![0]! + ownerName.trim().split(/\s+/)[1]![0]!).toUpperCase()
+              : (ownerName.trim().slice(0, 2).toUpperCase() || 'LZ')}
           </div>
           <span className="user-name">{ownerName}</span>
         </button>
       </div>
+
+      {/* 侧边栏拖拽手柄 */}
+      <div
+        className="sidebar-resizer"
+        title="拖动调整侧边栏宽度，向左拖拽可折叠为图标模式，双击快速切换"
+        onMouseDown={onMouseDownResizer}
+        onDoubleClick={onDoubleClickResizer}
+      />
 
       {menu ? (
         <div
