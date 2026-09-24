@@ -3,10 +3,10 @@
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: var(--panel);
-  border-left: 1px solid var(--sidebar-border);
+  background: var(--bg-sidebar);
+  border-left: 1px solid var(--border);
   overflow: hidden;
-  z-index: 15;
+z-index: var(--z-panel);
 }
 
 .drawer .swap {
@@ -23,8 +23,8 @@
   align-items: center;
   gap: 4px;
   padding: 10px 14px;
-  border-bottom: 1px solid var(--line);
-  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-sidebar);
   -webkit-app-region: drag;
 }
 
@@ -32,20 +32,20 @@
   padding: 6px 12px;
   border-radius: var(--r-sm);
   font-size: 12.5px;
-  color: var(--fg-muted);
+  color: var(--text-secondary);
   font-weight: 500;
   transition: background var(--dur-fast), color var(--dur-fast);
   -webkit-app-region: no-drag;
 }
 
 .drawer-tab:hover {
-  background: var(--hover);
-  color: var(--fg);
+  background: var(--bg-hover);
+  color: var(--text);
 }
 
 .drawer-tab.active {
-  background: var(--active);
-  color: var(--fg);
+  background: var(--bg-active);
+  color: var(--text);
 }
 
 .drawer-tabs .screen-btn {
@@ -60,14 +60,14 @@
   min-height: 0;
   height: 100%;
   min-width: 0;
-  background: var(--panel);
+  background: var(--bg-sidebar);
   overflow: hidden;
 }
 
 .screen.fullscreen {
   position: fixed;
   inset: 0;
-  z-index: 90;
+z-index: var(--z-modal);
   background: var(--bg);
 }
 
@@ -76,7 +76,7 @@
   align-items: center;
   gap: 8px;
   padding: 14px 16px;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
 
@@ -84,7 +84,7 @@
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--fg-faint);
+  background: var(--text-tertiary);
 }
 
 .screen-dot[data-busy='true'] {
@@ -96,7 +96,7 @@
   flex: 1;
   font-size: 13px;
   font-weight: 600;
-  color: var(--fg);
+  color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -108,14 +108,14 @@
   width: 28px;
   height: 28px;
   border-radius: var(--r-sm);
-  color: var(--fg-muted);
+  color: var(--text-secondary);
   transition: background var(--dur-fast), color var(--dur-fast);
   -webkit-app-region: no-drag;
 }
 
 .screen-btn:hover {
-  background: var(--hover);
-  color: var(--fg);
+  background: var(--bg-hover);
+  color: var(--text);
 }
 
 .screen-body {
@@ -130,9 +130,9 @@
 }
 
 .screen-stage {
-  border: 1px solid var(--card-border);
+  border: 1px solid var(--border);
   border-radius: var(--r-md);
-  background: var(--sunken);
+  background: var(--bg-subtle);
   overflow: hidden;
 }
 
@@ -141,7 +141,7 @@
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.02em;
-  color: var(--fg-faint);
+  color: var(--text-tertiary);
 }
 
 .tool-timeline {
@@ -162,14 +162,14 @@
   justify-content: center;
   padding: 36px 16px;
   gap: 12px;
-  color: var(--fg-faint);
+  color: var(--text-tertiary);
   text-align: center;
 }
 
 .screen-files {
-  border: 1px solid var(--card-border);
+  border: 1px solid var(--border);
   border-radius: var(--r-md);
-  background: var(--sunken);
+  background: var(--bg-subtle);
   padding: 12px;
 }
 
@@ -179,7 +179,7 @@
   gap: 6px;
   font-size: 12px;
   font-weight: 600;
-  color: var(--fg-muted);
+  color: var(--text-secondary);
   margin-bottom: 8px;
 }
 
@@ -188,12 +188,12 @@
   font-size: 11px;
   padding: 1px 6px;
   border-radius: var(--r-full);
-  background: var(--panel);
+  background: var(--bg-sidebar);
 }
 
 .screen-files-empty {
   font-size: 12px;
-  color: var(--fg-faint);
+  color: var(--text-tertiary);
   text-align: center;
   padding: 12px 0;
 }
@@ -211,7 +211,7 @@
   gap: 8px;
   padding: 6px 8px;
   border-radius: var(--r-xs);
-  background: var(--panel);
+  background: var(--bg-sidebar);
   font-size: 12px;
 }
 
@@ -221,7 +221,7 @@
   padding: 1px 4px;
   border-radius: var(--r-xs);
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .file-name {
@@ -233,7 +233,7 @@
 
 .file-tool {
   font-size: 10px;
-  color: var(--fg-faint);
+  color: var(--text-tertiary);
 }
 
 /* ── Memory Panel ─────────────────────────────────────────── */
@@ -243,7 +243,7 @@
   flex: 1;
   min-height: 0;
   height: 100%;
-  background: var(--panel);
+  background: var(--bg-sidebar);
   overflow: hidden;
 }
 
@@ -255,7 +255,7 @@
 .memory-sub {
   flex: 1;
   font-size: 12px;
-  color: var(--fg-muted);
+  color: var(--text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -284,16 +284,16 @@
   border-radius: var(--r-full);
   font-size: 11px;
   font-family: var(--mono);
-  border: 1px solid var(--line);
-  color: var(--fg-muted);
-  background: var(--sunken);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  background: var(--bg-subtle);
   cursor: pointer;
   transition: background var(--dur-fast), border-color var(--dur-fast), color var(--dur-fast);
 }
 
 button.tier-pill:hover {
-  background: var(--hover);
-  color: var(--fg);
+  background: var(--bg-hover);
+  color: var(--text);
 }
 
 .tier-pill.active {
@@ -302,35 +302,35 @@ button.tier-pill:hover {
 }
 
 .tier-pill.portrait {
-  color: var(--accent);
+  color: var(--accent-text);
   border-color: var(--accent-glow);
   background: var(--accent-soft);
 }
 
 .tier-pill.portrait.active {
-  background: var(--accent);
-  color: #ffffff;
+  background: var(--accent-strong);
+color: var(--on-accent);
 }
 
 .tier-pill.log {
-  color: var(--fg);
+  color: var(--text);
 }
 
 .tier-pill.log.active {
-  background: var(--raised);
-  border-color: var(--line-strong);
+  background: var(--bg-card);
+  border-color: var(--border-strong);
 }
 
 .tier-pill.scratch.active {
-  background: var(--raised);
-  border-color: var(--line-strong);
+  background: var(--bg-card);
+  border-color: var(--border-strong);
 }
 
 .memory-total {
   margin-left: auto;
   font-size: 11px;
   font-family: var(--mono);
-  color: var(--fg-faint);
+  color: var(--text-tertiary);
 }
 
 .memory-add {
@@ -338,9 +338,9 @@ button.tier-pill:hover {
   flex-direction: column;
   gap: 8px;
   padding: 12px;
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--border-strong);
   border-radius: var(--r-md);
-  background: var(--sunken);
+  background: var(--bg-subtle);
 }
 
 .memory-add textarea {
@@ -349,7 +349,7 @@ button.tier-pill:hover {
   resize: none;
   background: transparent;
   font-size: 13px;
-  color: var(--fg);
+  color: var(--text);
 }
 
 .memory-add-row {
@@ -362,10 +362,10 @@ button.tier-pill:hover {
   flex: 1;
   min-width: 0;
   padding: 6px 8px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--border);
   border-radius: var(--r-sm);
-  background: var(--panel);
-  color: var(--fg);
+  background: var(--bg-sidebar);
+  color: var(--text);
   font-size: 12px;
   outline: none;
 }
@@ -379,8 +379,8 @@ button.tier-pill:hover {
 }
 
 .btn.primary {
-  background: var(--accent);
-  color: #ffffff;
+  background: var(--accent-strong);
+color: var(--on-accent);
 }
 
 .btn.primary:hover:not(:disabled) {
@@ -415,7 +415,7 @@ button.tier-pill:hover {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--fg-faint);
+  background: var(--text-tertiary);
 }
 
 .scope-dot.self { background: var(--ok); }
@@ -435,23 +435,23 @@ button.tier-pill:hover {
   gap: 4px;
   padding: 10px;
   border-radius: var(--r-sm);
-  background: var(--sunken);
-  border: 1px solid var(--line);
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
 }
 
 .memory-tier {
   font-size: 10px;
   padding: 1px 6px;
   border-radius: var(--r-full);
-  background: var(--panel);
-  color: var(--fg-muted);
+  background: var(--bg-sidebar);
+  color: var(--text-secondary);
   width: fit-content;
 }
 
 .memory-text {
   font-size: 12.5px;
   line-height: 1.5;
-  color: var(--fg);
+  color: var(--text);
 }
 
 .memory-meta {
@@ -469,23 +469,23 @@ button.tier-pill:hover {
 
 .memory-act {
   font-size: 11px;
-  color: var(--fg-faint);
+  color: var(--text-tertiary);
   padding: 2px 6px;
   border-radius: var(--r-xs);
 }
 
 .memory-act:hover {
-  background: var(--hover);
-  color: var(--fg);
+  background: var(--bg-hover);
+  color: var(--text);
 }
 
 .memory-act.danger:hover {
-  color: var(--bad);
+  color: var(--danger);
 }
 
 .memory-empty {
   text-align: center;
-  color: var(--fg-faint);
+  color: var(--text-tertiary);
   font-size: 13px;
   padding: 40px 16px;
 }
@@ -497,13 +497,13 @@ button.tier-pill:hover {
   flex: 1;
   min-height: 0;
   height: 100%;
-  background: var(--panel);
+  background: var(--bg-sidebar);
   overflow: hidden;
 }
 
 .field-hint {
   font-size: 12px;
-  color: var(--fg-muted);
+  color: var(--text-secondary);
   line-height: 1.5;
 }
 
@@ -513,14 +513,14 @@ button.tier-pill:hover {
   gap: 6px;
   padding: 10px;
   border-radius: var(--r-md);
-  background: var(--sunken);
-  border: 1px solid var(--line);
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
 }
 
 .member-add-label {
   font-size: 11px;
   font-weight: 600;
-  color: var(--fg-faint);
+  color: var(--text-tertiary);
 }
 
 .member-option {
@@ -535,24 +535,24 @@ button.tier-pill:hover {
 }
 
 .member-option:hover {
-  background: var(--hover);
+  background: var(--bg-hover);
 }
 
 .member-option-name {
   font-size: 13px;
   font-weight: 500;
-  color: var(--fg);
+  color: var(--text);
 }
 
 .member-option-role {
   font-size: 11px;
-  color: var(--fg-faint);
+  color: var(--text-tertiary);
   flex: 1;
 }
 
 .member-option-mark {
   font-size: 14px;
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .member-row {
@@ -561,8 +561,8 @@ button.tier-pill:hover {
   gap: 10px;
   padding: 8px 10px;
   border-radius: var(--r-sm);
-  background: var(--sunken);
-  border: 1px solid var(--line);
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
 }
 
 .member-row-text {
@@ -574,12 +574,12 @@ button.tier-pill:hover {
 .member-row-name {
   font-size: 13px;
   font-weight: 500;
-  color: var(--fg);
+  color: var(--text);
 }
 
 .member-row-role {
   font-size: 11px;
-  color: var(--fg-faint);
+  color: var(--text-tertiary);
 }
 
 /* ── Bot Profile Drawer (Right Panel) ─────────────────────── */
@@ -591,7 +591,7 @@ button.tier-pill:hover {
   min-height: 0;
   height: 100%;
   padding: 28px 22px 36px 22px;
-  background: var(--panel);
+  background: var(--bg-sidebar);
   box-sizing: border-box;
   overflow-y: auto;
   overflow-x: hidden;
@@ -729,8 +729,8 @@ button.tier-pill:hover {
   width: 26px;
   height: 26px;
   border-radius: 50%;
-  background: #ffffff;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.25);
+background: var(--bg-card);
+box-shadow: var(--shadow-md);
   transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
   transform: translateX(0);
 }

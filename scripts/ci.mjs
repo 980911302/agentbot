@@ -12,6 +12,7 @@ const steps = [
   ['单元测试', ['npm', 'test']],
   ['双端构建', ['npm', 'run', 'build:all']],
   ['文档检查', ['node', 'scripts/check-docs.mjs']],
+  ['UI 令牌检查', ['node', 'scripts/check-ui-tokens.mjs']],
 ];
 
 for (const [name, command] of steps) {

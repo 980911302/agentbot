@@ -610,7 +610,7 @@ export function SettingsDialog({
                       <span className="settings-row-name">已挂载原生工具</span>
                       <span className="settings-row-desc">Shell 命令行、工作区文件读写、多智能体协同路由</span>
                     </div>
-                    <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--accent)' }}>
+                    <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--accent-text)' }}>
                       {toolCount} 项工具能力
                     </span>
                   </div>
@@ -754,7 +754,7 @@ export function SettingsDialog({
 
                 <div className="provider-models-list-box">
                   {(!selectedProvider.models || selectedProvider.models.length === 0) ? (
-                    <div style={{ padding: '16px', color: 'var(--fg-faint)', fontSize: '13px', textAlign: 'center' }}>
+                    <div style={{ padding: '16px', color: 'var(--text-tertiary)', fontSize: '13px', textAlign: 'center' }}>
                       暂无模型，请点击下方 "+ 添加模型"
                     </div>
                   ) : (
@@ -859,7 +859,7 @@ export function SettingsDialog({
                     <span className="provider-models-title">模型列表</span>
                   </div>
                   <div className="provider-models-list-box">
-                    <div style={{ padding: '16px', color: 'var(--fg-faint)', fontSize: '13px', textAlign: 'center' }}>
+                    <div style={{ padding: '16px', color: 'var(--text-tertiary)', fontSize: '13px', textAlign: 'center' }}>
                       启用此服务商后显示其模型
                     </div>
                   </div>
@@ -868,7 +868,7 @@ export function SettingsDialog({
 
               {/* 底部保存与提示条 */}
               <div className="provider-footer-save-bar">
-                <span style={{ fontSize: '12px', color: saveTip ? 'var(--ok)' : 'var(--fg-faint)' }}>
+                <span style={{ fontSize: '12px', color: saveTip ? 'var(--ok)' : 'var(--text-tertiary)' }}>
                   {saveTip || '配置已自动保存并实时同步至 AgentBot'}
                 </span>
                 <button
@@ -882,7 +882,7 @@ export function SettingsDialog({
               </div>
             </div>
           ) : (
-            <div style={{ padding: '40px', textAlign: 'center', color: 'var(--fg-faint)' }}>
+            <div style={{ padding: '40px', textAlign: 'center', color: 'var(--text-tertiary)' }}>
               请在左侧选择或添加一个服务商
             </div>
           )}
@@ -1020,7 +1020,7 @@ export function SettingsDialog({
                     checked={modelInputThinking}
                     onChange={(e) => setModelInputThinking(e.target.checked)}
                   />
-                  <span style={{ fontSize: '13px', fontWeight: 500, color: 'var(--fg)' }}>
+                  <span style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text)' }}>
                     开启深度思考 / 推理模式 (Thinking Mode)
                   </span>
                 </label>
@@ -1051,7 +1051,7 @@ export function SettingsDialog({
                     checked={modelInputSetActive}
                     onChange={(e) => setModelInputSetActive(e.target.checked)}
                   />
-                  <span style={{ fontSize: '13px', color: 'var(--fg-muted)' }}>
+                  <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
                     设为当前使用的模型
                   </span>
                 </label>

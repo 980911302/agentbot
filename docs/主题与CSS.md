@@ -1,14 +1,14 @@
 # 主题与 CSS
 
-整理日期：2026-09-15
+整理日期：2026-09-25（令牌 v2 落地，UI-01）
 
-交互见 `UI交互与视觉.md`。本文只写颜色、字体、间距、时长、选择器和主题怎么切。数字以 `web/src/styles/01-tokens.css` 为准，两套主题已经写在文件里，不要再发明第三套主色。
+交互与组件规格见 `UI交互与视觉.md`。本文只写颜色、字体、间距、时长、选择器和主题怎么切。**数字唯一来源是 `web/src/styles/01-tokens.css`**，深浅两套都写在文件里，不要再发明第三套主色。当前主题为「白泽观智 v2」：浅色米纸底 + 古金强调，深色墨金。
 
 文件：
 
 | 文件 | 管什么 |
 | --- | --- |
-| `01-tokens.css` | 字号族、圆角、时长、曲线、明暗两套色 |
+| `01-tokens.css` | 全部设计令牌（两套主题），唯一定义处 |
 | `02-base.css` | reset、body、焦点环、滚动条 |
 | `03-layout.css` | `.app` 栅格、欢迎空态、右键菜单、未读、在场环 |
 | `04-sidebar.css` | 侧边栏 |
@@ -30,21 +30,14 @@ html[data-theme='dark'|'light']
 html.style.colorScheme = 同上
 ```
 
-`useTheme()`：
-
-- `preference === 'system'`：听 `prefers-color-scheme`，并 `addEventListener('change')`
-- 否则用存下来的值
-- `cycle()` 在当前实际主题的 dark/light 之间切，不经过 system
-- 默认：没有存过就当 `dark`（`stored()` 的 else）
-
 CSS 入口：
 
 ```css
-:root, :root[data-theme='dark'] { /* 暗色变量 */ }
-:root[data-theme='light'] { /* 亮色变量 */ }
+:root, :root[data-theme='light'] { /* 亮色变量 */ }
+:root[data-theme='dark'] { /* 暗色变量 */ }
 ```
 
-组件里**禁止**写死 `#060c13`。一律 `var(--bg)`。新颜色先加 token，再引用。
+组件里**禁止**写死颜色。一律 `var(--token)`。新令牌先加进 `01-tokens.css`（两套同时给值），再引用；本命令由 `scripts/check-ui-tokens.mjs` 在 `npm run ci` 里强制（见 §7）。
 
 `color-scheme` 必须跟主题走，否则原生滚动条、表单控件会反色。
 
@@ -52,220 +45,159 @@ CSS 入口：
 
 ## 2. 非颜色 token（两套主题共用）
 
-### 2.1 字体
+### 2.1 字体与字号刻度
 
 ```css
---sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'SF Pro Text',
-        'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei',
-        'Helvetica Neue', Arial, sans-serif;
---mono: 'JetBrains Mono', SFMono-Regular, ui-monospace, Menlo, Consolas, monospace;
+--sans / --serif / --mono   /* 中文优先 PingFang / 微软雅黑，不引思源、不加载网页字体 */
+--fs-xs: 11px    时间戳、徽标计数
+--fs-sm: 12px    侧栏预览、辅助说明、标签
+--fs-base: 14px  界面正文、按钮、输入
+--fs-md: 15px    聊天消息正文
+--fs-lg: 16px    面板标题、弹窗小标题
+--fs-xl: 18px    弹窗标题、顶栏名字
+--fs-2xl: 22px   空态标题、欢迎页
 ```
 
-中文优先 PingFang / 微软雅黑，不要再引思源、不要网页加载字体文件。
+`--serif`（Noto Serif SC 等）只用于品牌名、空态标题、首字头像。数字、路径、错误码用 `--mono`。同一视图最多三级字号；名字 600，其余 400/500，不用 700 以上。
 
-| 用途 | 大小 | 字重 | 行高 | 颜色 |
-| --- | --- | --- | --- | --- |
-| body | 14px | 400 | 1.55 | `--text` / `--fg` |
-| 侧边栏名字 | 13px | 550–600 | 1.3 | `--text` |
-| 侧边栏预览 | 12px | 400 | 1.35 | `--text-tertiary` |
-| 聊天正文 | 14.5–15px | 400 | 1.55 | `--text` |
-| 聊天名字 | 13px | 600 | 1.2 | `--text` |
-| 时间戳 | 10.5px | 400 | 1 | `--text-tertiary` |
-| 未读角标 | 10.5px | 650 | 1 | `#fff` 底 `--danger` 或 `--accent` |
-| `@` 高亮 | inherit | 600 | inherit | `--accent` 底 `color-mix(accent 16%)` |
-| 代码块 | 13px `--mono` | 400 | 1.5 | `--text-code` 底 `--bg-code` |
-| 行内代码 | 0.92em `--mono` | 500 | — | `--code-inline-fg` 底 `--code-inline-bg` |
-| 欢迎标题 | 28px | 700 | 1.3 | `--text`，字距 -0.025em |
-| 按钮 | 14px | 600 | 1 | 主按钮白字 |
-
-数字、路径、错误码用 `--mono`。
-
-### 2.2 圆角
+### 2.2 圆角、时长、曲线
 
 ```
---r-xs: 4px    骨架条、超小标签
---r-sm: 8px    输入、小按钮、右键行 hover
---r-md: 12px   右键菜单、选项按钮、默认控件
---r-lg: 16px   提示卡片、prompt 卡
---r-xl: 20px   大对话框
---r-2xl: 24px  极少用
+--r-xs: 4px    骨架条、超小标签        --dur-instant: 80ms   按下去
+--r-sm: 8px    输入、小按钮            --dur-fast: 140ms     hover 颜色、边框、小位移
+--r-md: 12px   右键菜单、选项按钮      --dur-base: 220ms     淡入、折叠、对话框
+--r-lg: 16px   提示卡片、prompt 卡     --dur-slow: 320ms     抽屉滑入
+--r-xl: 20px   大对话框、输入条        --ease: cubic-bezier(0.4, 0, 0.2, 1)  默认
+--r-2xl: 24px  极少用                  --ease-bounce: 少用，活头像可
 --r-full: 9999px  药丸、未读、开关
 ```
 
-头像跟形状走，不要一律 `border-radius: 50%`。复合群头像底层圆可以切圆，脸上的默认标不要切。
+允许的循环动画只有：活头像状态、骨架 shimmer、正在输入三点（见 §8）。
 
-### 2.3 时长与曲线
-
-```
---dur-instant: 80ms     按下去
---dur-fast: 140ms       hover 颜色、边框、小位移
---dur-base: 220ms       淡入、折叠、对话框
---dur-slow: 320ms       抽屉滑入
---ease: cubic-bezier(0.16, 1, 0.3, 1)          默认出场
---ease-standard: cubic-bezier(0.4, 0, 0.2, 1)
---ease-out: cubic-bezier(0.2, 0.8, 0.2, 1)     选项卡边框
---ease-in: cubic-bezier(0.4, 0, 1, 1)
---ease-bounce: cubic-bezier(0.34, 1.56, 0.64, 1)  少用，活头像可
-```
-
-侧边栏拖宽用 `180ms ease`，拖的过程中 `.app.resizing { transition: none }`。
-
-### 2.4 间距（建议用 4 的倍数，现码已大致如此）
+### 2.3 间距刻度（4 基数）
 
 ```
-4   图标与文字缝
-6   小缺口、未读内边
-8   行内 gap 默认
-10  表单行
-12  卡片内边、资料预览
-14  选项卡内边
-16  区块
-20  对话框头
-24  空态 padding
+--sp-1: 2px   图标与文字缝        --sp-6: 20px  对话框头
+--sp-2: 4px   小缺口、未读内边    --sp-7: 24px  空态 padding
+--sp-3: 8px   行内 gap 默认       --sp-8: 32px  区块
+--sp-4: 12px  卡片内边、资料预览  --sp-9: 40px
+--sp-5: 16px  表单行              --sp-10: 48px
 ```
 
-聊天列最大阅读宽约 820px（欢迎区已是），消息区左右 padding 24–32。
+组件内边距只取刻度值。
+
+### 2.4 层级与布局尺寸
+
+```
+--z-sidebar: 10   左侧栏
+--z-header: 20    聊天顶栏簇（吸顶头、流程条、输入条容器）
+--z-panel: 30     右侧面板、迷你抽屉
+--z-dropdown: 40  菜单、@ 弹出、浮层
+--z-modal: 50     对话框遮罩
+--z-nested: 55    二级弹窗覆盖层（设置里的供应商窗口）
+--z-toast: 60     Toast、离线条
+--z-tooltip: 70   右键菜单、最上层浮层
+
+--sidebar-w: 260px   侧栏宽（可拖 200–360；<160 吸附迷你 72px），App.tsx 内联覆盖
+--panel-w: 380px     右侧面板宽（可拖 320–480）
+--header-h: 52px     聊天顶栏、侧栏顶栏、面板顶栏统一
+--read-w: 768px      聊天阅读列与输入条最大宽度
+--row-h: 60px        侧栏同事/群行高
+```
+
+`z-index: 0/1` 只允许做组件内局部堆叠；浮层级一律用上面的令牌，禁止 9999。
 
 ---
 
-## 3. 暗色（默认）
+## 3. 颜色令牌
 
-气质：深夜底 `#060c13`，侧栏更暗 `#020408`，强调钴钢蓝 `#4f8dcc`。冷、克制，不要霓虹紫当主色（旧代码里 `@` 高亮还留着 `#a855f7` 兜底，应改成 `var(--accent)`）。
+### 3.1 语义命名（唯一一套，兼容别名已全部删除）
 
-### 3.1 背景（越上越亮一档）
+| 类别 | 令牌 | 浅色 | 深色 |
+| --- | --- | --- | --- |
+| 页面 | `--bg` | `#f7f3ec` | `#0c0e12` |
+| 侧栏 | `--bg-sidebar` | `#ffffff` | `#12141a` |
+| 卡片 | `--bg-card` | `#ffffff` | `#181b24` |
+| 浮层 | `--bg-elevated` | `#ffffff` | `#1d2130`（比卡片高一级） |
+| 弱底 | `--bg-subtle` | `#faf8f5` | `#14161f` |
+| 悬停 | `--bg-hover` | `#f3eee2` | `#222634` |
+| 选中 | `--bg-active` | `#ede4d0` | `rgba(212,167,106,.16)` |
+| 输入 | `--bg-input` | `#ffffff` | `#14161f` |
+| 代码 | `--bg-code` / `--bg-code-header` / `--text-code` | `#faf8f5` / `#f0eadd` / `#4a4033` | `#0f1218` / `#1a1d26` / `#d8dbe2` |
+| 边框 | `--border` / `--border-strong` / `--divider` | `#ececec` / `#d5d5d5` / `#f0ece3` | 8% / 16% / 6% 白 |
+| 主文字 | `--text` | `#1a1a1a` | `#f4f6fb` |
+| 次文字 | `--text-secondary` | `#666666` | `#c3cad6` |
+| 弱文字 | `--text-tertiary` | `#6f6f6f`（旧 `#999` 仅 2.6:1，已修） | `#8b93a3` |
+| 思考 | `--text-think` | `#5c564b` | `#aab2c0` |
+| 强调 | `--accent` | `#b8924e`（图标、描边、选中指示、焦点） | `#d4a76a` |
+| 强调文字 | `--accent-text` | `#8a6a32`（5.0:1，旧金字 2.9:1 已修） | `#d4a76a` |
+| 强调填充 | `--accent-strong` | `#8a6a32`（主按钮底） | `#d4a76a` |
+| 强调上的字 | `--on-accent` | `#ffffff`（5.0:1） | `#0c0e12` |
+| 强调弱底 | `--accent-weak` / `--accent-border` | `#fdf8ee` / `#e8dbbe` | 14% / 32% 金 |
+| 成功 | `--ok` / `--ok-weak` / `--ok-text` | `#34c759` / 12% / `#1a7f36` | `#34d399` / 14% / `#6ee7b7` |
+| 警告 | `--warn` / `--warn-weak` / `--warn-text` | `#ff9500` / 12% / `#a35a00` | `#fbbf24` / 14% / `#fde68a` |
+| 危险 | `--danger` / `--danger-weak` / `--danger-text` | `#ff3b30` / 10% / `#c22e21` | `#f87171` / 14% / `#fca5a5` |
+| 信息 | `--info` / `--info-weak` / `--info-text` | `#4a90e2` / 10% / `#2f6fb8` | `#60a5fa` / 14% / `#93c5fd` |
+| 实底按钮填充 | `--danger-strong` / `--ok-strong` / `--info-strong` | `#d93229` / `#1a7f36` / `#2f6fb8` | 同基色 |
+| 实底上的字 | `--on-danger` / `--on-ok` / `--on-info` | `#ffffff` | `#0c0e12` |
+| 遮罩 | `--scrim` / `--scrim-strong` | `rgba(0,0,0,.32)` / `.48` | `rgba(0,0,0,.56)` / `.6` |
+| 轻遮罩 | `--veil` | `rgba(0,0,0,.15)` | `rgba(0,0,0,.25)` |
+| 焦点环 | `--ring` | `0 0 0 3px rgba(184,146,78,.22)` | `0 0 0 3px rgba(212,167,106,.25)` |
+| 骨架 | `--skeleton-sheen` | `rgba(26,26,26,.05)` | `rgba(255,255,255,.08)` |
 
-| token | 值 | 用在 |
-| --- | --- | --- |
-| `--bg` | `#060c13` | 聊天底、`.app` |
-| `--bg-sidebar` | `#020408` | 侧栏 |
-| `--bg-subtle` | `#0a1017` | 弱分区 |
-| `--bg-elevated` | `#0d141c` | 输入条、卡片 |
-| `--bg-card` | `#0d141c` | 卡片、对话框体 |
-| `--bg-raised` | `#121a23` | 菜单、抬起的条 |
-| `--bg-hover` | `#131c26` | 行 hover |
-| `--bg-active` | `#192737` | 当前频道 |
-| `--bg-input` | `#04080e` | 输入底（比聊天更凹） |
-| `--bg-code` | `#080e16` | 代码块 |
-| `--bg-code-header` | `#111a24` | 代码头 |
+派生令牌（描边/渐变/光效/阴影）见 `01-tokens.css`：`--accent-soft`/`--accent-faint`/`--accent-glow`/`--accent-gradient`/`--glow`/`--aura-glow`、`--shadow`/`--shadow-soft`/`--shadow-card` 及 `--shadow-sm`/`--shadow-md`/`--shadow-lg`、`--shadow-gold`/`--shadow-gold-soft`/`--shadow-info`/`--shadow-panel`/`--shadow-panel-lg`/`--danger-glow`、`--danger-strong`、`--warn-border`、`--accent-edge`、`--ai-user-bubble`/`--ai-user-bubble-text`、`--scrim-bottom`（输入条上缘渐隐）。
 
-兼容旧名：`--panel`=`--bg`，`--raised`=`--bg-raised`，`--sunken`=`--bg-input`，`--hover`=`--bg-hover`，`--active`=`--bg-active`。新代码用新名。
+**身份色不是主题**：11 种头像色（black/brown/red/orange/yellow/green/cyan/blue/violet/magenta/gray）由 `LivingAvatar.tsx` 的 `AVATAR_COLOR_HEX` 提供，只用于头像、名字、群发言者标记；组件里引用这些十六进制是规范认可的例外（检查器白名单）。
 
-### 3.2 线
+### 3.2 对比度要求（实测值）
 
-| token | 值 |
+正文、按钮文字 ≥ 4.5:1；18px 以上大字与图标、输入框边框、焦点指示 ≥ 3:1。以下为 2026-09-25 按令牌实算的 WCAG 比值（现行 27 个组合全部 ≥4.5:1）：
+
+| 组合 | 比值 |
 | --- | --- |
-| `--border` / `--line` | `#1d2731` |
-| `--border-strong` / `--line-strong` | `#303c49` |
-| `--divider` | `#18222b` |
+| 浅 `--text` / `--bg` | 15.74 |
+| 浅 `--text-secondary` / `--bg` | 5.19 |
+| 浅 `--text-tertiary` / `--bg` | 4.54 |
+| 浅 `--text-tertiary` / `--bg-card` | 5.02 |
+| 浅 `--accent-text` / `--bg-card` | 5.01 |
+| 浅 `--accent-text` / `--bg` | 4.53 |
+| 浅 `--on-accent` / `--accent-strong` | 5.01 |
+| 浅 `--on-danger` / `--danger-strong` | 4.73 |
+| 浅 `--on-ok` / `--ok-strong` | 5.08 |
+| 浅 `--on-info` / `--info-strong` | 5.14 |
+| 浅 `--ok-text` / `--bg-card` | 5.08 |
+| 浅 `--warn-text` / `--bg-card` | 5.22 |
+| 浅 `--danger-text` / `--bg-card` | 5.67 |
+| 浅 `--info-text` / `--bg-card` | 5.14 |
+| 深 `--text` / `--bg` | 17.86 |
+| 深 `--text-secondary` / `--bg` | 11.72 |
+| 深 `--text-tertiary` / `--bg-card` | 5.57 |
+| 深 `--accent-text` / `--bg` | 8.77 |
+| 深 `--accent-text` / `--bg-card` | 7.81 |
+| 深 `--on-accent` / `--accent-strong` | 8.77 |
+| 深 `--on-danger` / `--danger-strong` | 5.16 |
+| 深 `--on-ok` / `--ok-strong` | 10.05 |
+| 深 `--on-info` / `--info-strong` | 7.60 |
+| 深 `--ok-text` / `--bg-card` | 11.28 |
+| 深 `--warn-text` / `--bg-card` | 13.81 |
+| 深 `--danger-text` / `--bg-card` | 9.06 |
+| 深 `--info-text` / `--bg-card` | 9.54 |
 
-分割用 1px `--border`。需要咬住边缘时才 `--border-strong`（输入条、右键菜单、选项卡）。
+被替换掉的旧值（不达标，本次修复的原因）：浅 `#999`/`--bg` 2.58；浅金字 `#b8924e`/卡片 2.89；浅白字/旧金底 `#b8924e` 2.89。
 
-### 3.3 字
-
-| token | 值 | 用在 |
-| --- | --- | --- |
-| `--text` / `--fg` | `#dce2e9` | 正文 |
-| `--text-secondary` / `--fg-muted` | `#929ba6` | 次要 |
-| `--text-tertiary` / `--fg-faint` | `#66717d` | 时间、提示 |
-| `--text-think` | `#bdc7d2` | 思考过程（若展示） |
-| `--text-code` | `#dce8f7` | 代码 |
-
-不要 `opacity: 0.5` 当次要字，对比度会随底漂。用 token。
-
-### 3.4 强调与语义
-
-| token | 值 |
-| --- | --- |
-| `--accent` | `#4f8dcc` |
-| `--accent-hover` | `#62a0df` |
-| `--accent-weak` | `#0b2035` |
-| `--accent-border` | `#214564` |
-| `--accent-gradient` | `linear-gradient(135deg, #5d9bda, #367dbc)` |
-| `--danger` / `--bad` | `#f87171` |
-| `--danger-weak` | `rgba(248,113,113,.14)` |
-| `--danger-border` | `rgba(248,113,113,.28)` |
-| `--danger-text` | `#fca5a5` |
-| `--ok` | `#34d399` |
-| `--ok-weak` | `rgba(52,211,153,.14)` |
-| `--ok-text` | `#6ee7b7` |
-| `--warn` | `#fbbf24` |
-| `--warn-weak` | `rgba(251,191,36,.14)` |
-| `--warn-text` | `#fde68a` |
-
-主按钮：底 `--accent`，字 `#fff`，hover `--accent-hover`。危险按钮：底 `--danger`，字 `#fff`。不要红字红底。
-
-缺一个现码已经在用的变量：**`--accent-soft`**。`08-animations.css` 里 `.interaction-option:hover` 写了它，tokens 里没有。补：
-
-```css
-/* dark */
---accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
-/* light */
---accent-soft: color-mix(in srgb, var(--accent) 10%, transparent);
-```
-
-### 3.5 阴影与光
-
-```
---shadow-card: 0 1px 3px rgba(0,0,0,.48), 0 0 0 1px rgba(255,255,255,.015);
---shadow-soft: 0 10px 28px -10px rgba(0,0,0,.58);
---shadow:      0 24px 56px -12px rgba(0,0,0,.72);
---ring:        0 0 0 3px rgba(79,141,204,.22);
---glow:        0 0 0 1px rgba(79,141,204,.20), 0 9px 26px rgba(0,52,112,.14);
---aura-glow:   radial-gradient(circle at 50% 36%,
-                 rgba(79,141,204,.11) 0%,
-                 rgba(54,125,188,.04) 42%,
-                 transparent 72%);
-```
-
-`--glow` 给焦点/主按钮。`--aura-glow` 只给欢迎空态光晕，聊天时间线不要铺一层。
-
-### 3.6 气泡
-
-```
---bubble-user: #102943
---bubble-user-border: var(--accent-border)
---bubble-user-fg: #dce7f3
---bubble-assistant: transparent
---bubble-assistant-border: transparent
---bubble-assistant-fg: var(--text)
---composer-bg: var(--bg-elevated)
---composer-border: var(--border-strong)
---composer-fade: linear-gradient(to top, var(--bg) 70%, transparent)
-```
-
-智能体气泡无底，群里尤其不要给每人一块彩泡。主人右侧，它左侧。
+实底按钮一律用 `*-strong` 填充（浅色更深、深色同基色），文字用对应 `--on-*`；`--danger`/`--ok`/`--info` 基色只做描边、圆点、图标。不要 `opacity` 当次要字，对比度会随底漂。
 
 ---
 
-## 4. 亮色
+## 4. 气泡与输入条
 
-底 `#f7faff`，侧栏 `#f2f7ff`，强调 `#2563eb`。线用蓝的低透明度，不要纯灰。
+```
+用户气泡：底 --ai-user-bubble、边 --accent-border、字 --ai-user-bubble-text
+智能体消息：无气泡，头像 28 + 名字（身份色）+ 正文
+输入条：底 --bg-card、边 --border、圆角 --r-xl，外缘 --scrim-bottom 渐隐托住时间线
+```
 
-| token | light |
-| --- | --- |
-| `--bg` | `#f7faff` |
-| `--bg-sidebar` | `#f2f7ff` |
-| `--bg-raised` / elevated / card / input | `#ffffff` |
-| `--bg-hover` | `#eaf2ff` |
-| `--bg-active` | `#dbeafe` |
-| `--bg-code` | `#eff6ff` |
-| `--border` | `rgba(30,64,175,.10)` |
-| `--border-strong` | `rgba(30,64,175,.18)` |
-| `--text` | `#172033` |
-| `--text-secondary` | `#4b5d78` |
-| `--text-tertiary` | `#8291a8` |
-| `--accent` | `#2563eb` |
-| `--accent-hover` | `#1d4ed8` |
-| `--accent-weak` | `rgba(37,99,235,.10)` |
-| `--danger` | `#ef4444` |
-| `--ok` | `#10b981` |
-| `--warn` | `#f59e0b` |
-| `--bubble-user` | `#eaf2ff` |
-| `--bubble-user-fg` | `#172554` |
-| `--shadow` | `0 12px 32px -8px rgba(30,64,175,.14), 0 4px 12px -4px rgba(30,64,175,.08)` |
-| `--sunken`（兼容） | `--bg-hover`（亮色不要用纯白凹槽，会看不见） |
-
-骨架 shimmer 的白色高光在亮色下改成 `rgba(37,99,235,.08)`，不要死写 `rgba(255,255,255,.08)`。
+智能体气泡无底；群里尤其不要给每人一块彩泡。主人右侧，它左侧。
 
 ---
 
@@ -279,16 +211,11 @@ CSS 入口：
 /* 输入框可改用 box-shadow: var(--ring); 并 outline: none; */
 
 ::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-thumb {
-  background: var(--line-strong);
-  border-radius: var(--r-full);
-}
+::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: var(--r-full); }
 ::-webkit-scrollbar-track { background: transparent; }
 ```
 
 鼠标点按不要出现焦点环（靠 `:focus-visible`）。键盘 Tab 必须有。
-
-选区：`::selection { background: color-mix(in srgb, var(--accent) 35%, transparent); color: inherit; }` 建议补上。
 
 ---
 
@@ -297,103 +224,34 @@ CSS 入口：
 ```css
 .app {
   display: grid;
-  grid-template-columns: var(--sidebar-width, 260px) minmax(0, 1fr);
+  grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
   height: 100%;
   overflow: hidden;
   background: var(--bg);
-  transition: grid-template-columns 180ms ease;
 }
 .app.with-screen {
-  grid-template-columns: var(--sidebar-width, 260px) minmax(360px, 1fr) var(--drawer-width, 380px);
+  grid-template-columns: var(--sidebar-w) minmax(360px, 1fr) var(--panel-w);
 }
 ```
 
-断点（已写在 `03-layout.css`）：
+`--sidebar-w` 的实际值由 `App.tsx` 内联覆盖（拖动宽度），令牌里的是默认 260px。断点与响应式规格见 `UI交互与视觉.md` §4.2（三档：≥1280 / 1024–1279 / <1024；<768 单栏抽屉）。
 
-- `≤1120` 抽屉 `min(340px, 34vw)`
-- `≤920` 侧栏可到 70
-- `≤740` 抽屉改 `position:fixed; right:0; z-index:100`
-
-侧栏拖宽范围建议 200–360，低于 90 进入 mini（只头像）。`--sidebar-width` 写在 `.app` 的 style 上。
-
-z-index 约定：
-
-```
-10   输入条渐隐
-25   跳到底部按钮
-100  抽屉（窄屏）、离线条
-200  右键菜单
-300  scrim 对话框
-```
-
-不要每个组件自己加 9999。
+侧栏拖宽范围 200–360，低于 160 吸附迷你 72px。
 
 ---
 
-## 7. 组件配方（对着抄）
+## 7. 令牌检查（CI 强制）
 
-### 7.1 侧栏行
+`scripts/check-ui-tokens.mjs`（已接入 `scripts/ci.mjs`）扫描：
 
-```
-高 52–56
-padding 8 10
-gap 10
-hover  background: var(--bg-hover)
-active background: var(--bg-active)
-当前   左侧 2px 条 var(--accent) 可选，不要整行描边
-```
+- `web/src/styles/02~08` 全部样式表；
+- `web/src` 下 tsx/ts 的内联样式。
 
-未读 `.channel-unread`：底 `--danger`（你们现在是 `--bad`），白字，最小宽 18，药丸。不要和 accent 未读混用两套。建议：未读用 `--accent`，失败才红。二选一写死。
+报错规则：十六进制颜色、`rgba()/hsla()` 字面量、数字 z-index（0/1 除外）、已废除的兼容别名（`--panel`/`--raised`/`--sunken`/`--fg*`/`--line*`/`--bubble-*`/`--composer-*`/`--card*`/`--surface`/`--pill-blue`/`--code-*` 等，UI-01 起全仓清除）。
 
-工作中：`.channel-avatar-wrapper.working::after` 脉冲环，色 `color-mix(warn 70%)`，1.6s。有活头像 `working` 状态后，这圈可以去掉，避免脸+圈双动画。
+白名单：身份色 11 色 + 默认身份色 `#b89b6a` 的十六进制；`BotFace.tsx` 等头像插画的固定墨色；`z-index: 0/1` 的组件内局部堆叠。
 
-### 7.2 聊天标题
-
-高 52–56，底透明，底边 1px `--border`。头像 28–32。名字可点，hover 下划线 `--fg-faint`。不要在这里放全局齿轮。
-
-### 7.3 气泡
-
-主人：`max-width: 72%`；`background: var(--bubble-user)`；`color: var(--bubble-user-fg)`；圆角 16，朝右下略小。padding 10 14。
-
-智能体：无背景；头像 28 + 名字 13/600 + 正文。群里名字用该 bot 的 `--` 自定义色只能用在名字或瞳，不要整泡染色。
-
-`@`：`.mention` 背景 `color-mix(accent 16%)`，字 `--accent`，圆角 8，左右 4px。兜底色从紫改蓝。
-
-消息操作条默认 `opacity: 0`，行 hover 才 1。
-
-### 7.4 输入条
-
-底 `--composer-bg`，边 1px `--composer-border`，圆角 16–20。外圈用 `--composer-fade` 把时间线托住。textarea 无边、透明底、min-height 44、max 约 160。发送按钮圆，accent 底。
-
-没有停止键。占位符 `--text-tertiary`：「发给 {名字}」或「在 {群} 里说，用 @ 点名」。
-
-### 7.5 对话框
-
-scrim：`rgba(0,0,0,.55)` 暗色 / 亮色可用 `rgba(23,32,51,.35)`。`.dialog` 宽 `min(480px, 92vw)`，圆角 20，`box-shadow: var(--shadow)`，底 `--bg-raised`。
-
-进出：`usePresence`。scrim 只改 opacity 220ms。dialog `scale(.96) translateY(8px)` → 原位。退出略回收 `scale(.98) translateY(6px)`。
-
-### 7.6 抽屉
-
-从右 `translateX(14px)` + opacity，320ms `--ease`。底 `--bg`，左边 1px `--border`。
-
-### 7.7 右键菜单
-
-`min-width: 190`，padding 5，圆角 12，边 `--border-strong`，`animation: pop 140ms`。危险行字 `--danger`，hover `color-mix(danger 14%)`。
-
-### 7.8 选项卡 / 密钥
-
-`.interaction-card` 边 `--border-strong`，圆角 16，padding 14 16。选项 hover：边 `--accent`，底 `--accent-soft`。密钥输入 `--mono` + letter-spacing .08em。群时间线**不要渲染**这种卡。
-
-### 7.9 欢迎空态
-
-`--aura-glow` 模糊 52px，7s 呼吸。徽章 46，圆角 14，渐变 `#2e7cf6 → #4f8dcc → #367dbc`。标题 28/700。三列 prompt 卡，≤768 一列。`prefers-reduced-motion` 下徽章和光晕停。
-
-### 7.10 活头像 CSS
-
-状态用 `data-state`，动画写在组件内（见 `LivingAvatar.tsx`）。全局不要再给 `.bot-avatar` 套旋转。缩小到 20px 时关掉眨眼，只留颜色块。
-
-`prefers-reduced-motion`：冻结 `idle` 第一帧。
+新写法只引用语义令牌；确需新令牌时先改本规范与 `01-tokens.css`（深浅两套），再引用。
 
 ---
 
@@ -415,8 +273,6 @@ scrim：`rgba(0,0,0,.55)` 暗色 / 亮色可用 `rgba(23,32,51,.35)`。`.dialog`
 
 禁止：整页左右滑、消息列表每条飞入、弹性放大超过 1.08、工具调用每步闪一次。
 
-折叠：`.collapsible` `grid-template-rows: 0fr → 1fr`，220ms `--ease`。
-
 ---
 
 ## 9. 无障碍
@@ -431,11 +287,10 @@ scrim：`rgba(0,0,0,.55)` 暗色 / 亮色可用 `rgba(23,32,51,.35)`。`.dialog`
 }
 ```
 
-已写在 `08-animations.css`。再加：
-
-- 对比：正文对底 ≥ 4.5:1。暗色 `#dce2e9` on `#060c13` 过关；`--text-tertiary` `#66717d` 只给时间戳，不给正文。
+- 对比：正文对底 ≥ 4.5:1（§3.2 有实测表）。
 - 未读不要只靠颜色，要有数字或点。
 - 点击区域 ≥ 28px（侧栏行已经够高）。
+- `prefers-reduced-motion` 下欢迎光晕、徽章漂浮、头像呼吸、思考点都停。
 
 ---
 
@@ -447,27 +302,15 @@ scrim：`rgba(0,0,0,.55)` 暗色 / 亮色可用 `rgba(23,32,51,.35)`。`.dialog`
 :root[data-theme='sepia'] { /* 只覆盖色 token，圆角时长不动 */ }
 ```
 
-智能体个人色（资料里的 swatch）**不是**主题。它只进头像 fill 和名字，不改变 `--bg` / `--accent`。
-
-swatch 现有：`#a855f7 #38bdf8 #30d158 #f97316 #f472b6 #facc15 #5eead4 #60a5fa`。应对齐活头像 11 色（black/brown/red/…）。选中：`border: 2px solid var(--fg)` + `box-shadow: 0 0 0 2px var(--panel)`。
+智能体个人色（资料里的 swatch）**不是**主题。它只进头像 fill 和名字，不改变 `--bg` / `--accent`。swatch 与活头像 11 色对齐。
 
 ---
 
-## 11. 现码要修的洞
+## 11. 完成标准
 
-1. `--accent-soft` 未定义，补上。  
-2. `.mention` 和若干 `var(--accent, #a855f7)` 兜底改成蓝色系，去掉紫。  
-3. 骨架 `rgba(255,255,255,.08)` 亮色无效，改 token。  
-4. `stored()` 把缺省当 dark，但类型里有 `system`；设置页若提供「跟随系统」，`stored()` 的 else 应能返回 `system`（现在 `system` 存的是删 key，读时却落到 dark）。要跟随系统：没 key 当 `system`，或另存 `agentbot.theme=system`。  
-5. 未读角标 `--bad` 与跳转钮未读 `--accent` 两套，统一。  
-6. 新选择器继续进现有 8 个文件，不要再开 `09-vibe.css`。
-
----
-
-## 12. 完成标准
-
-- 切 `data-theme` 时没有任何写死的暗色/亮色残留（搜 `#060c13`、`#fff` 作为大面积底应只出现在 tokens）。  
-- 未开第三套主题。  
-- `prefers-reduced-motion` 下欢迎光晕、徽章漂浮、头像呼吸、思考点都停。  
-- 主按钮、焦点环、`@` 高亮都走 `--accent`，暗蓝亮蓝随主题变。  
-- 智能体气泡背景始终 `transparent`。
+- 切 `data-theme` 时没有任何写死的颜色残留（搜 `#` 十六进制应只出现在 `01-tokens.css` 与身份色/插画白名单）。
+- 未开第三套主题。
+- `prefers-reduced-motion` 下欢迎光晕、徽章漂浮、头像呼吸、思考点都停。
+- 主按钮、焦点环、`@` 高亮都走令牌，深浅两套随主题变。
+- 智能体气泡背景始终透明。
+- `npm run ci` 的 UI 令牌检查通过（别名 0、字面量 0、数字 z-index 0）。

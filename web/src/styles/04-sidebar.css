@@ -9,7 +9,7 @@
   border-right: 1px solid var(--border);
   user-select: none;
   position: relative;
-  z-index: 10;
+z-index: var(--z-sidebar)
 }
 
 .sidebar-window-header {
@@ -42,7 +42,7 @@
   padding: 1px 6px;
   border-radius: 9999px;
   background: var(--accent-weak);
-  color: var(--accent);
+  color: var(--accent-text);
   border: 1px solid var(--accent-border);
 }
 
@@ -147,7 +147,7 @@
   justify-content: center;
   padding: 40px 16px;
   gap: 6px;
-  color: var(--fg-faint);
+  color: var(--text-tertiary);
   text-align: center;
 }
 
@@ -160,7 +160,7 @@
 .sidebar-empty-title {
   font-size: 13px;
   font-weight: 500;
-  color: var(--fg-muted);
+  color: var(--text-secondary);
 }
 
 .sidebar-empty-hint {
@@ -252,7 +252,7 @@
 
 .channel-tag.group {
   background: var(--accent-weak);
-  color: var(--accent);
+  color: var(--accent-text);
   border: 1px solid var(--accent-border);
 }
 
@@ -324,12 +324,12 @@
   height: 28px;
   border-radius: 50%;
   background: var(--accent-gradient);
-  color: #ffffff;
+color: var(--on-accent);
   display: grid;
   place-items: center;
   font-size: 11px;
   font-weight: 700;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+box-shadow: var(--shadow-md);
 }
 
 .sidebar-mini-plus-btn {
@@ -344,13 +344,13 @@
   bottom: 0;
   width: 6px;
   cursor: col-resize;
-  z-index: 50;
+z-index: var(--z-panel);
   transition: background var(--dur-fast);
 }
 
 .sidebar-resizer:hover,
 .sidebar-resizer.active {
-  background: var(--pill-blue);
+  background: var(--accent-edge);
   opacity: 0.6;
 }
 
@@ -411,7 +411,7 @@
   padding: 12px 0 16px;
   align-items: center;
   gap: 12px;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+border-top: 1px solid var(--divider);
 }
 
 .app-sidebar.mini .sidebar-footer-btn {
@@ -424,13 +424,13 @@
   width: 32px;
   height: 32px;
   border-radius: 50%;
-  color: var(--fg-muted);
+  color: var(--text-secondary);
   transition: color var(--dur-fast), background var(--dur-fast);
 }
 
 .app-sidebar.mini .sidebar-mini-plus-btn:hover {
-  background: var(--hover);
-  color: var(--fg);
+  background: var(--bg-hover);
+  color: var(--text);
 }
 
 .app-sidebar.mini .sidebar-user-row {

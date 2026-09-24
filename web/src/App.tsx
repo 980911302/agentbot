@@ -301,7 +301,7 @@ export default function App() {
             name: '创建失败',
             time: formatClock(Date.now()),
             lastMessage: '后端未连接，智能体没有创建成功',
-            color: '#f87171',
+            color: '#e24b4b',
           },
           ...current,
         ]);
@@ -621,7 +621,7 @@ export default function App() {
   return (
     <div
       className={`app${drawerPresence.mounted && !screenFull ? ' with-screen' : ''}${isResizing ? ' resizing' : ''}`}
-      style={{ '--sidebar-width': `${sidebarWidth}px` } as React.CSSProperties}
+      style={{ '--sidebar-w': `${sidebarWidth}px` } as React.CSSProperties}
     >
       {/* 1. 左侧导航栏 */}
       <Sidebar

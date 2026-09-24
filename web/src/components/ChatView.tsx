@@ -442,7 +442,7 @@ export function ChatView({
                 />
               </div>
               <div className="msg-content-col assistant-content">
-                <div className="msg-sender-header assistant-header" style={{ color: bot?.color || 'var(--fg-muted)' }}>
+                <div className="msg-sender-header assistant-header" style={{ color: bot?.color || 'var(--text-secondary)' }}>
                   <span>{bot?.name || '助手'}</span>
                 </div>
                 <div className="msg-bubble-box dm-agent live-bubble" title={actionHint ?? '正在生成…'}>
