@@ -1543,3 +1543,13 @@ border-color: var(--danger);
   border-color: var(--danger-border);
   color: var(--danger-text);
 }
+
+/* ── UI-04 工具卡挂载（规范 5.7：一行摘要 + 状态，可展开） ──────────
+   卡片由 ToolCallCard 自己负责样式，这里只管它在消息行里的位置与间距。 */
+.msg-tool-cards {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  margin-top: var(--sp-2);
+  max-width: var(--read-w);
+}

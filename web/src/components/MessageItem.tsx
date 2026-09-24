@@ -4,6 +4,7 @@ import { formatMessageTime } from '../format';
 import { messageEnterKind, timelineLayoutKind } from '../features/chat/ui-chrome';
 import type { BotSummary, DisplayMessage } from '../types';
 import { BotAvatar, type AvatarMember } from './BotAvatar';
+import { ToolCallCard } from './ToolCallCard';
 
 function getInitials(name: string): string {
   const trimmed = name.trim();
@@ -92,11 +93,22 @@ export function MessageItem({
     <span className="msg-origin-tag">{message.originLabel}</span>
   ) : null;
 
-  const text = (
+  // 只有工具调用的消息没有正文：别画一个空气泡，工具卡自己会说话
+  const text = message.content.trim() ? (
     <div className={`msg-bubble-box ${layout}${message.error ? ' error' : ''}`}>
       <BubbleContent message={message} memberNames={memberNames} />
     </div>
-  );
+  ) : null;
+
+  /** 工具过程：折叠卡片，默认收起，不跟正文抢（规范 5.7 / §3） */
+  const toolCards =
+    message.toolCalls.length > 0 ? (
+      <div className="msg-tool-cards">
+        {message.toolCalls.map((call) => (
+          <ToolCallCard key={call.id} call={call} />
+        ))}
+      </div>
+    ) : null;
 
   /** 合并组里的后续消息：只出气泡，不重复头像、名字与时间 */
   if (compact) {
@@ -104,6 +116,7 @@ export function MessageItem({
       <div className={rowClass}>
         <div className={`msg-content-col ${layout === 'dm-user' ? 'user-content' : 'assistant-content'}`}>
           {text}
+          {toolCards}
           {actions}
         </div>
       </div>
@@ -120,6 +133,7 @@ export function MessageItem({
             <span className="msg-time">{formatMessageTime(message.createdAt)}</span>
           </div>
           {text}
+          {toolCards}
           {actions}
         </div>
         <div className="msg-avatar-col">
@@ -166,6 +180,7 @@ export function MessageItem({
           <span className="msg-time">{formatMessageTime(message.createdAt)}</span>
         </div>
         {text}
+        {toolCards}
         {actions}
       </div>
     </div>
