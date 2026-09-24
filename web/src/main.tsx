@@ -9,6 +9,7 @@ import './styles/05-chat.css';
 import './styles/06-panels.css';
 import './styles/07-dialog.css';
 import './styles/08-animations.css';
+import './styles/09-ui.css';
 
 const container = document.getElementById('root');
 if (!container) throw new Error('#root element is missing');

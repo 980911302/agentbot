@@ -1,0 +1,321 @@
+/* ── 通用组件库 components/ui（UI-02）────────────────────────────
+   只放 08 个样式表没有的增量：按钮尺寸刻度、模态壳、菜单、Toast、
+   Chip、Skeleton、SegmentedControl。弹窗主体/操作条/遮罩继续复用
+   07-dialog.css 的 .scrim/.dialog/.dialog-body/.dialog-actions，
+   不重复造一套（避免两套样式互相覆盖）。 */
+
+/* ── Button：尺寸 S/M/L（变体外观沿用 .btn.primary/secondary/ghost/danger）── */
+.btn.sm {
+  height: 28px;
+  padding: 0 10px;
+  font-size: var(--fs-sm);
+  border-radius: var(--r-sm);
+}
+
+.btn.md {
+  height: 32px;
+  padding: 0 14px;
+  font-size: var(--fs-base);
+}
+
+.btn.lg {
+  height: 40px;
+  padding: 0 20px;
+  font-size: var(--fs-md);
+  border-radius: var(--r-sm);
+}
+
+/* loading：左侧 14px 旋转指示，文字不变；禁止重复点击由 disabled 保证 */
+.btn.loading {
+  position: relative;
+  pointer-events: none;
+  opacity: 0.72;
+}
+
+.btn-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  margin-right: var(--sp-2);
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: var(--r-full);
+  animation: ui-spin 700ms linear infinite;
+  vertical-align: -2px;
+}
+
+@keyframes ui-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ── Modal：壳 + 头部 + 主体 + 吸底操作条 ─────────────────────────── */
+.ui-modal-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  display: grid;
+  place-items: center;
+  padding: var(--sp-8);
+  background: var(--scrim);
+  backdrop-filter: blur(8px);
+  animation: fade var(--dur-fast) var(--ease);
+}
+
+.ui-modal {
+  display: flex;
+  flex-direction: column;
+  width: min(440px, 100%);
+  max-height: min(720px, 100vh - 64px);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-xl);
+  overflow: hidden;
+  background: var(--bg-sidebar);
+  box-shadow: var(--shadow-lg);
+  animation: fade var(--dur-base) var(--ease);
+}
+
+.ui-modal.s {
+  width: min(400px, 100%);
+}
+
+.ui-modal.l {
+  width: min(800px, 100%);
+}
+
+.ui-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  height: 56px;
+  flex-shrink: 0;
+  padding: 0 var(--sp-5) 0 var(--sp-6);
+  border-bottom: 1px solid var(--border);
+}
+
+.ui-modal-title {
+  margin: 0;
+  font-size: var(--fs-xl);
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.ui-modal-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--sp-6);
+}
+
+.ui-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-3);
+  flex-shrink: 0;
+  padding: var(--sp-4) var(--sp-6);
+  border-top: 1px solid var(--border);
+  background: var(--bg-sidebar);
+}
+
+/* ── Menu：下拉菜单（键盘上下、Esc） ──────────────────────────────── */
+.ui-menu {
+  min-width: 180px;
+  padding: var(--sp-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-md);
+  animation: pop var(--dur-fast) var(--ease);
+}
+
+.ui-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  width: 100%;
+  height: 32px;
+  padding: 0 var(--sp-3);
+  border: none;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--text);
+  font-size: var(--fs-base);
+  text-align: left;
+  cursor: pointer;
+}
+
+.ui-menu-item:hover,
+.ui-menu-item.active {
+  background: var(--bg-hover);
+}
+
+.ui-menu-item.danger {
+  color: var(--danger-text);
+}
+
+.ui-menu-item:disabled {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.ui-menu-sep {
+  height: 1px;
+  margin: var(--sp-2) 0;
+  background: var(--divider);
+}
+
+/* ── Tooltip：悬停 400ms 延迟气泡 ────────────────────────────────── */
+.ui-tooltip {
+  position: relative;
+  display: inline-flex;
+}
+
+.ui-tooltip-bubble {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: var(--z-tooltip);
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-sm);
+  background: var(--text);
+  color: var(--bg);
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+  white-space: nowrap;
+  pointer-events: none;
+  animation: fade var(--dur-instant) var(--ease);
+}
+
+/* ── Chip：标签（可选中态） ──────────────────────────────────────── */
+.ui-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  height: 24px;
+  padding: 0 var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r-full);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+
+.ui-chip.selected {
+  border-color: var(--accent-border);
+  background: var(--accent-weak);
+  color: var(--accent-text);
+}
+
+/* ── Skeleton：骨架条 + 闪光（只在等待 >300ms 时出现） ───────────── */
+.ui-skeleton {
+  border-radius: var(--r-sm);
+  background: var(--bg-subtle);
+  animation: ui-sheen 1.2s var(--ease) infinite;
+}
+
+@keyframes ui-sheen {
+  0%,
+  100% {
+    opacity: 0.6;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* ── SegmentedControl：分段控件 ─────────────────────────────────── */
+.ui-segmented {
+  display: inline-flex;
+  gap: var(--sp-1);
+  padding: var(--sp-1);
+  border-radius: var(--r-sm);
+  background: var(--bg-subtle);
+}
+
+.ui-segmented-option {
+  height: 28px;
+  padding: 0 var(--sp-4);
+  border: none;
+  border-radius: var(--r-xs);
+  background: none;
+  color: var(--text-secondary);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+
+.ui-segmented-option.active {
+  background: var(--bg-card);
+  box-shadow: var(--shadow-sm);
+  color: var(--text);
+}
+
+/* ── Toast：右下角，最多 3 条 ────────────────────────────────────── */
+.ui-toast-stack {
+  position: fixed;
+  right: var(--sp-5);
+  bottom: var(--sp-5);
+  z-index: var(--z-toast);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  pointer-events: none;
+}
+
+.ui-toast {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  min-width: 220px;
+  max-width: 360px;
+  padding: var(--sp-3) var(--sp-4);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-md);
+  font-size: var(--fs-sm);
+  animation: toast-in var(--dur-base) var(--ease);
+}
+
+.ui-toast.ok {
+  border-color: var(--ok-weak);
+}
+
+.ui-toast.error {
+  border-color: var(--danger-weak);
+}
+
+.ui-toast-icon {
+  flex-shrink: 0;
+  font-size: var(--fs-base);
+}
+
+.ui-toast-message {
+  flex: 1;
+  min-width: 0;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn-spinner,
+  .ui-skeleton,
+  .ui-toast {
+    animation: none;
+  }
+}

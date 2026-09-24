@@ -16,6 +16,7 @@ import { MemoryPanel } from './components/MemoryPanel';
 import { InteractionCard } from './components/InteractionCard';
 import { IconClose } from './icons';
 import { usePresence } from './motion';
+import { ToastProvider } from './components/ui/Toast.js';
 import { useTheme } from './theme';
 import * as api from './api';
 import { formatClock } from './format';
@@ -643,6 +644,7 @@ export default function App() {
   }, []);
 
   return (
+    <ToastProvider>
     <div
       className={`app${drawerPresence.mounted && !screenFull ? ' with-screen' : ''}${isResizing ? ' resizing' : ''}`}
       style={{ '--sidebar-w': `${sidebarWidth}px` } as React.CSSProperties}
@@ -919,5 +921,6 @@ export default function App() {
         onSubmit={submitRoomRename}
       />
     </div>
+    </ToastProvider>
   );
 }
