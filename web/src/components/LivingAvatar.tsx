@@ -37,7 +37,7 @@ export const AVATAR_COLORS = [
 
 export type AvatarShape = (typeof AVATAR_SHAPES)[number];
 export type AvatarColor = (typeof AVATAR_COLORS)[number];
-export type AvatarState = "idle" | "thinking" | "working" | "waiting" | "blocked" | "done";
+export type AvatarState = "idle" | "thinking" | "working" | "waiting" | "blocked" | "done" | "paused";
 
 const SHAPES: Record<AvatarShape, string> = {
   blob: "M32 8c11 0 20 9.4 20 22 0 13.2-8.4 24-20 24S12 43.2 12 30C12 17.4 21 8 32 8Z",
@@ -180,6 +180,9 @@ export function LivingAvatar({
         .living-avatar[data-state="blocked"] .wrap { transform: rotate(-8deg); transform-origin: 32px 32px; }
         .living-avatar[data-state="blocked"] .eyes { transform: scaleY(0.72); transform-origin: 32px 28px; }
         .living-avatar[data-state="done"] .body { animation: la-settle 1.2s ease-out 1; transform-origin: 32px 36px; }
+        .living-avatar[data-state="paused"] .body { animation: none; filter: grayscale(60%); transform-origin: 32px 36px; }
+        .living-avatar[data-state="paused"] .eyes { animation: none; transform: scaleY(0.18); transform-origin: 32px 28px; }
+        .living-avatar[data-state="paused"] .wrap { animation: none; }
         .living-avatar[data-state="done"] .eyes { animation: la-happy 1.6s ease-in-out infinite; transform-origin: 32px 28px; }
         .living-avatar[data-notice="true"] .wrap { animation: la-notice 0.32s var(--ease, cubic-bezier(0.16, 1, 0.3, 1)) 1; transform-origin: 32px 32px; }
         @keyframes la-notice { 0% { filter: brightness(1); } 40% { filter: brightness(1.45); } 100% { filter: brightness(1); } }

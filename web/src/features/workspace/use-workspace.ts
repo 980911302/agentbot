@@ -4,6 +4,17 @@ import { formatClock } from '../../format';
 import type { BotSummary, DisplayMessage, RoomView } from '../../types';
 import type { ChannelItem } from '../../components/Sidebar';
 
+/** 智能体控制/来信快照（UI-03）：暂停、待处理、失败 */
+export interface AgentControlFlags {
+  paused: boolean;
+  pendingMail: number;
+  failedMail: number;
+  /** 因暂停被扣住的来信数（控制面 held，UI-05 状态条用） */
+  held: number;
+  /** 控制存储是否损坏（UI-05 状态条用） */
+  faulted: boolean;
+}
+
 /**
  * useWorkspace（E2.5d）：侧边栏工作台状态。
  * 拥有 channels/backendAgents/rooms/未读 与 15s 轮询；App 只消费。
@@ -17,8 +28,8 @@ export function useWorkspace(deps: {
   const [channels, setChannels] = useState<ChannelItem[]>([]);
   const [unread, setUnread] = useState<Record<string, number>>({});
   /** 智能体控制/来信快照（UI-03 状态点）：暂停、待处理、失败 */
-  const [agentFlags, setAgentFlags] = useState<Record<string, { paused: boolean; pendingMail: number; failedMail: number }>>({});
-  const agentFlagsRef = useRef(agentFlags);
+  const [agentFlags, setAgentFlags] = useState<Record<string, AgentControlFlags>>({});
+  const agentFlagsRef = useRef<Record<string, AgentControlFlags>>({});
   const seenRoomsRef = useRef<Map<string, number>>(new Map());
   const activeChannelIdRef = useRef('');
   const agentsRef = useRef<BotSummary[]>([]);
@@ -143,38 +154,50 @@ export function useWorkspace(deps: {
   }, [agentFlags]);
 
   // 状态点数据源：控制视图与来信队列（UI-03）。失败不打扰主流程，下个周期再试。
+  // 同一份数据也喂给控制状态条（UI-05）：held（暂停扣住的信）与 faulted 一起取回。
+  const pollAgentFlags = useCallback(async () => {
+    const list = agentsRef.current.filter((bot) => !bot.hidden);
+    const flags: Record<string, AgentControlFlags> = {};
+    await Promise.all(
+      list.map(async (bot) => {
+        try {
+          const [control, inbox] = await Promise.all([
+            api.fetchAgentControl(bot.id),
+            api.fetchAgentInbox(bot.id),
+          ]);
+          flags[bot.id] = {
+            paused: control.autoActivation === 'paused',
+            pendingMail: inbox.pending,
+            failedMail: inbox.failed,
+            held: control.held,
+            faulted: control.faulted,
+          };
+        } catch {
+          // 单个智能体拉取失败：保持上次已知状态，不清点
+          flags[bot.id] = agentFlagsRef.current[bot.id] ?? {
+            paused: false,
+            pendingMail: 0,
+            failedMail: 0,
+            held: 0,
+            faulted: false,
+          };
+        }
+      }),
+    );
+    if (!agentFlagsPollDisposed.current) setAgentFlags(flags);
+  }, []);
+
+  const agentFlagsPollDisposed = useRef(false);
+
   useEffect(() => {
-    let disposed = false;
-    const poll = async () => {
-      const list = agentsRef.current.filter((bot) => !bot.hidden);
-      const flags: Record<string, { paused: boolean; pendingMail: number; failedMail: number }> = {};
-      await Promise.all(
-        list.map(async (bot) => {
-          try {
-            const [control, inbox] = await Promise.all([
-              api.fetchAgentControl(bot.id),
-              api.fetchAgentInbox(bot.id),
-            ]);
-            flags[bot.id] = {
-              paused: control.autoActivation === 'paused',
-              pendingMail: inbox.pending,
-              failedMail: inbox.failed,
-            };
-          } catch {
-            // 单个智能体拉取失败：保持上次已知状态，不清点
-            flags[bot.id] = agentFlagsRef.current[bot.id] ?? { paused: false, pendingMail: 0, failedMail: 0 };
-          }
-        }),
-      );
-      if (!disposed) setAgentFlags(flags);
-    };
-    void poll();
-    const timer = window.setInterval(() => void poll(), 15000);
+    agentFlagsPollDisposed.current = false;
+    void pollAgentFlags();
+    const timer = window.setInterval(() => void pollAgentFlags(), 15000);
     return () => {
-      disposed = true;
+      agentFlagsPollDisposed.current = true;
       window.clearInterval(timer);
     };
-  }, []);
+  }, [pollAgentFlags]);
 
   return {
     backendAgents,
@@ -187,5 +210,9 @@ export function useWorkspace(deps: {
     setChannels,
     sidebarChannels,
     syncWorkspace,
+    /** 控制/来信快照（UI-05 控制状态条用） */
+    agentFlags,
+    /** 操作（恢复/重试）后立刻重取一次，不用等下一个 15s 周期 */
+    refreshAgentFlags: pollAgentFlags,
   };
 }

@@ -1466,3 +1466,80 @@ border-color: var(--danger);
   background: var(--danger-weak);
   color: var(--danger-text);
 }
+
+/* ── UI-05 控制状态条与顶栏状态文字 ─────────────────────────────
+   时间线底部、输入条上方，宽度同阅读列。用语义令牌：
+   已暂停=warn、来信失败=danger、存储损坏=danger、其余=info。 */
+.control-notice {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  width: min(var(--read-w), 100%);
+  margin: 0 auto var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  font-size: var(--fs-sm);
+}
+
+.control-notice.paused {
+  border-color: var(--warn-border);
+  background: var(--warn-weak);
+  color: var(--warn-text);
+}
+
+.control-notice.failed,
+.control-notice.faulted {
+  border-color: var(--danger-border);
+  background: var(--danger-weak);
+  color: var(--danger-text);
+}
+
+.control-notice.stopping,
+.control-notice.pending {
+  border-color: var(--info-strong);
+  background: var(--info-weak);
+  color: var(--info-text);
+}
+
+.control-notice-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+
+.control-notice-text {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 顶栏标题行里的状态文字（UI-05） */
+.chat-header-control-status {
+  flex: none;
+  margin-left: var(--sp-2);
+  padding: 1px var(--sp-2);
+  border-radius: var(--r-full);
+  border: 1px solid var(--border);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.chat-header-control-status.paused {
+  border-color: var(--warn-border);
+  color: var(--warn-text);
+}
+
+.chat-header-control-status.stopping,
+.chat-header-control-status.pending {
+  border-color: var(--info-strong);
+  color: var(--info-text);
+}
+
+.chat-header-control-status.failed,
+.chat-header-control-status.faulted {
+  border-color: var(--danger-border);
+  color: var(--danger-text);
+}

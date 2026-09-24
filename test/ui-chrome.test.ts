@@ -25,6 +25,7 @@ describe('faceStateFromStatus', () => {
     assert.equal(faceStateFromStatus('blocked'), 'blocked');
     assert.equal(faceStateFromStatus('error'), 'blocked');
     assert.equal(faceStateFromStatus('done'), 'done');
+    assert.equal(faceStateFromStatus('paused'), 'paused', '暂停是独立脸：闭眼灰度，不当成也没当成沉默');
     assert.equal(faceStateFromStatus(undefined), 'idle');
     assert.equal(faceStateFromStatus('queued'), 'working');
   });

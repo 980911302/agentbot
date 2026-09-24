@@ -63,9 +63,20 @@ export default function App() {
     setChannels,
     sidebarChannels,
     syncWorkspace,
+    agentFlags,
+    refreshAgentFlags,
   } = useWorkspace({
     activeChannelId,
   });
+  /** 是否有一笔停止正在这个频道生效（UI-05：chat state 里 kind=stop 的活动 run） */
+  const stopInFlight = useMemo(
+    () =>
+      [...chatEngine.runs.values()].some(
+        run => run.agentId === activeChannelId && run.kind === 'stop' &&
+          (run.status === 'queued' || run.status === 'running' || run.status === 'finalizing'),
+      ),
+    [chatEngine.runs, chatEngineVersion, activeChannelId],
+  );
   /** 群成员进行中也由运行记录推导；丢 round_end 时仍可由快照收口。 */
   const roomRun = [...chatEngine.runs.values()].reverse().find(run => run.roomId === activeChannelId &&
     run.kind === 'agent' && (run.status === 'queued' || run.status === 'running'));
@@ -203,6 +214,22 @@ export default function App() {
       },
     [channels, activeChannelId],
   );
+
+  /** 控制状态条输入（UI-05）：当前 1:1 智能体的许可态 + 来信积压 + 停止中。
+   *  群没有单智能体许可态，不显示。 */
+  const controlNoticeInput = useMemo(() => {
+    const flags = agentFlags[activeChannelId];
+    const isAgentChannel = Boolean(activeChannelId) && activeChannel.kind !== 'room';
+    if (!flags || !isAgentChannel) return null;
+    return {
+      autoActivation: flags.paused ? ('paused' as const) : ('enabled' as const),
+      held: flags.held,
+      faulted: flags.faulted,
+      pendingMail: flags.pendingMail,
+      failedMail: flags.failedMail,
+      stopInFlight,
+    };
+  }, [agentFlags, activeChannelId, activeChannel.kind, stopInFlight]);
 
   const currentMessages = channelHistories[activeChannelId] ?? [];
   /**
@@ -735,6 +762,8 @@ export default function App() {
           roundActive={roundActive}
           doneFlash={doneFlash}
           memberLimit={roomMemberLimit}
+          controlInput={controlNoticeInput}
+          onControlChanged={() => void refreshAgentFlags()}
           onOpenProfile={
             activeChannel.kind === 'room'
               ? undefined

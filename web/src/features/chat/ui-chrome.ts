@@ -26,6 +26,8 @@ export function faceStateFromStatus(status?: string | null): AvatarState {
   if (status === 'waiting') return 'waiting';
   if (status === 'error' || status === 'blocked') return 'blocked';
   if (status === 'done') return 'done';
+  // 暂停（UI-05）：闭眼、灰度 60%、无循环动画，与「忙碌」明确区分
+  if (status === 'paused') return 'paused';
   return 'idle';
 }
 

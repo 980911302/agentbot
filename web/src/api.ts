@@ -200,6 +200,24 @@ export async function fetchAgentInbox(agentId: string): Promise<AgentInboxView> 
   return { pending: data.items.length, failed: data.failed };
 }
 
+/** 恢复自动处理（POST /api/agents/:id/resume） */
+export async function resumeAgent(agentId: string): Promise<unknown> {
+  return request(`/api/agents/${encodeURIComponent(agentId)}/resume`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ selection: { kind: 'enable_future' } }),
+  });
+}
+
+/** 重试失败的来信（POST /api/agents/:id/inbox/retry），返回实际重投条数 */
+export async function retryAgentMail(agentId: string): Promise<number> {
+  const data = await request<{ retried: number }>(
+    `/api/agents/${encodeURIComponent(agentId)}/inbox/retry`,
+    { method: 'POST' },
+  );
+  return data.retried;
+}
+
 // ── 房间（群） ─────────────────────────────────────────
 
 export async function fetchRooms(): Promise<{ rooms: RoomView[]; memberLimit: number }> {

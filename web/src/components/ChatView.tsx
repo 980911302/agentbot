@@ -6,10 +6,12 @@ import { RichText } from '../markdown';
 import { BotAvatar } from './BotAvatar';
 import { IconArrowDown, IconArrowUp, IconCheck, IconShare, IconSidebar } from '../icons';
 import { MessageItem } from './MessageItem';
+import { ControlNotice } from './ControlNotice';
 import { InteractionCard } from './InteractionCard';
 import { CorrespondenceRow, CorrespondencePanel } from './CorrespondenceView';
 import { chatRows } from '../features/chat/correspondence';
 import { jumpToBottomVisible, timelineBlocks } from '../features/chat/timeline-view';
+import { controlStatusText as controlStatusTextOf, type ControlNoticeInput } from '../features/chat/control-view';
 import { ChatWelcome } from './ChatWelcome';
 import type { MessageActor } from '../../../src/shared/contracts/message-identity';
 
@@ -48,6 +50,11 @@ interface ChatViewProps {
     id: string,
     answer: { value?: string; secret?: string; cancelled?: boolean },
   ) => void;
+  /** 控制状态（UI-05）：传入后自动渲染时间线底部状态条与顶栏状态文字；
+   *  群没有单智能体许可态，App 传 null 即可。 */
+  controlInput?: ControlNoticeInput | null;
+  /** 控制操作（恢复/重试）成功后让父组件刷新数据 */
+  onControlChanged?: () => void;
 }
 
 export function ChatView({
@@ -73,6 +80,8 @@ export function ChatView({
   loading = false,
   interactions,
   onAnswerInteraction,
+  controlInput,
+  onControlChanged,
 }: ChatViewProps) {
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   /** 是否跟随新消息 */
@@ -82,6 +91,12 @@ export function ChatView({
   const [awayFromBottom, setAwayFromBottom] = useState(false);
   const lastSeenCount = useRef(messages.length);
   const title = channelTitle || bot?.name || '对话';
+  /** 顶栏控制状态文字（UI-05）：与底部状态条同一判定，不各说各话 */
+  const controlStatusText = controlInput ? controlStatusTextOf(controlInput) : null;
+  /** 顶栏头像状态：停止期间与暂停都要在脸上看出来，盖过运行态 */
+  const avatarStatus = controlInput
+    ? (controlInput.autoActivation === 'paused' || controlInput.stopInFlight ? 'paused' : bot?.status)
+    : bot?.status;
   const lastSpeakerId = [...messages].reverse().find((item) => item.role === 'assistant')?.id;
   const faces = members.map((member) => ({
     ...member,
@@ -239,7 +254,7 @@ export function ChatView({
               name={title}
               size={28}
               color={bot?.color || '#b89b6a'}
-              status={isGroup ? undefined : bot?.status}
+              status={isGroup ? undefined : avatarStatus}
               agentId={bot?.id}
               isGroup={isGroup}
               members={faces}
@@ -259,6 +274,9 @@ export function ChatView({
             <div className="chat-header-title-row">
               <h2 className="chat-header-title">{title}</h2>
               {isGroup ? <span className="chat-header-group-badge">{faces.length}/{memberLimit}</span> : null}
+              {controlStatusText ? (
+                <span className={`chat-header-control-status ${controlStatusText.kind}`}>{controlStatusText.text}</span>
+              ) : null}
             </div>
             {isGroup && faces.length > 0 ? (
               <span className="chat-header-subtitle">群聊</span>
@@ -518,6 +536,14 @@ export function ChatView({
         <div className="chat-status-line" title={actionHint ?? undefined}>
           <span>{bot?.activity ? `正在 ${bot.activity}` : '正在…'}</span>
         </div>
+      ) : null}
+
+      {controlInput ? (
+        <ControlNotice
+          agentId={isGroup ? null : (bot?.id ?? null)}
+          input={controlInput}
+          onChanged={onControlChanged}
+        />
       ) : null}
 
       {composer}
