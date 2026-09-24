@@ -26,6 +26,16 @@ export function isTabbable(element: Element): element is HTMLElement {
 }
 
 /**
+ * 弹窗打开时的首焦点（UI 设计规范 5.11「打开聚焦首个输入」）：
+ * 优先表单控件——弹窗头部通常有个关闭按钮，按 DOM 顺序它会抢在输入框
+ * 前面，照顺序聚焦就把首焦点落在了关闭按钮上。没有表单控件时退回第一个
+ * 可聚焦元素（如纯确认框的确定按钮）。
+ */
+export function initialFocusTarget<T extends Element>(items: T[]): T | undefined {
+  return items.find(item => item.matches('input, textarea, select')) ?? items[0];
+}
+
+/**
  * 打开中的弹窗栈。
  *
  * Esc 应该只关最上层那个：侧栏菜单、弹窗、二级确认可能同时存在，

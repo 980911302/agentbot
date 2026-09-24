@@ -2,6 +2,7 @@ import { strict as assert } from 'node:assert';
 import { beforeEach, describe, it } from 'node:test';
 import {
   clearDialogs,
+  initialFocusTarget,
   isTopmostDialog,
   nextFocusIndex,
   openDialogCount,
@@ -32,6 +33,26 @@ describe('Tab 在弹窗内循环', () => {
   it('没有可聚焦元素时返回 -1，调用方应把焦点放到容器本身', () => {
     assert.equal(nextFocusIndex(0, 0, false), -1);
     assert.equal(nextFocusIndex(0, 0, true), -1);
+  });
+});
+
+describe('打开时的首焦点', () => {
+  // DOM 桩：只实现 initialFocusTarget 用到的 matches/tagName
+  const el = (selector: string): Element =>
+    ({ matches: (s: string) => s.split(', ').includes(selector) }) as Element;
+
+  it('有关表单控件时聚焦第一个输入，不让弹窗头部的关闭按钮抢走', () => {
+    const items = [el('button'), el('input'), el('textarea')];
+    assert.equal(initialFocusTarget(items), items[1]);
+  });
+
+  it('纯确认框没有输入框时退回第一个可聚焦元素', () => {
+    const items = [el('button'), el('button')];
+    assert.equal(initialFocusTarget(items), items[0]);
+  });
+
+  it('没有可聚焦元素时返回 undefined，调用方退到容器本身', () => {
+    assert.equal(initialFocusTarget([]), undefined);
   });
 });
 
