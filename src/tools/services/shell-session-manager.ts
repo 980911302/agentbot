@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { childEnvironment } from './child-environment.js';
 import { ToolOutputStore } from './tool-output-store.js';
 import type { ToolResult } from '../../shared/contracts/tool-result.js';
 
@@ -54,7 +55,14 @@ export class ShellSessionManager {
     const id = randomUUID();
     const outputs = this.outputStore(options.outputs);
     outputs.create(options.ownerId ?? '', { id, command });
-    const child = spawn(command, { cwd, shell: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(command, {
+      cwd,
+      shell: true,
+      detached: process.platform !== 'win32',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      // 不继承 process.env：密钥（AGENT_API_KEY 等）只留在后端进程内（bug_cge6m9yewecs）
+      env: childEnvironment(),
+    });
     const shell: ShellProcess = {
       id,
       command,
