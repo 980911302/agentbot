@@ -137,6 +137,7 @@
   --danger-text: #c22e21;
   --danger-strong: #d93229;   /* 主按钮按下态（color-mix #000 85% 的令牌化） */
   --danger-glow: 0 2px 8px rgba(248, 113, 113, 0.4);
+  --danger-border: rgba(255, 59, 48, 0.26); /* 危险系描边（历史值恢复） */
   --on-danger: #ffffff;
   --info: #4a90e2;
   --info-weak: rgba(74, 144, 226, 0.10);
@@ -230,6 +231,7 @@
   --danger-text: #fca5a5;
   --danger-strong: #d36060;
   --danger-glow: 0 2px 8px rgba(248, 113, 113, 0.4);
+  --danger-border: rgba(248, 113, 113, 0.28); /* 危险系描边（历史值恢复） */
   --on-danger: #0c0e12;
   --info: #60a5fa;
   --info-weak: rgba(96, 165, 250, 0.14);

@@ -85,6 +85,18 @@ const HEX = /#[0-9a-fA-F]{3,8}\b/;
 const RGBA = /\b(?:rgba?|hsla?)\(/;
 const Z_INDEX = /z-index:\s*([2-9]|\d\d+)/;
 const Z_INDEX_JS = /zIndex:\s*([2-9]|\d\d+)/;
+const ANY_VAR = /var\((--[\w-]+)/g;
+
+/**
+ * 从令牌文件收集全部定义名。规则「任何 var(--x) 无定义即报错」靠它兜底——
+ * 枚举别名列表会漏（UI-01 曾漏 --bg-raised/--danger-border/--ease-out 三个名字 8 处引用），
+ * 定义差集才是真相。
+ */
+const DEFINED_TOKENS = new Set(
+  [...readFileSync(join(WEB, 'styles/01-tokens.css'), 'utf8').matchAll(/^\s*(--[\w-]+)\s*:/gm)].map(
+    (m) => m[1],
+  ),
+);
 
 /** @param {string} dir @param {string[]} out @returns {string[]} */
 function walk(dir, out = []) {
@@ -125,13 +137,19 @@ const scan = (file, withAlias) => {
     if (withAlias && ALIASES.some((alias) => line.includes(`var(${alias})`))) {
       report(file, lineNo, line, '兼容别名');
     }
+    // 无定义令牌（比枚举别名更强的兜底）：本地 var(--x) 注册函数/局部变量除外
+    for (const match of line.matchAll(ANY_VAR)) {
+      const name = match[1];
+      if (!name || DEFINED_TOKENS.has(name)) continue;
+      report(file, lineNo, line, `未定义令牌 ${name}`);
+    }
   });
 };
 
 for (const file of styleFiles) scan(file, true);
 for (const file of sourceFiles) scan(file, true);
 
-// 身份色/插画文件：十六进制整文件放行，别名与 z-index 仍查
+// 身份色/插画文件：十六进制整文件放行，别名/z-index/未定义令牌仍查
 for (const file of IDENTITY_PALETTE_FILES) {
   if (!existsSync(file)) continue;
   const lines = readFileSync(file, 'utf8').split('\n');
@@ -140,6 +158,11 @@ for (const file of IDENTITY_PALETTE_FILES) {
       report(file, index + 1, line, '兼容别名');
     }
     if (Z_INDEX.test(line) || Z_INDEX_JS.test(line)) report(file, index + 1, line, '数字 z-index');
+    for (const match of line.matchAll(ANY_VAR)) {
+      const name = match[1];
+      if (!name || DEFINED_TOKENS.has(name)) continue;
+      report(file, index + 1, line, `未定义令牌 ${name}`);
+    }
   });
 }
 
