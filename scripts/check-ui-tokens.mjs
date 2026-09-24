@@ -21,7 +21,7 @@
  */
 
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import { dirname, join, relative, resolve } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(fileURLToPath(new URL('../', import.meta.url)));
@@ -36,18 +36,49 @@ const IDENTITY_PALETTE_FILES = [
 
 /** 身份色取值（AVATAR_COLOR_HEX 的 11 色 + 默认身份色）：任何文件出现都放行 */
 const IDENTITY_HEX = new Set([
-  '#1b1d22', '#b89b6a', '#e24b4b', '#f08a2c', '#e6c041', '#3cb86c',
-  '#39c1c8', '#3b82f6', '#8b5cf6', '#d946a6', '#8b93a7',
+  '#1b1d22',
+  '#b89b6a',
+  '#e24b4b',
+  '#f08a2c',
+  '#e6c041',
+  '#3cb86c',
+  '#39c1c8',
+  '#3b82f6',
+  '#8b5cf6',
+  '#d946a6',
+  '#8b93a7',
 ]);
 
 const ALIASES = [
-  '--panel', '--raised', '--sunken', '--hover', '--active',
-  '--fg', '--fg-muted', '--fg-faint',
-  '--line', '--line-strong', '--bubble-user', '--bubble-assistant',
-  '--composer-bg', '--composer-border', '--composer-fade',
-  '--card', '--card-bg', '--card-border', '--surface', '--pill-blue',
-  '--code-bg', '--code-border', '--code-inline-bg', '--code-inline-fg', '--code-inline-border',
-  '--text-muted', '--bad', '--error', '--sidebar-border',
+  '--panel',
+  '--raised',
+  '--sunken',
+  '--hover',
+  '--active',
+  '--fg',
+  '--fg-muted',
+  '--fg-faint',
+  '--line',
+  '--line-strong',
+  '--bubble-user',
+  '--bubble-assistant',
+  '--composer-bg',
+  '--composer-border',
+  '--composer-fade',
+  '--card',
+  '--card-bg',
+  '--card-border',
+  '--surface',
+  '--pill-blue',
+  '--code-bg',
+  '--code-border',
+  '--code-inline-bg',
+  '--code-inline-fg',
+  '--code-inline-border',
+  '--text-muted',
+  '--bad',
+  '--error',
+  '--sidebar-border',
 ];
 
 const HEX = /#[0-9a-fA-F]{3,8}\b/;
@@ -55,6 +86,7 @@ const RGBA = /\b(?:rgba?|hsla?)\(/;
 const Z_INDEX = /z-index:\s*([2-9]|\d\d+)/;
 const Z_INDEX_JS = /zIndex:\s*([2-9]|\d\d+)/;
 
+/** @param {string} dir @param {string[]} out @returns {string[]} */
 function walk(dir, out = []) {
   for (const entry of readdirSync(dir)) {
     const full = join(dir, entry);
@@ -72,10 +104,13 @@ const sourceFiles = walk(WEB)
   .filter((file) => /\.(tsx?|jsx?)$/.test(file))
   .filter((file) => !IDENTITY_PALETTE_FILES.includes(file));
 
+/** @type {string[]} */
 const problems = [];
+/** @param {string} file @param {number} lineNo @param {string} line @param {string} rule */
 const report = (file, lineNo, line, rule) =>
   problems.push(`${relative(ROOT, file)}:${lineNo} [${rule}] ${line.trim()}`);
 
+/** @param {string} file @param {boolean} withAlias */
 const scan = (file, withAlias) => {
   const lines = readFileSync(file, 'utf8').split('\n');
   lines.forEach((line, index) => {

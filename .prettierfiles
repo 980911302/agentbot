@@ -1,0 +1,11 @@
+# 受 Prettier 管理的文件清单（E1.4 增量落地）。
+# 规则：本清单之外的历史文件尚未格式化，不要直接 `prettier --write .`；
+# 触碰某个文件时：格式化它 → 把路径追加到本清单 → check-format 会守住它。
+package.json
+scripts/ci.mjs
+scripts/check-ui-tokens.mjs
+scripts/check-imports.mjs
+scripts/check-format.mjs
+scripts/check-lint.mjs
+test/engineering-gates.test.ts
+src/server/runtime/room-flow-signing.ts

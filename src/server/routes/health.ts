@@ -1,6 +1,5 @@
 import { json } from '../transport/json.js';
 import { pickerOptionsFromProviders } from '../../shared/contracts/model-catalog.js';
-import { ModelConfigStore } from '../../storage/model-config-store.js';
 import type { RouteContext } from './context.js';
 
 export async function handleHealthRoute(
@@ -8,8 +7,7 @@ export async function handleHealthRoute(
   context: RouteContext,
 ): Promise<void> {
   try {
-    const store = new ModelConfigStore(context.runtime.dataDir);
-    const stored = await store.load({ model: context.model });
+    const stored = await context.runtime.modelConfigStore.load({ model: context.model });
     json(response, 200, {
       ok: true,
       service: 'agentbot',

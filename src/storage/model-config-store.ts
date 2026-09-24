@@ -1,99 +1,16 @@
 import { join } from 'node:path';
 import { readFileSync } from 'node:fs';
 import { isMissingFile, writeJsonAtomic } from './atomic-json.js';
-import type { ThinkingLevel } from '../shared/contracts/model-catalog.js';
-
-export interface ProviderModelConfig {
-  id: string;
-  model: string;
-  name?: string;
-  contextWindow?: string;
-  thinkingEnabled?: boolean;
-  thinkingLevel?: ThinkingLevel;
-  temperature?: number;
-}
-
-export interface ProviderItemConfig {
-  id: string;
-  name: string;
-  group: string;
-  enabled: boolean;
-  baseURL: string;
-  apiFormat: 'openai' | 'responses';
-  apiKey: string;
-  models: ProviderModelConfig[];
-  createdAt?: number;
-  updatedAt?: number;
-}
-
-export interface ConfiguredModelItem {
-  id: string;
-  name: string;
-  provider: string;
-  baseURL: string;
-  apiKey: string;
-  model: string;
-  thinkingEnabled: boolean;
-  thinkingLevel: ThinkingLevel;
-  temperature?: number;
-  createdAt: number;
-  updatedAt: number;
-}
-
-export interface StoredModelConfig {
-  activeProviderId: string;
-  activeModelId: string;
-  providers: ProviderItemConfig[];
-  models: ConfiguredModelItem[];
-  // 顶层保持与 activeModelId 对应的模型与供应商同步，保持现有代码与测试向下兼容
-  baseURL: string;
-  apiKey: string;
-  model: string;
-  thinkingEnabled: boolean;
-  thinkingLevel: ThinkingLevel;
-  temperature?: number;
-  updatedAt: number;
-}
-
-export function maskApiKey(key: string): string {
-  if (!key) return '';
-  const trimmed = key.trim();
-  if (trimmed.length <= 8) return '****';
-  return `${trimmed.slice(0, 4)}••••${trimmed.slice(-4)}`;
-}
-
-export function detectProvider(baseURL: string): string {
-  const url = baseURL.toLowerCase();
-  if (url.includes('deepseek.com')) return 'deepseek';
-  if (url.includes('openai.com')) return 'openai';
-  if (url.includes('openrouter.ai')) return 'openrouter';
-  if (url.includes('siliconflow')) return 'siliconflow';
-  if (url.includes('dashscope.aliyuncs.com') || url.includes('bailian')) return 'dashscope';
-  if (url.includes('bigmodel.cn')) return 'zhipu';
-  if (url.includes('modelscope.cn')) return 'modelscope';
-  return 'custom';
-}
-
-export function maskModelItem(item: ConfiguredModelItem, activeId?: string) {
-  return {
-    ...item,
-    apiKey: maskApiKey(item.apiKey),
-    hasKey: Boolean(item.apiKey),
-    isDefault: item.id === activeId,
-  };
-}
-
-export function maskProviderItem(provider: ProviderItemConfig, activeModelId?: string) {
-  return {
-    ...provider,
-    apiKey: maskApiKey(provider.apiKey),
-    hasKey: Boolean(provider.apiKey),
-    models: provider.models.map((m) => ({
-      ...m,
-      isActive: m.id === activeModelId || m.model === activeModelId,
-    })),
-  };
-}
+import {
+  detectProvider,
+  maskApiKey,
+  maskModelItem,
+  maskProviderItem,
+  type ConfiguredModelItem,
+  type ProviderItemConfig,
+  type ProviderModelConfig,
+  type StoredModelConfig,
+} from '../shared/contracts/model-catalog.js';
 
 /** 删除激活供应商后挑选回退目标：优先启用、有模型、有密钥的那个 */
 function pickFallbackProvider(providers: ProviderItemConfig[]): ProviderItemConfig {

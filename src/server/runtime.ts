@@ -2,6 +2,7 @@ import { ActivationCoordinator } from './runtime/activation-coordinator.js';
 import { DeliveryService } from './runtime/delivery-service.js';
 import { EffectRunner } from './runtime/effect-runner.js';
 import { OutboxProjector } from './runtime/outbox-projector.js';
+import { ModelConfigStore } from '../storage/model-config-store.js';
 import { RuntimeControlStore } from '../storage/runtime-control-store.js';
 import type { DeliveryReceipt } from '../shared/contracts/execution-control.js';
 import { randomUUID } from 'node:crypto';
@@ -122,6 +123,8 @@ export class AgentRuntime {
   readonly workbench: Workbench;
   readonly broker: InteractionBroker;
   readonly secrets: SecretStore;
+  /** 模型配置（设置页热切换）；routes 经此访问，不直连 storage */
+  readonly modelConfigStore: ModelConfigStore;
   readonly dataDir: string;
 
   /** 全量工具面（常驻 + 平台层），/api/health 与新同事默认表都从这里来 */
@@ -228,6 +231,7 @@ export class AgentRuntime {
     });
     this.broker = options.broker ?? new InteractionBroker();
     this.secrets = options.secrets ?? new SecretStore(options.dataDir);
+    this.modelConfigStore = options.modelConfigStore ?? new ModelConfigStore(options.dataDir);
     this.stopCoordinator = new StopCoordinator({
       registry: this.registry,
       messages: this.messages,

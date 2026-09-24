@@ -36,7 +36,10 @@ npm run dev -- "读一下 package.json"   # 命令行单次对话
 | `npm run build:all` | 后端 + 前端构建 |
 | `npm run check` | typecheck + test + build:all |
 | `npm run docs:check` | 根 `README.md` 与 `docs/*.md` 的相对链接、代码围栏 |
-| `npm run ci` | 双端类型 → 测试 → 双端构建 → 文档检查（`scripts/ci.mjs`） |
+| `npm run ci` | 双端类型 → 测试 → 双端构建 → 文档检查 → UI 令牌 → 格式 → 静态检查 → 跨层 import（`scripts/ci.mjs`，8 步） |
+| `node scripts/check-format.mjs` | 只检查 `.prettierfiles` 受管清单的格式；触碰新文件先 `npx prettier --write <file>` 并把路径追加进清单 |
+| `node scripts/check-lint.mjs` | 受管文件的静态检查：tsc 未使用声明/隐式 any、显式 any、裸 Promise |
+| `node scripts/check-imports.mjs` | 跨层 import 约束（R1 契约纯净 / R2 前端只类型导入 / R3 路由不碰 storage / R4 工具不碰门面），可传 rootDir 指向测试夹具 |
 | `npm run clean` | 只清 `dist`、`web/dist`、`test-results`（白名单，绝不碰 `.agentbot`/`.env`） |
 
 ## 3. 配置

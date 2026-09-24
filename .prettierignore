@@ -1,0 +1,10 @@
+node_modules/
+dist/
+web/dist/
+test-results/
+.agentbot/
+.commandcode/
+.agentbot-backups/
+.superpowers/
+desktop/release/
+living-avatar/

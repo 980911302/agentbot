@@ -6,6 +6,7 @@ import type { InteractionBroker } from '../../interaction/broker.js';
 import type { LLMProvider } from '../../llm/provider.js';
 import type { MemoryStore } from '../../memory/store.js';
 import type { RoomEventHandler, RoundOutcome, RoundStatus } from '../../room/types.js';
+import type { ModelConfigStore } from '../../storage/model-config-store.js';
 import type { SecretStore } from '../../secret/store.js';
 import type { RunTreeRecord, RunTurnRecord, ToolInvocationRecord } from '../../storage/ports.js';
 import type { RecoveryPlan } from '../../tools/policy.js';
@@ -44,6 +45,8 @@ export interface AgentRuntimeOptions {
   broker?: InteractionBroker;
   /** 密钥存储；不传则自建 */
   secrets?: SecretStore;
+  /** 模型配置存储；不传则自建。 routes 只经 runtime 访问，不直连 storage */
+  modelConfigStore?: ModelConfigStore;
   /** 停止词表；不传用默认（见 docs/架构设计.md「插话、停止和等待」） */
   stopWords?: string[];
   /** 停止令等下级回报的上限（默认 30s；测试可调短） */

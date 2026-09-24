@@ -1,7 +1,8 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
 import { tempDataDir } from './fakes/test-env.js';
-import { ModelConfigStore, maskApiKey } from '../src/storage/model-config-store.js';
+import { maskApiKey } from '../src/shared/contracts/model-catalog.js';
+import { ModelConfigStore } from '../src/storage/model-config-store.js';
 import {
   MODEL_CATALOG,
   lookupModelThinkingInfo,

@@ -1,4 +1,3 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
 
 export type RoomMode = 'open' | 'managed';
 
@@ -127,34 +126,6 @@ export interface FlowBriefContext {
   visibleStateSummary: string;
   allowedOutput: string;
   constraints: string[];
-}
-
-export function buildReplyRouteSignature(secret: string, route: Omit<RoomReplyRoute, 'signature'>): string {
-  const content = [route.kind, route.roomId, route.flowId, route.grantId, route.mode].join(':');
-  return createHmac('sha256', secret).update(content).digest('hex');
-}
-
-export function createSignedReplyRoute(
-  secret: string,
-  route: Omit<RoomReplyRoute, 'signature'>,
-): RoomReplyRoute {
-  const signature = buildReplyRouteSignature(secret, route);
-  return { ...route, signature };
-}
-
-export function verifyReplyRouteSignature(secret: string, route: RoomReplyRoute): boolean {
-  if (!route || route.kind !== 'room_flow' || !route.signature) return false;
-  const expected = buildReplyRouteSignature(secret, {
-    kind: route.kind,
-    roomId: route.roomId,
-    flowId: route.flowId,
-    grantId: route.grantId,
-    mode: route.mode,
-  });
-  const expectedBuf = Buffer.from(expected, 'hex');
-  const actualBuf = Buffer.from(route.signature, 'hex');
-  if (expectedBuf.length !== actualBuf.length) return false;
-  return timingSafeEqual(expectedBuf, actualBuf);
 }
 
 export interface RoomFlowView {

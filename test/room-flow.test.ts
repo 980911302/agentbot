@@ -704,7 +704,7 @@ describe('受控群流程与行动权验收测试（Section 21）', () => {
         protocols: new ProtocolRegistry(),
       });
 
-      const route = (await import('../src/shared/contracts/room-flow.js')).createSignedReplyRoute(secret1, {
+      const route = (await import('../src/server/runtime/room-flow-signing.js')).createSignedReplyRoute(secret1, {
         kind: 'room_flow',
         roomId: 'r1',
         flowId: 'f1',

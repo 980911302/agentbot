@@ -5,16 +5,16 @@ import {
   MODEL_CATALOG,
   PROVIDER_PRESETS,
   STANDARD_THINKING_LEVELS,
-  pickerOptionsFromProviders,
-  type ThinkingLevel,
-} from '../../shared/contracts/model-catalog.js';
-import {
-  ModelConfigStore,
   maskApiKey,
   maskModelItem,
   maskProviderItem,
+  pickerOptionsFromProviders,
+  type ConfiguredModelItem,
+  type ProviderItemConfig,
   type ProviderModelConfig,
-} from '../../storage/model-config-store.js';
+  type StoredModelConfig,
+  type ThinkingLevel,
+} from '../../shared/contracts/model-catalog.js';
 import { OpenAIProvider } from '../../llm/openai-provider.js';
 
 export async function handleModelSettingsRoute(
@@ -24,7 +24,7 @@ export async function handleModelSettingsRoute(
 ): Promise<void> {
   const method = request.method ?? 'GET';
   const url = new URL(request.url ?? '/', 'http://localhost');
-  const store = new ModelConfigStore(context.runtime.dataDir);
+  const store = context.runtime.modelConfigStore;
 
   if (method === 'GET' && url.pathname === '/api/settings/model') {
     const stored = await store.load({

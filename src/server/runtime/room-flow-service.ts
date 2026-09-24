@@ -10,11 +10,8 @@ import type {
   RoomFlowBudget,
   RoomReplyRoute,
 } from '../../shared/contracts/room-flow.js';
-import {
-  DEFAULT_ROOM_FLOW_BUDGET,
-  createSignedReplyRoute,
-  verifyReplyRouteSignature,
-} from '../../shared/contracts/room-flow.js';
+import { DEFAULT_ROOM_FLOW_BUDGET } from '../../shared/contracts/room-flow.js';
+import { createSignedReplyRoute, verifyReplyRouteSignature } from './room-flow-signing.js';
 import { FlowConflictError, type RoomFlowStore } from '../../storage/room-flow-store.js';
 import type { ProtocolRegistry } from './room-flow-protocols.js';
 

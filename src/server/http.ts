@@ -111,6 +111,7 @@ export async function createAgentServer(options: AgentServerOptions = {}): Promi
     stopWords: config.stopWords,
     broker,
     secrets,
+    modelConfigStore,
   });
 
   // DI：工具需要的运行时回调在 runtime 建好后立即绑定（无模块级全局可变状态）
