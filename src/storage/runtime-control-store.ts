@@ -48,6 +48,7 @@ export interface ControlSnapshot {
   outbox: Record<string, unknown>;
   receipts: Record<string, unknown>;
   actions: Record<string, unknown>;
+  effects: Record<string, import('../shared/contracts/execution-control.js').EffectRecord>;
 }
 
 const emptySnapshot = (processEpoch: string): ControlSnapshot => ({
@@ -64,6 +65,7 @@ const emptySnapshot = (processEpoch: string): ControlSnapshot => ({
   outbox: {},
   receipts: {},
   actions: {},
+  effects: {},
 });
 
 export interface RuntimeControlStoreOptions {
@@ -109,7 +111,7 @@ export class RuntimeControlStore {
     try {
       const parsed = JSON.parse(readFileSync(file, 'utf8')) as ControlSnapshot;
       if (!parsed || typeof parsed !== 'object' || typeof parsed.controlSeq !== 'number') throw new Error('invalid snapshot');
-      const state = { ...emptySnapshot(parsed.processEpoch || currentProcessEpoch), ...parsed };
+      const state = { ...emptySnapshot(parsed.processEpoch || currentProcessEpoch), ...parsed, effects: parsed.effects ?? {} };
       for (const ticket of Object.values(state.tickets)) {
         if (ticket.state === 'admitted' || ticket.state === 'running') ticket.state = 'revoked';
       }
@@ -136,7 +138,7 @@ export class RuntimeControlStore {
       if (!parsed || typeof parsed !== 'object' || typeof parsed.controlSeq !== 'number') {
         throw new Error('invalid snapshot');
       }
-      const state = { ...emptySnapshot(parsed.processEpoch || currentProcessEpoch), ...parsed };
+      const state = { ...emptySnapshot(parsed.processEpoch || currentProcessEpoch), ...parsed, effects: parsed.effects ?? {} };
       for (const ticket of Object.values(state.tickets)) {
         if (ticket.state === 'admitted' || ticket.state === 'running') ticket.state = 'revoked';
       }
@@ -194,7 +196,7 @@ export class RuntimeControlStore {
   }
 
   async commitStop(command: StopCommand): Promise<StopOperation> {
-    if (command.scope.kind !== 'agent') {
+    if (command.scope.kind === 'all_agents' || command.scope.kind === 'room_round') {
       throw new ControlError('尚未实现该停止范围', 'UNSUPPORTED_STOP_SCOPE');
     }
     const scope = command.scope;
@@ -210,32 +212,57 @@ export class RuntimeControlStore {
         result = previous;
         return 'skip';
       }
-      const agentId = scope.agentId;
-      const agent: AgentControl = {
-        agentId,
-        generation: 0,
-        autoActivation: 'enabled',
-        revision: 0,
-        ...draft.agents[agentId],
-      };
-      agent.generation += 1;
-      agent.revision += 1;
-      agent.autoActivation = 'paused';
-      const committedSeq = draft.controlSeq + 1;
-      agent.blockedAutoRootsThroughSeq = committedSeq;
-      const stopId = randomUUID();
-      agent.lastStopId = stopId;
-      agent.lastStopSeq = committedSeq;
-      draft.agents[agentId] = agent;
-      for (const grant of Object.values(draft.grants)) {
-        if (grant.agentId === agentId && grant.state === 'active') grant.state = 'revoked';
-      }
       const targetTicketIds: string[] = [];
-      for (const ticket of Object.values(draft.tickets)) {
-        if (ticket.agentId === agentId && (ticket.state === 'admitted' || ticket.state === 'running')) {
-          ticket.state = 'revoked';
-          targetTicketIds.push(ticket.ticketId);
+      const stopId = randomUUID();
+      const committedSeq = draft.controlSeq + 1;
+
+      if (scope.kind === 'agent') {
+        const agentId = scope.agentId;
+        const agent: AgentControl = {
+          agentId,
+          generation: 0,
+          autoActivation: 'enabled',
+          revision: 0,
+          ...draft.agents[agentId],
+        };
+        agent.generation += 1;
+        agent.revision += 1;
+        agent.autoActivation = 'paused';
+        agent.blockedAutoRootsThroughSeq = committedSeq;
+        agent.lastStopId = stopId;
+        agent.lastStopSeq = committedSeq;
+        draft.agents[agentId] = agent;
+        for (const grant of Object.values(draft.grants)) {
+          if (grant.agentId === agentId && grant.state === 'active') grant.state = 'revoked';
         }
+        for (const ticket of Object.values(draft.tickets)) {
+          if (ticket.agentId === agentId && (ticket.state === 'admitted' || ticket.state === 'running')) {
+            ticket.state = 'revoked';
+            targetTicketIds.push(ticket.ticketId);
+          }
+        }
+      } else if (scope.kind === 'room_flow') {
+        for (const ticket of Object.values(draft.tickets)) {
+          if (ticket.flowId === scope.flowId && (ticket.state === 'admitted' || ticket.state === 'running')) {
+            ticket.state = 'revoked';
+            targetTicketIds.push(ticket.ticketId);
+          }
+        }
+      } else {
+        for (const ticket of Object.values(draft.tickets)) {
+          if (ticket.state === 'admitted' || ticket.state === 'running') {
+            ticket.state = 'revoked';
+            targetTicketIds.push(ticket.ticketId);
+          }
+        }
+      }
+      const targetEffectIds: string[] = [];
+      const pendingEffects: Array<{ id: string; reason: string }> = [];
+      for (const effect of Object.values(draft.effects)) {
+        if (!targetTicketIds.includes(effect.ticketId)) continue;
+        targetEffectIds.push(effect.effectId);
+        if (effect.state === 'reserved') effect.state = 'cancelled';
+        if (effect.state === 'started') pendingEffects.push({ id: effect.effectId, reason: '副作用仍在收束' });
       }
       const operation: StopOperation = {
         stopId,
@@ -243,9 +270,9 @@ export class RuntimeControlStore {
         scope: command.scope,
         committedSeq,
         targetTicketIds,
-        targetEffectIds: [],
+        targetEffectIds,
         state: 'stopping',
-        pendingEffects: [],
+        pendingEffects,
       };
       draft.stops[stopId] = operation;
       draft.commands[command.commandId] = {

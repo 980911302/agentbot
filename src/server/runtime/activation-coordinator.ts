@@ -163,6 +163,9 @@ export class ActivationCoordinator {
         admittedSeq: draft.controlSeq + 1,
         source: input.source,
         state: 'admitted',
+        ...(input.flowId ? { flowId: input.flowId } : {}),
+        ...(input.flowGrantId ? { flowGrantId: input.flowGrantId } : {}),
+        ...(input.replyRoute ? { replyRoute: input.replyRoute } : {}),
       };
       draft.tickets[ticket.ticketId] = ticket;
       draft.agents[input.agentId] = agent;
@@ -203,6 +206,20 @@ export class ActivationCoordinator {
 
   async admitEffect(ticket: ActivationTicket, effect: EffectIntent): Promise<EffectPermit> {
     this.assertCurrent(ticket);
+    await this.store.transact((draft) => {
+      if (draft.effects[effect.effectId]) return 'skip';
+      draft.effects[effect.effectId] = {
+        effectId: effect.effectId,
+        ticketId: ticket.ticketId,
+        agentId: ticket.agentId,
+        inputId: ticket.inputId,
+        chainId: ticket.chainId,
+        kind: effect.kind,
+        resourceScope: effect.resourceScope,
+        admittedSeq: ticket.admittedSeq,
+        state: 'reserved',
+      };
+    });
     return {
       ticketId: ticket.ticketId,
       effectId: effect.effectId,
@@ -210,6 +227,17 @@ export class ActivationCoordinator {
       resourceScope: effect.resourceScope,
       state: 'reserved',
     };
+  }
+
+  async markEffect(effectId: string, state: import('../../shared/contracts/execution-control.js').EffectRecord['state'], errorCode?: string): Promise<void> {
+    await this.store.transact((draft) => {
+      const effect = draft.effects[effectId];
+      if (!effect || effect.state === 'cancelled') return 'skip';
+      effect.state = state;
+      if (state === 'started') effect.startedSeq = draft.controlSeq + 1;
+      if (state === 'settled' || state === 'unknown') effect.settledSeq = draft.controlSeq + 1;
+      if (errorCode) effect.errorCode = errorCode;
+    });
   }
 
   requestStop(command: StopCommand): Promise<StopOperation> {
@@ -279,6 +307,10 @@ export class ActivationCoordinator {
       };
     });
     return { commandId: command.commandId, grantId };
+  }
+
+  getTicket(ticketId: string): ActivationTicket | undefined {
+    return this.store.snapshot().tickets[ticketId];
   }
 }
 

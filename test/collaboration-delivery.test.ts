@@ -136,7 +136,7 @@ describe('协作投递：发送与执行分离', () => {
       await f.runtime.rooms.setMembers(f.room.id, [f.a.id, f.b.id]);
       await f.send.execute({ target_id: f.room.id, message: '检查' }, f.context());
       await waitFor(() => f.fake.calls.length === 1, '乙开始');
-      f.fake.release(0, FakeProvider.toolCalls([{ id: 'out', name: 'SendToUser', arguments: JSON.stringify({ type: 'text', content: '阶段结果' }) }]));
+      f.fake.release(0, FakeProvider.toolCalls([{ id: 'out', name: 'SendToUser', arguments: JSON.stringify({ type: 'text', content: '阶段结果', to: 'room' }) }]));
       await waitFor(() => f.fake.calls.length === 2, '乙继续工作中');
       assert.equal((await f.runtime.rooms.messages(f.room.id)).filter(message => message.text === '阶段结果').length, 1);
       assert.equal(await f.runtime.pendingMail(f.a.id), 0, '无 @ 不重复唤醒甲');

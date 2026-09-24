@@ -40,7 +40,13 @@ export class InboxProcessor {
       runTurn: (
         agentId: string,
         task: Message,
-        turn: { brief?: string; toolContext?: { agentChainDepth: number } },
+        turn: {
+          brief?: string;
+          toolContext?: {
+            agentChainDepth: number;
+            replyRoute?: import('../../shared/contracts/room-flow.js').RoomReplyRoute;
+          };
+        },
         options: SendOptions,
       ) => Promise<TurnResult>;
       /** 处理一条排队的群回合（E3.7）：忙碌成员空下来后把群消息补上 */
@@ -49,6 +55,8 @@ export class InboxProcessor {
       archiveLetter?: (item: InboxItem) => Promise<void>;
       admit?: (item: InboxItem) => Promise<import('../../shared/contracts/execution-control.js').ActivationDecision>;
       settleTicket?: (ticketId: string) => Promise<void>;
+      /** 确认了一条 stop-ack：通知等待中的停止令（ack 只是计数，不进模型） */
+      onStopAck?: (agentId: string, item: InboxItem) => void;
       /** 领取期限（毫秒） */
       leaseMs?: number;
       /** 每封信的处理上限 */
@@ -95,9 +103,15 @@ export class InboxProcessor {
       // 回执件只是计数：领取即确认，不进模型
       const receipts = claimed.filter((item) => item.kind === 'stop-ack');
       if (receipts.length > 0) {
-        await session.ack(
-          receipts.map((item) => item.id),
-        );
+        for (const item of receipts) this.deps.onStopAck?.(agentId, item);
+        try {
+          await session.ack(
+            receipts.map((item) => item.id),
+          );
+        } catch {
+          // 租约丢失或信已被别处消费：ack 只是计数，等 ack 的停止令已经收到通知，
+          // 不能让它把整批信炸飞（未释放的租约会卡住整个信箱）
+        }
       }
 
       // 排队的群回合（E3.7）：逐条处理、各自一个回合（不和普通信合并）
@@ -108,9 +122,23 @@ export class InboxProcessor {
             await session.nack([item.id], '上次群任务可能已有副作用，请核对后重新派发', { ...this.failureInput(), maxAttempts: 1 });
             continue;
           }
+          let roomAuth = options;
+          if (this.deps.admit) {
+            const decision = await this.deps.admit(item);
+            if (decision.kind !== 'admitted') {
+              if (decision.kind === 'busy') await session.release([item.id]);
+              else {
+                await session.release([item.id]);
+                await this.deps.inbox.holdIds(agentId, [item.id], 'agent_paused').catch(() => 0);
+              }
+              continue;
+            }
+            roomAuth = { ...options, authorization: decision.ticket };
+          }
           await session.checkpoint([item.id], { messageId });
-          await this.deps.deliverRoom({ ...item, checkpoint: { messageId, at: Date.now() } }, options);
+          await this.deps.deliverRoom({ ...item, checkpoint: { messageId, at: Date.now() } }, roomAuth);
           await session.ack([item.id]);
+          if (roomAuth.authorization?.ticketId) await this.deps.settleTicket?.(roomAuth.authorization.ticketId);
         } catch (error) {
           if (error instanceof AgentBusyError) {
             // 忙不是失败：归还领取，等它空下来再处理
@@ -142,6 +170,7 @@ export class InboxProcessor {
       const letter = letters[0]!;
       const ids = letters.map((item) => item.id);
       let ticketId: string | undefined;
+      let authorization: import('../../shared/contracts/execution-control.js').ActivationTicket | undefined;
       if (this.deps.admit) {
         const decision = await this.deps.admit(letter);
         if (decision.kind === 'held') {
@@ -154,6 +183,10 @@ export class InboxProcessor {
           return null;
         }
         ticketId = decision.ticket.ticketId;
+        authorization = decision.ticket;
+        if (letter.flowId) authorization.flowId = letter.flowId;
+        if (letter.grantId) authorization.flowGrantId = letter.grantId;
+        if (letter.replyRoute) authorization.replyRoute = letter.replyRoute;
       }
       const depth = letter.depth;
       const task: Message = {
@@ -190,9 +223,12 @@ export class InboxProcessor {
               depth,
               maxDepth: this.deps.maxAgentChainDepth,
             }),
-            toolContext: { agentChainDepth: depth },
+            toolContext: {
+              agentChainDepth: depth,
+              replyRoute: letter.replyRoute,
+            },
           },
-          options,
+          { ...options, ...(authorization ? { authorization } : {}) },
         );
         if (result.stopReason === 'cancelled' || result.stopReason === 'parked') {
           await session.release(ids);

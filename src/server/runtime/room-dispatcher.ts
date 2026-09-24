@@ -41,7 +41,6 @@ export class RoomDispatcher {
         members: AgentRecord[];
       }>;
       ownerNameFallback: string;
-      onExperience?: (message: Message) => void;
       stopWords: string[];
       runTurn: (
         agentId: string,
@@ -64,12 +63,12 @@ export class RoomDispatcher {
       ) => Promise<{ content: string; usedTools?: string[] }>;
       /** 唤醒空闲成员去处理刚排队的投递（忙的人由它自己的回合收尾接手） */
       drainInbox?: (agentId: string, options: SendOptions) => void;
+      router?: import('./room-flow-router.js').RoomFlowRouter;
     },
   ) {}
 
   private async remember(message: Message): Promise<void> {
     await this.deps.messages.append(message);
-    this.deps.onExperience?.(message);
   }
 
   /** 投递入口：只落时间线/成员经历/收件箱，绝不进入模型或三波等待。 */
@@ -120,15 +119,23 @@ export class RoomDispatcher {
       createdAt: Date.now(),
     };
     options.signal?.throwIfAborted();
-    await this.deps.rooms.append(inbound);
+    await this.deps.rooms.appendIfAbsent(inbound);
     options.onRoomEvent?.({ type: 'room_message', message: inbound });
     if (postingAgent) await this.remember({ id: randomUUID(), agentId: postingAgent.id, role: 'assistant',
       runId: roundId, content: { type: 'text', text }, createdAt: inbound.createdAt,
       roomId, roomName: room.name, source: 'room', sender: actor });
 
+    if (this.deps.router) {
+      const routeResult = await this.deps.router.route(inbound);
+      if (routeResult.managed) {
+        return { roundId, roomId, roomName: room.name, outcomes: [], queued: [] };
+      }
+    }
+
     // 工作台代发时排除调用者自己；其余在场成员都记进各自对话线（忙的也记，等它空下来看）
     const exclude = new Set(options.excludeAgentIds ?? []);
-    const roster = members.filter((record) => !exclude.has(record.id));
+    const fixedRecipients = options.roomRecipientIds ? new Set(options.roomRecipientIds) : undefined;
+    const roster = members.filter((record) => !exclude.has(record.id) && (!fixedRecipients || fixedRecipients.has(record.id)));
     await Promise.all(
       roster.map((member) =>
         this.remember({
@@ -157,6 +164,7 @@ export class RoomDispatcher {
       }
       queued.push(record.name);
       await this.deps.inbox.enqueueRoom({
+        id: options.roomRecipientDeliveryIds?.[record.id],
         toAgentId: record.id,
         fromAgentId: actor.id,
         fromName: actor.name,
@@ -176,6 +184,7 @@ export class RoomDispatcher {
           stopRequested,
         },
         correlationId: roundId,
+        ...(options.chainId ? { chainId: options.chainId } : {}),
       }, ROOM_MAX_RUNS_PER_MEMBER);
     }
 
@@ -348,7 +357,7 @@ export class RoomDispatcher {
     return outcome;
   }
 
-  /** 把某个成员的公开发言落到群里：时间线 + 其他成员对话线 + 事件（发言者自己那条由 runRoomTurn 写） */
+  /** 把某个成员的公开发言落到群里：时间线 + 其他成员内部群经历 + 事件（发言者自己的经历由 runRoomTurn 写） */
   async publishResumedPosts(agentId: string, continuation: RunContinuation, posts: string[], options: SendOptions): Promise<void> {
     if (!continuation.room) return;
     const { room, members } = await this.deps.membersOf(continuation.room.roomId);

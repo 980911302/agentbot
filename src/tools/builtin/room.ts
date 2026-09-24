@@ -30,8 +30,11 @@ export function createSendToAgentTool(options: {
     callerId: string;
     /** 仅可观测关联，不是停止树所有权。 */
     correlationId?: string;
+    chainId?: string;
     depth?: number;
     signal?: AbortSignal;
+    /** 群投递所属的广播窗口：让收件方的配额和复盘与触发它的那一轮同组 */
+    roundId?: string;
   }) => Promise<string | import('../result.js').ToolResult>;
 }) {
   return defineTool<{
@@ -103,9 +106,11 @@ export function createSendToAgentTool(options: {
           ...(attachments.length ? { images: attachments } : {}),
           priority: target.kind === 'agent' && priority === true,
           callerId: context.agentId,
-          correlationId: context.authorization?.chainId ?? context.turnState?.treeId,
+          correlationId: context.authorization?.inputId ?? context.turnState?.treeId,
+          chainId: context.authorization?.chainId,
           depth: (context.agentChainDepth ?? 0) + 1,
           signal: context.signal,
+          ...(context.room?.roundId ? { roundId: context.room.roundId } : {}),
         });
         attempt.status = 'ok';
         if (typeof result === 'object' && result && 'content' in result) {

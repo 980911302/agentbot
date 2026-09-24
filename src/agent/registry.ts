@@ -37,12 +37,18 @@ export class AgentRegistry implements AgentRegistryPort {
   private loaded = false;
   private loading?: Promise<void>;
   private readonly file: string;
+  private fileExisted = false;
 
   private defaultToolNames: string[];
 
   constructor(dataDir: string, defaultToolNames: string[] = []) {
     this.file = join(dataDir, 'agents.json');
     this.defaultToolNames = defaultToolNames;
+  }
+
+  async existed(): Promise<boolean> {
+    await this.load();
+    return this.fileExisted;
   }
 
   /** 运行时装配完工具后再补：新同事默认拿到全套 */
@@ -231,9 +237,11 @@ export class AgentRegistry implements AgentRegistryPort {
               AgentRegistry.normalize(item as Partial<AgentRecord> & { id: string; name: string }),
             );
           }
+          this.fileExisted = true;
         } catch (error) {
           if (!isMissingFile(error)) throw error;
           this.agents = [];
+          this.fileExisted = false;
         }
         this.loaded = true;
       })();

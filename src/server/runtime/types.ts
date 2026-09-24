@@ -84,6 +84,9 @@ export interface SendOptions {
     chainId: string;
     inputId: string;
   };
+  roomRecipientIds?: string[];
+  roomRecipientDeliveryIds?: Record<string, string>;
+  chainId?: string;
 }
 
 /**

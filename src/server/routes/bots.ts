@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { toBotView } from '../presenters.js';
+import { privateConversationMessages, toBotView } from '../presenters.js';
 import { json, readJson } from '../transport/json.js';
 import { readString, resolveAgent, type RouteContext } from './context.js';
 
@@ -18,7 +18,7 @@ export async function handleBotsCollection(
       list.map(async (record) =>
         toBotView(record, {
           busy: runtime.isBusy(record.id),
-          conversationCount: await runtime.messages.count(record.id),
+          conversationCount: privateConversationMessages(await runtime.messages.list(record.id)).length,
         }),
       ),
     );
@@ -30,6 +30,7 @@ export async function handleBotsCollection(
     const body = await readJson(request);
     const record = await runtime.registry.create({
       name: readString(body.name),
+      title: readString(body.title),
       instructions: readString(body.instructions) ?? readString(body.role),
       color: readString(body.color),
     });
@@ -61,7 +62,7 @@ export async function handleBotItem(
     json(response, 200, {
       bot: toBotView(record, {
         busy: context.runtime.isBusy(record.id),
-        conversationCount: await context.runtime.messages.count(record.id),
+        conversationCount: privateConversationMessages(await context.runtime.messages.list(record.id)).length,
       }),
     });
     return true;
@@ -71,6 +72,7 @@ export async function handleBotItem(
     const body = await readJson(request);
     const updated = await context.runtime.registry.update(record.id, {
       name: readString(body.name),
+      title: readString(body.title),
       instructions: readString(body.instructions) ?? readString(body.role),
       description: readString(body.description),
       section: readString(body.section),
@@ -82,7 +84,7 @@ export async function handleBotItem(
       bot: updated
         ? toBotView(updated, {
             busy: context.runtime.isBusy(updated.id),
-            conversationCount: await context.runtime.messages.count(updated.id),
+            conversationCount: privateConversationMessages(await context.runtime.messages.list(updated.id)).length,
           })
         : null,
     });

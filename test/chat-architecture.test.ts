@@ -119,6 +119,15 @@ describe('无框架 ChatEngine 时序', () => {
     assert.equal(engine.histories.a?.length, 1); assert.equal(engine.histories.a?.[0]?.role, 'user');
   });
 
+  it('旧版误投到 agent 频道的群经历不会进入私聊', () => {
+    const engine = new ChatEngine();
+    engine.applyEntry(entry(1, { type: 'message', message: {
+      id: 'room-experience', agentId: 'a', role: 'user', source: 'room', roomId: 'room',
+      content: { type: 'text', text: '群里的话' }, createdAt: 1,
+    } }, 'agent'));
+    assert.deepEqual(engine.histories.a ?? [], []);
+  });
+
   it('未知受理结果的重试保留原幂等键，确认受理后清掉网络错误', () => {
     const engine = new ChatEngine(); engine.beginSend('a', 'key-A', '任务A', '我');
     engine.sendFailed('key-A', 'network');

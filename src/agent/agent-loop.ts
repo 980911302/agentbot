@@ -18,6 +18,7 @@ import { ToolRegistry } from '../tools/registry.js';
 import { operationKeyOf, replayPolicyOf } from '../tools/policy.js';
 import { type ToolContext, type TurnState } from '../tools/tool.js';
 import { hasReservedOriginPrefix } from '../shared/contracts/delivery-contract.js';
+import { isPastDeliveryRecap, looksLikeUnverifiedRoomDeliveryClaim } from '../server/runtime/reply-finalizer.js';
 import { fitContextWindow } from '../context/window.js';
 import { clipOutput, limitsFor, MAX_TOOL_BATCH, MAX_TOOL_CALLS_PER_TURN, MAX_TOOL_CHARS_PER_TURN } from '../tools/limits.js';
 import { resultMetadata, toolError, type ToolResult } from '../tools/result.js';
@@ -34,7 +35,7 @@ export interface AgentLoopDeps {
   /** 覆盖这一轮可用的工具（例如群回合的定制工具面） */
   toolsOverride?: ToolRegistry;
   /** 工具执行上下文里要带的额外信息 */
-  toolContext?: Pick<ToolContext, 'room' | 'agentChainDepth' | 'turnState' | 'emit' | 'outputs' | 'authority' | 'authorization'>;
+  toolContext?: Pick<ToolContext, 'room' | 'agentChainDepth' | 'turnState' | 'emit' | 'outputs' | 'authority' | 'authorization' | 'effectRunner' | 'replyRoute' | 'flowContext' | 'flowService'>;
   progress?: { store: TaskProgressStore; id: string };
   /** 群回合里模型的收尾文本属于内部推理，不写进对话历史 */
   persistAssistantText?: boolean;
@@ -81,6 +82,7 @@ export class AgentLoop {
     const turnState: TurnState = this.deps.toolContext?.turnState ?? { workbench: { agentsCreated: 0, roomsCreated: 0 } };
     let rejectedResponses = 0;
     let rejectedDeliveryClaims = 0;
+    let unverifiedClaimStrikes = 0;
     const errorRepeats = new Map<string, number>();
     const recentResults: string[] = [];
     let iterations = 0;
@@ -142,6 +144,21 @@ export class AgentLoop {
       const finalText = response.toolCalls.length === 0;
       const alreadyDelivered = this.deps.toolContext?.turnState?.lastVisibleText?.trim();
       const shouldPersistText = finalText && !alreadyDelivered;
+      const isRoomTurn = Boolean(this.deps.toolContext?.room || this.deps.stamp?.source === 'room');
+      const hasDeliveryReceipt = Boolean(this.deps.toolContext?.turnState?.acceptedDeliveryRefs?.length);
+      // 复盘更早回合的工作（"群里刚才那条已经发过了"）不是本轮未证实声明，
+      // 本轮回执为空是正常形态；只有断言"本轮已发"才需要纠正
+      const unverifiedClaim =
+        finalText && text && !isRoomTurn && !hasDeliveryReceipt &&
+        looksLikeUnverifiedRoomDeliveryClaim(text) && !isPastDeliveryRecap(text);
+      if (unverifiedClaim && unverifiedClaimStrikes < 2) {
+        unverifiedClaimStrikes += 1;
+        conversation.push({ role: 'assistant', content: text });
+        conversation.push({ role: 'system', content: '没有本轮投递回执，不能把自由正文说成已经发群。如果要现在发，请调用 SendToAgent；如果是指之前的回合，请明确写成过去的总结。' });
+        continue;
+      }
+      // 连续两次纠正后放行：硬抛会让整轮失败，还诱导模型重复投递；
+      // 真有问题时下游 ReplyFinalizer 会记为 incomplete，用户侧可见
       if (text && persistText && shouldPersistText && !this.stale()) {
         const message = await this.persist(agent, 'assistant', { type: 'text', text });
         this.emit({ type: 'message', message });
@@ -172,9 +189,7 @@ export class AgentLoop {
         const invocation = await this.startInvocation(agent, call);
         let outcome: ToolResult;
         try {
-          outcome = (errorRepeats.get(`${call.name}:${call.arguments}`) ?? 0) >= 3
-            ? toolError('REPEATED_ERROR', '相同参数已失败 3 次，已阻止重复执行。请改变参数/方法，或向用户说明阻塞。')
-            : await registry.executeResult(call, {
+          const executeTool = () => registry.executeResult(call, {
             agentId: agent.id,
             projectIds: agent.memory.projectIds,
             signal: this.deps.signal,
@@ -182,6 +197,16 @@ export class AgentLoop {
             authority: { ...this.deps.toolContext?.authority, toolNames: registry.list().map(tool => tool.name), projectIds: agent.memory.projectIds },
             turnState,
           });
+          if ((errorRepeats.get(`${call.name}:${call.arguments}`) ?? 0) >= 3) {
+            outcome = toolError('REPEATED_ERROR', '相同参数已失败 3 次，已阻止重复执行。请改变参数/方法，或向用户说明阻塞。');
+          } else {
+            const runner = this.deps.toolContext?.effectRunner;
+            const ticket = this.deps.toolContext?.authorization;
+            const write = !['Read', 'ListFiles', 'SearchFiles', 'RecallMemory', 'CheckSubagent', 'SendToUser'].includes(call.name);
+            outcome = runner && ticket && write
+              ? await runner.start(await runner.reserve(ticket, { effectId: call.id, kind: call.name }), executeTool)
+              : await executeTool();
+          }
         } catch (error) {
           await this.finishInvocation(invocation, 'unknown', undefined, error);
           throw error;

@@ -91,7 +91,7 @@ export function createTaskTools(input: {
       if (!description || !prompt) throw new Error('description 和 prompt 都不能为空');
 
       const worker = manager.spawn(description, prompt, context.agentId, context.authority);
-      // 记账：停止令要能杀掉这个工人（《停止与插话.md》§8）
+      // 记账：停止令要能杀掉这个工人（见 docs/架构设计.md「插话、停止和等待」）
       context.turnState?.registerJob?.(() => manager.kill(worker.id), `worker:${worker.id.slice(0, 8)}`);
       const stop = () => manager.kill(worker.id);
       context.signal?.addEventListener('abort', stop, { once: true });

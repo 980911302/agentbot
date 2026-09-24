@@ -57,6 +57,10 @@ export interface ActivationTicket {
   /** 旧进程票据不能跨进程复用 */
   processEpoch: string;
   grantId?: string;
+  commandId?: string;
+  flowId?: string;
+  flowGrantId?: string;
+  replyRoute?: import('./room-flow.js').RoomReplyRoute;
   lease?: { deliveryId: string; ownerId: string; epoch: number };
   admittedSeq: number;
   source: ActivationSource;
@@ -66,6 +70,7 @@ export interface ActivationTicket {
 export type StopScope =
   | { kind: 'agent'; agentId: string }
   | { kind: 'room_round'; roomId: string; roundId: string }
+  | { kind: 'room_flow'; roomId: string; flowId: string }
   | { kind: 'all_agents' };
 
 export interface StopCommand {
@@ -120,6 +125,9 @@ export interface ActivationRequest {
   disposition?: DeliveryDisposition;
   grantId?: string;
   lease?: { deliveryId: string; ownerId: string; epoch: number };
+  flowId?: string;
+  flowGrantId?: string;
+  replyRoute?: import('./room-flow.js').RoomReplyRoute;
 }
 
 export type ActivationDecision =
@@ -140,6 +148,21 @@ export interface EffectPermit {
   admittedSeq: number;
   resourceScope?: string;
   state: 'reserved' | 'started' | 'settled' | 'unknown' | 'cancelled';
+}
+
+export interface EffectRecord {
+  effectId: string;
+  ticketId: string;
+  agentId: string;
+  inputId: string;
+  chainId: string;
+  kind: string;
+  resourceScope?: string;
+  admittedSeq: number;
+  startedSeq?: number;
+  settledSeq?: number;
+  state: EffectPermit['state'];
+  errorCode?: string;
 }
 
 export interface DeliveryReceipt {

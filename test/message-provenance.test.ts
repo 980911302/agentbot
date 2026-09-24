@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { messageIdentity, type Correspondence, type MessageActor } from '../src/shared/contracts/message-identity.js';
 import type { Message } from '../src/shared/contracts/sse.js';
-import { toDisplayMessages, toCorrespondenceView } from '../src/server/presenters.js';
+import { privateConversationMessages, toDisplayMessages, toCorrespondenceView } from '../src/server/presenters.js';
 import { applyEvent } from '../web/src/features/chat/message-reducer.js';
 import { chatRows, transferLabel, transferPeers } from '../web/src/features/chat/correspondence.js';
 import { ChatEngine } from '../web/src/features/chat/chat-engine.js';
@@ -51,6 +51,12 @@ describe('模型角色与真实消息身份分离', () => {
     for (const message of [input(), input({ source: 'agent', sender: a }), input({ source: 'room', sender: b, roomName: '群' })]) {
       assert.deepEqual(applyEvent([], { type: 'message', message }), toDisplayMessages([message]));
     }
+  });
+  it('私聊投影排除群经历，同时兼容旧数据缺少一个来源字段', () => {
+    const direct = input({ id: 'direct' });
+    const byRoomId = input({ id: 'room-id-only', roomId: 'r' });
+    const bySource = input({ id: 'room-source-only', source: 'room' });
+    assert.deepEqual(privateConversationMessages([direct, byRoomId, bySource]).map(message => message.id), ['direct']);
   });
   it('模型历史和摘要保留作者/群来源，而不是只修气泡颜色', () => {
     const messages = [input({ source: 'agent', sender: a }), input({ id: 'room', source: 'room', roomName: '开发群', sender: b })];
@@ -147,6 +153,8 @@ describe('可追溯的智能体往来档案', () => {
       assert.equal(posted.senderKind, 'agent'); assert.equal(posted.senderId, sender.id); assert.equal(posted.senderName, sender.name);
       const raw = (await runtime.messages.list(receiver.id)).find(m => m.role === 'user')!;
       assert.equal(raw.sender?.id, sender.id); assert.equal(messageIdentity(raw).role, 'assistant');
+      assert.ok(!(await runtime.displayMessages(receiver.id)).some(m => m.content === '请检查代码'));
+      assert.ok(!(await runtime.chatSnapshot([receiver.id])).channels[receiver.id]!.messages.some(m => m.content === '请检查代码'));
       const tasks: Message[] = []; const locks = new Set([receiver.id]);
       const dispatcher = new RoomDispatcher({ registry: runtime.registry, rooms: runtime.rooms, messages: runtime.messages, inbox: runtime.inbox,
         locks, membersOf: async () => ({ room, members: [sender, receiver] }), ownerNameFallback: '主人', stopWords: [],

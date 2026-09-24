@@ -18,8 +18,8 @@ import type { Tool } from '../../tools/tool.js';
  */
 export class AgentService {
   private readonly providers = new Map<string, LLMProvider>();
-  private readonly defaultModel: string;
-  private readonly knownModels: string[];
+  private defaultModel: string;
+  private knownModels: string[];
   private readonly tools: () => Tool<any>[];
 
   constructor(
@@ -66,6 +66,24 @@ export class AgentService {
   resolveModel(model: string | undefined): string {
     if (model && this.knownModels.includes(model)) return model;
     return this.defaultModel;
+  }
+
+  /** 热更新模型提供者与配置（清空旧 provider 缓存） */
+  updateModelConfig(options: {
+    model: string;
+    createProvider?: (model: string) => LLMProvider;
+    knownModels?: string[];
+  }): void {
+    if (options.createProvider) {
+      this.deps.createProvider = options.createProvider;
+    }
+    this.defaultModel = options.model;
+    if (options.knownModels) {
+      this.knownModels = options.knownModels;
+    } else if (!this.knownModels.includes(options.model)) {
+      this.knownModels.push(options.model);
+    }
+    this.providers.clear();
   }
 }
 

@@ -1,9 +1,18 @@
 import { ActivationCoordinator } from './runtime/activation-coordinator.js';
 import { DeliveryService } from './runtime/delivery-service.js';
+import { EffectRunner } from './runtime/effect-runner.js';
 import { OutboxProjector } from './runtime/outbox-projector.js';
 import { RuntimeControlStore } from '../storage/runtime-control-store.js';
 import type { DeliveryReceipt } from '../shared/contracts/execution-control.js';
 import { randomUUID } from 'node:crypto';
+import { RoomFlowStore } from '../storage/room-flow-store.js';
+import { RoomFlowService } from './runtime/room-flow-service.js';
+import { RoomFlowScheduler } from './runtime/room-flow-scheduler.js';
+import { RoomFlowRouter } from './runtime/room-flow-router.js';
+import { ProtocolRegistry, SequentialTurnProtocol } from './runtime/room-flow-protocols.js';
+import { createManageRoomFlowTool } from '../tools/builtin/manage-room-flow.js';
+import type { RoomFlow } from '../shared/contracts/room-flow.js';
+import { toRoomFlowView } from './presenters.js';
 import { InboxScheduler } from './runtime/inbox-scheduler.js';
 import type {
   Agent,
@@ -26,6 +35,7 @@ import { DEFAULT_OWNER_NAME, DEFAULT_STOP_WORDS, isStopSentence } from '../confi
 import { ContextBuilder, type BuiltContext, type BuildOptions } from '../context/builder.js';
 import type { ContextBudget } from '../context/budget.js';
 import type { LLMProvider } from '../llm/provider.js';
+import { OpenAIProvider } from '../llm/openai-provider.js';
 import { CompactionStore, Compactor } from '../memory/compact.js';
 import { MemoryExtractor } from '../memory/extract.js';
 import { USER_OWNER } from '../memory/policy.js';
@@ -73,7 +83,7 @@ import { JsonToolInvocationLedger } from '../storage/tool-ledger.js';
 import { EventJournal } from './events/journal.js';
 import { ChatRunCoordinator } from './runtime/chat-run-coordinator.js';
 import { isActiveChatRun } from '../shared/contracts/chat-state.js';
-import { toDisplayMessages, toCorrespondenceView, collectArtifacts } from './presenters.js';
+import { toDisplayMessages, toCorrespondenceView, collectArtifacts, privateConversationMessages } from './presenters.js';
 export * from './runtime/types.js';
 
 const DEFAULT_MAX_AGENT_DEPTH = 3;
@@ -112,6 +122,7 @@ export class AgentRuntime {
   readonly workbench: Workbench;
   readonly broker: InteractionBroker;
   readonly secrets: SecretStore;
+  readonly dataDir: string;
 
   /** 全量工具面（常驻 + 平台层），/api/health 与新同事默认表都从这里来 */
   readonly tools: Tool<any>[];
@@ -148,9 +159,16 @@ export class AgentRuntime {
   readonly activation: ActivationCoordinator;
   private readonly deliveries: DeliveryService;
   private readonly projector: OutboxProjector;
+  readonly effects: EffectRunner;
+  readonly roomFlowStore: RoomFlowStore;
+  readonly protocolRegistry: ProtocolRegistry;
+  readonly roomFlowService: RoomFlowService;
+  readonly roomFlowScheduler: RoomFlowScheduler;
+  readonly roomFlowRouter: RoomFlowRouter;
   private readonly runExecutions = new Map<string, Promise<SendResult>>();
 
-  constructor(private readonly options: AgentRuntimeOptions) {
+  constructor(readonly options: AgentRuntimeOptions) {
+    this.dataDir = options.dataDir;
     this.chatRuns = new ChatRunCoordinator(options.dataDir, this.events);
     this.ledger = new JsonRunLedger(options.dataDir);
     this.registry = new AgentRegistry(options.dataDir, []);
@@ -159,6 +177,7 @@ export class AgentRuntime {
       processEpoch: this.control.currentProcessEpoch,
       exists: async (agentId) => Boolean(await this.registry.get(agentId)),
     });
+    this.effects = new EffectRunner(this.activation);
     this.deliveries = new DeliveryService(this.control);
     this.messages = new MessageStore(options.dataDir);
     this.memory = options.memoryStore ?? new MemoryStore(options.dataDir);
@@ -170,9 +189,57 @@ export class AgentRuntime {
       store: this.control,
       inbox: this.inbox,
       correspondence: this.correspondence,
+      rooms: this.rooms,
+      messages: this.messages,
+    });
+    this.roomFlowStore = new RoomFlowStore(options.dataDir);
+    this.protocolRegistry = new ProtocolRegistry();
+    const defaultSeqProtocol = new SequentialTurnProtocol();
+    this.protocolRegistry.register('sequential-turn', defaultSeqProtocol);
+    this.protocolRegistry.register('sequential_turn', defaultSeqProtocol);
+    this.roomFlowService = new RoomFlowService({
+      store: this.roomFlowStore,
+      rooms: this.rooms,
+      protocols: this.protocolRegistry,
+      resolveAgentName: async (agentId) => (await this.registry.get(agentId))?.name,
+      publishTimelineMessage: async (msg) => {
+        await this.rooms.appendIfAbsent(msg);
+        this.events.publish({ kind: 'room', roomId: msg.roomId, payload: { type: 'room_message', message: msg } });
+      },
+      onGrantReady: async (flow, grant) => {
+        await this.roomFlowScheduler.scheduleGrant(flow, grant);
+      },
+      onFlowUpdated: (flow) => {
+        this.events.publish({ kind: 'room', roomId: flow.roomId, payload: { type: 'flow_updated', flow: toRoomFlowView(flow) } });
+      },
+    });
+    this.roomFlowScheduler = new RoomFlowScheduler({
+      inbox: this.inbox,
+      flowService: this.roomFlowService,
+      drainInbox: (agentId) => this.inboxScheduler?.watch(agentId),
     });
     this.broker = options.broker ?? new InteractionBroker();
     this.secrets = options.secrets ?? new SecretStore(options.dataDir);
+    this.stopCoordinator = new StopCoordinator({
+      registry: this.registry,
+      messages: this.messages,
+      inbox: this.inbox,
+      rooms: this.rooms,
+      broker: this.broker,
+      ledger: this.ledger,
+      pendingStops: this.pendingStops,
+      stopWords: options.stopWords ?? DEFAULT_STOP_WORDS,
+      stopAckTimeoutMs: options.stopAckTimeoutMs ?? 30_000,
+      activation: this.activation,
+      effects: this.effects,
+    });
+
+    this.roomFlowRouter = new RoomFlowRouter({
+      rooms: this.rooms,
+      flowService: this.roomFlowService,
+      stopCoordinator: this.stopCoordinator,
+      isStopSentence: (text) => isStopSentence(text, options.stopWords ?? DEFAULT_STOP_WORDS),
+    });
     this.builder = new ContextBuilder(this.messages, options.budget);
     this.compactor = new Compactor(
       this.messages,
@@ -205,26 +272,12 @@ export class AgentRuntime {
       locks: this.locks,
       membersOf: (roomId) => this.membersOf(roomId),
       ownerNameFallback: options.ownerName ?? DEFAULT_OWNER_NAME,
-      onExperience: message => this.events.publish({ kind: 'agent', agentId: message.agentId, runId: message.runId, payload: { type: 'message', message } }),
       stopWords: options.stopWords ?? DEFAULT_STOP_WORDS,
       runTurn: (agentId, task, turn, options) =>
         this.runTurn(agentId, task, turn, options),
       // 只通知调度器，绝不沿发送方的栈递归执行收件人。
       drainInbox: agentId => this.inboxScheduler.watch(agentId),
-    });
-
-
-    this.stopCoordinator = new StopCoordinator({
-      registry: this.registry,
-      messages: this.messages,
-      inbox: this.inbox,
-      rooms: this.rooms,
-      broker: this.broker,
-      ledger: this.ledger,
-      pendingStops: this.pendingStops,
-      stopWords: options.stopWords ?? DEFAULT_STOP_WORDS,
-      stopAckTimeoutMs: options.stopAckTimeoutMs ?? 30_000,
-      activation: this.activation,
+      router: this.roomFlowRouter,
     });
 
     this.inboxProcessor = new InboxProcessor({
@@ -232,6 +285,8 @@ export class AgentRuntime {
       registry: this.registry,
       maxAgentChainDepth: this.options.maxAgentChainDepth ?? DEFAULT_MAX_AGENT_DEPTH,
       stopCoordinator: this.stopCoordinator,
+      // stop-ack 由这里确认并登记给等待中的停止令，不再靠 take 去信箱里抢
+      onStopAck: (agentId, item) => this.stopCoordinator.noteStopAck(agentId, item.fromAgentId, item.treeId),
       runTurn: (agentId, task, turn, options) =>
         this.runTurn(agentId, task, { extraTools: [], ...turn }, options),
       // 排队的群回合：事件按 roomId 归属（前端据此路由到群频道）
@@ -256,6 +311,9 @@ export class AgentRuntime {
           lease: item.leaseOwner && item.leaseEpoch !== undefined
             ? { deliveryId: item.id, ownerId: item.leaseOwner, epoch: item.leaseEpoch }
             : undefined,
+          flowId: item.flowId,
+          flowGrantId: item.grantId,
+          replyRoute: item.replyRoute,
         });
         if (decision.kind === 'admitted') {
           await this.activation.markRunning(decision.ticket);
@@ -271,7 +329,14 @@ export class AgentRuntime {
           for (const run of all) if (run.parentRunId && ids.has(run.parentRunId)) ids.add(run.runId);
         }
         const runs = all.filter(run => ids.has(run.runId) && run.agentId === agentId);
-        return runs.length > 0 && runs.every(run => this.taskProgress.get(run.runId, agentId)?.mayHaveSideEffects === false);
+        // 只有"查得到运行、而且其中真有人动过手"才判不可重试。
+        // 查不到记录（运行账本按 1000 条上限裁掉、任务进度按 500 条裁掉、或换了进程）
+        // 时无法证明有副作用，不能据此把信判死——那会让长期实例在清理后永久丢信。
+        if (runs.length === 0) return true;
+        return runs.every(run => {
+          const progress = this.taskProgress.get(run.runId, agentId);
+          return progress === undefined || progress.mayHaveSideEffects === false;
+        });
       },
       leaseMs: options.deliveryLeaseMs,
       maxAttempts: options.deliveryMaxAttempts,
@@ -306,6 +371,8 @@ export class AgentRuntime {
       agentService: this.agentService,
       stopCoordinator: this.stopCoordinator,
       activation: this.activation,
+      effectRunner: this.effects,
+      flowService: this.roomFlowService,
       drainInbox: (agentId, options) => this.drainInbox(agentId, options),
       canAutoActivate: (agentId) => {
         if (!this.control.allowsAutomaticExecution()) return false;
@@ -326,6 +393,7 @@ export class AgentRuntime {
     this.tools = [
       ...options.tools,
       ...(options.tools.some(tool => tool.name === 'ReadToolOutput') ? [] : [createReadToolOutputTool()]),
+      createManageRoomFlowTool(this.roomFlowService),
       ...createWorkbenchTools(this.workbench),
       this.createSendToAgentTool(),
       ...createTaskTools({
@@ -486,7 +554,8 @@ export class AgentRuntime {
           })), artifacts: [] };
         } else {
           const messages = await this.messages.list(id);
-          channels[id] = { messages: await this.displayMessages(id, messages), artifacts: collectArtifacts(messages) };
+          const privateMessages = privateConversationMessages(messages);
+          channels[id] = { messages: await this.displayMessages(id, privateMessages), artifacts: collectArtifacts(privateMessages) };
         }
       }
       const agentControls: Record<string, { autoActivation: 'enabled' | 'paused'; generation: number; lastStopId?: string }> = {};
@@ -502,7 +571,8 @@ export class AgentRuntime {
 
   async displayMessages(agentId: string, raw?: Message[]) {
     const transfers = (await this.correspondence.list(agentId)).map(toCorrespondenceView);
-    return [...toDisplayMessages(raw ?? await this.messages.list(agentId)), ...transfers]
+    const privateMessages = privateConversationMessages(raw ?? await this.messages.list(agentId));
+    return [...toDisplayMessages(privateMessages), ...transfers]
       .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
   }
 
@@ -704,6 +774,13 @@ export class AgentRuntime {
     return this.chatRuns.accept(`room:${roomId}:${options.clientMessageId ?? randomUUID()}`, async () => {
       const { room, members } = await this.membersOf(roomId);
       if (!room || members.length === 0) throw new Error('房间不存在或没有成员');
+      if (this.stopCoordinator.isStopSentence(text)) {
+        const activeFlow = await this.roomFlowService.getActiveFlowForRoom(roomId);
+        if (activeFlow) {
+          await this.stopCoordinator.stopRoomFlow(roomId, activeFlow.id, text);
+          await this.roomFlowService.pauseFlow(activeFlow.id, 'USER_STOP_COMMAND');
+        }
+      }
       const { run, duplicate } = this.chatRuns.prepare({ channelId: roomId, roomId, kind: 'room',
         source: options.roomSenderId ? 'agent' : 'user', input: text, clientMessageId: options.clientMessageId, messageId: randomUUID(),
       }, [options.model ?? '', options.ownerName ?? '', options.excludeAgentIds ?? [], options.roomSenderId ?? '']);
@@ -726,6 +803,59 @@ export class AgentRuntime {
     });
   }
 
+  getActiveRoomFlow(roomId: string): Promise<RoomFlow | undefined> {
+    return this.roomFlowService.getActiveFlowForRoom(roomId);
+  }
+
+  getRoomFlow(flowId: string): Promise<RoomFlow | undefined> {
+    return this.roomFlowService.getFlow(flowId);
+  }
+
+  async pauseRoomFlow(flowId: string, reason?: string): Promise<RoomFlow> {
+    const flow = await this.roomFlowService.pauseFlow(flowId, reason);
+    await this.stopCoordinator.stopRoomFlow(flow.roomId, flowId, reason ?? 'pause');
+    return flow;
+  }
+
+  resumeRoomFlow(flowId: string): Promise<RoomFlow> {
+    return this.roomFlowService.resumeFlow(flowId);
+  }
+
+  async cancelRoomFlow(flowId: string, reason?: string): Promise<RoomFlow> {
+    const flow = await this.roomFlowService.cancelFlow(flowId, reason);
+    await this.stopCoordinator.stopRoomFlow(flow.roomId, flowId, reason ?? 'cancel');
+    return flow;
+  }
+
+  listRoomFlows(roomId?: string): Promise<RoomFlow[]> {
+    return this.roomFlowStore.listFlows(roomId);
+  }
+
+  /** 热更新模型配置与提供者 */
+  updateModelConfig(options: {
+    model: string;
+    baseURL: string;
+    apiKey: string;
+    thinkingEnabled?: boolean;
+    thinkingLevel?: 'low' | 'medium' | 'high';
+    temperature?: number;
+    knownModels?: string[];
+  }): void {
+    this.agentService.updateModelConfig({
+      model: options.model,
+      knownModels: options.knownModels,
+      createProvider: (m) =>
+        new OpenAIProvider({
+          apiKey: options.apiKey,
+          baseURL: options.baseURL,
+          model: m,
+          thinkingEnabled: options.thinkingEnabled,
+          thinkingLevel: options.thinkingLevel,
+          temperature: options.temperature,
+        }),
+    });
+  }
+
   // ── 启动恢复（E3.6）─────────────────────────────────
 
   /**
@@ -734,7 +864,7 @@ export class AgentRuntime {
    *   2) 上次进程领走却没确认的来信 → 一律作废重投（重启不重置尝试预算）；
    *   3) 有待处理来信的同事 → 立刻排一次消费，重启后接着办。
    */
-  private async migrateExistingAgents(): Promise<void> {
+  async migrateExistingAgents(): Promise<void> {
     const agents = await this.registry.list();
     await this.control.transact((draft) => {
       if (draft.controlSeq === 0 && Object.keys(draft.agents).length === 0) return 'skip';
@@ -757,6 +887,7 @@ export class AgentRuntime {
   async recover(): Promise<StartupReport> {
     await this.migrateExistingAgents();
     await this.projector.recover().catch(() => 0);
+    await this.roomFlowService.recoverOutbox().catch(() => 0);
     const unresolvedInvocations: StartupReport['unresolvedInvocations'] = [];
     for (const record of await this.toolLedger.unfinished()) {
       if (record.status !== 'started') {
@@ -816,7 +947,7 @@ export class AgentRuntime {
         if (matches.length > 1) throw new Error(`收件方名称有歧义，请使用 id：${matches.map(item => `${item.kind === 'agent' ? '同事' : '群'}「${item.name}」id=${item.id}`).join('；')}`);
         return matches[0];
       },
-      dispatch: async ({ targetId, kind, text, images, priority, callerId, correlationId, depth, signal }) => {
+      dispatch: async ({ targetId, kind, text, images, priority, callerId, correlationId, chainId, depth, signal, roundId }) => {
         if (kind === 'agent') {
           const sender = await this.registry.get(callerId);
           const target = await this.registry.get(targetId);
@@ -825,10 +956,12 @@ export class AgentRuntime {
           const submitted = await this.deliveries.submit({
             actorId: callerId,
             inputId: correlationId ?? `${callerId}:${targetId}`,
-            chainId: correlationId ?? callerId,
+            chainId: chainId ?? correlationId ?? callerId,
             target: { kind: 'agent', id: targetId, nameAtSend: target.name },
             payload: text,
             ...(images?.length ? { images } : {}),
+            priority,
+            depth: depth ?? 1,
           });
           if (submitted.kind !== 'accepted') throw new Error(submitted.code);
           await this.projector.project(submitted.receipt.actionId, {
@@ -852,19 +985,35 @@ export class AgentRuntime {
         const rooms = await this.workbench.listRooms();
         const room = rooms.find((item) => item.id === targetId);
         if (!sender || !room) throw new Error('发信方或不在该群');
+        const members = (await Promise.all(room.memberIds.map((id) => this.registry.get(id)))).filter((member): member is AgentRecord => Boolean(member));
+        const mentioned = resolveMentions(text, members.map((member) => ({ id: member.id, name: member.name, color: member.color })));
+        const recipientMembers = members.filter((member) => member.id !== callerId);
         const submitted = await this.deliveries.submit({
           actorId: callerId,
           inputId: correlationId ?? `${callerId}:${targetId}`,
-          chainId: correlationId ?? callerId,
+          chainId: chainId ?? correlationId ?? callerId,
           target: { kind: 'room', id: targetId, nameAtSend: room.name },
           payload: text,
-          recipientCount: Math.max(0, room.memberIds.filter((id) => id !== callerId).length),
+          depth: depth ?? 0,
+          sender: { kind: 'agent', id: sender.id, name: sender.name, color: sender.color, avatar: sender.avatar },
+          roomRecipients: recipientMembers.map((member) => ({
+            id: member.id,
+            name: member.name,
+            color: member.color,
+            avatar: member.avatar,
+            summoned: mentioned.everyone || mentioned.ids.includes(member.id),
+            everyone: mentioned.everyone,
+          })),
+          recipientAgentIds: recipientMembers.map((member) => member.id),
+          recipientCount: recipientMembers.length,
+          ...(roundId ? { roundId } : {}),
         });
         if (submitted.kind !== 'accepted') throw new Error(submitted.code);
-        const result = await this.workbench.postToRoom(callerId, targetId, text, depth, signal);
+        await this.projector.projectRoom(submitted.receipt.actionId);
+        for (const member of recipientMembers) this.inboxScheduler.watch(member.id);
         return {
           status: 'ok' as const,
-          content: `已发到「${result.roomName}」。`,
+          content: `已发到「${room.name}」。`,
           output: { truncated: false, handle: submitted.receipt.receiptId },
         };
       },
@@ -933,8 +1082,9 @@ export class AgentRuntime {
       const treeId = this.ledger.getTurn(runningId)?.treeId;
       if (treeId) for (const job of this.ledger.jobsOf(treeId)) job.abort();
     }
-    await this.activation.settleStop(operation.stopId);
-    return this.activationSnapshot().stops[operation.stopId] ?? { ...operation, state: 'settled' as const };
+    const pending = await this.effects.waitFor(operation.targetEffectIds, 5_000);
+    await this.activation.settleStop(operation.stopId, pending.length > 0 ? 'needs_attention' : 'settled');
+    return this.activationSnapshot().stops[operation.stopId] ?? { ...operation, state: pending.length > 0 ? 'needs_attention' as const : 'settled' as const };
   }
 
   resumeAgent(command: Parameters<ActivationCoordinator['resumeSelected']>[0]) {

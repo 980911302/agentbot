@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { collectArtifacts, toDisplayMessages } from '../presenters.js';
+import { collectArtifacts, privateConversationMessages } from '../presenters.js';
 import { parseSendMessageInput } from '../../shared/contracts/index.js';
 import { json, readJson } from '../transport/index.js';
 import { readString, resolveAgent, type RouteContext } from './context.js';
@@ -17,6 +17,7 @@ export async function handleSessionsCollection(
     const botId = new URL(request.url ?? '/', 'http://localhost').searchParams.get('botId') ?? '';
     const list = await runtime.registry.list();
     const currentBot = list.find((item) => item.id === botId) || list[0];
+    const messageCount = currentBot ? (await runtime.displayMessages(currentBot.id)).length : 0;
     const sessions = [
       {
         id: currentBot ? currentBot.id : 'session-default',
@@ -25,7 +26,7 @@ export async function handleSessionsCollection(
         model: context.model,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
-        messageCount: 6,
+        messageCount,
       },
     ];
     json(response, 200, { sessions });
@@ -59,6 +60,7 @@ export async function handleSessionItem(
   const record = await resolveAgent(context, raw);
   const id = record?.id ?? raw;
   const rawMsgs = await context.runtime.messages.list(id);
+  const privateMessages = privateConversationMessages(rawMsgs);
   const messages = await context.runtime.displayMessages(id, rawMsgs);
   json(response, 200, {
     session: {
@@ -71,7 +73,7 @@ export async function handleSessionItem(
       messageCount: messages.length,
     },
     messages,
-    artifacts: collectArtifacts(rawMsgs),
+    artifacts: collectArtifacts(privateMessages),
     taskProgress: context.runtime.taskProgress.list(id).slice(0, 20).map(task => ({ id: task.id, status: task.status, stopReason: task.stopReason, goal: task.goal.slice(0, 300), updatedAt: task.updatedAt })),
   });
 }

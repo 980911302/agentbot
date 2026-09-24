@@ -4,7 +4,7 @@ import type { Message } from '../shared/contracts/sse.js';
  * Repository 接口边界（E3.1）。
  *
  * E3.1 只定义边界并让现有 JSON 存储实现之——运行时字段逐步切换到接口类型，
- * 为 E3.1 后续的 SQLite 实现替换做准备。接口按《工程化执行计划.md》§E3 分四块：
+ * 为 E3.1 后续的 SQLite 实现替换做准备。接口分四块：
  *   元数据（registry）/ 消息（messages）/ 投递（inbox）/ Run 账本（turns/trees）。
  */
 
@@ -129,6 +129,9 @@ export interface DeliveryItem {
     | 'cancelled';
   chainId?: string;
   inputId?: string;
+  flowId?: string;
+  grantId?: string;
+  replyRoute?: import('../shared/contracts/room-flow.js').RoomReplyRoute;
 }
 
 export interface DeliveryClaimInput {

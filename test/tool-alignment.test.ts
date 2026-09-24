@@ -70,13 +70,23 @@ describe('SendToUser（见 docs/工具参考.md）', () => {
     }));
     assert.equal(reply, '已发给主人');
     assert.deepEqual(sent, ['进展：一半了']);
+    await assert.rejects(
+      runTool(tool, { type: 'text', content: '错误目标', to: 'room' }, context()),
+      /不在群回合/,
+    );
   });
 
-  it('群回合默认进群（room.posts），to:"dm" 走私发', async () => {
+  it('群回合必须明确选择发群或私发，省略目标不会误公开', async () => {
     const posts: string[] = [];
     const sent: string[] = [];
     const room = { roomId: 'r1', roomName: '群', posts, limit: 3 };
-    await runTool(tool, { type: 'text', content: '群里的发言' }, context({ room }));
+    await assert.rejects(
+      runTool(tool, { type: 'text', content: '目标不明确' }, context({ room })),
+      /必须显式指定/,
+    );
+    assert.deepEqual(posts, []);
+
+    await runTool(tool, { type: 'text', content: '群里的发言', to: 'room' }, context({ room }));
     assert.deepEqual(posts, ['群里的发言']);
 
     await runTool(tool, { type: 'text', content: '私下说一句', to: 'dm' }, context({ room, turnState: {

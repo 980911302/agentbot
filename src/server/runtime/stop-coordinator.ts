@@ -11,6 +11,7 @@ import { isStopSentence, DEFAULT_STOP_WORDS } from '../../config.js';
 import type { AgentRegistry } from '../../agent/registry.js';
 import type { PendingStop, SendOptions, SendResult } from './types.js';
 import type { ActivationCoordinator } from './activation-coordinator.js';
+import type { EffectRunner } from './effect-runner.js';
 
 /**
  * StopCoordinator（E2.2 拆出）：停止令的认词、排队与执行。
@@ -37,6 +38,7 @@ export class StopCoordinator {
       stopWords: string[];
       stopAckTimeoutMs: number;
       activation?: ActivationCoordinator;
+      effects?: EffectRunner;
     },
   ) {
     this.pendingStops = deps.pendingStops;
@@ -62,7 +64,11 @@ export class StopCoordinator {
     }
     const result = await this.executeStop(agentId, { text, createdAt: Date.now() }, { notifyUser: true, options });
     if (operation && this.deps.activation) {
-      await this.deps.activation.settleStop(operation.stopId).catch(() => undefined);
+      const pending = await this.deps.effects?.waitFor(operation.targetEffectIds, 5_000) ?? [];
+      await this.deps.activation.settleStop(
+        operation.stopId,
+        pending.length > 0 ? 'needs_attention' : 'settled',
+      ).catch(() => undefined);
     }
     return result;
   }
@@ -90,6 +96,42 @@ export class StopCoordinator {
     await this.executeStop(agentId, stop, { notifyUser: false, options: {}, replyTo }).catch(
       () => undefined,
     );
+  }
+
+  async stopRoomFlow(roomId: string, flowId: string, text: string): Promise<void> {
+    if (this.deps.activation) {
+      // commandId 由范围决定：同一个流程重复停只留一个 StopOperation，
+      // 随机 id 会让「用户一句停 → 路由+编排各调一次」叠加出多个停止操作
+      const operation = await this.deps.activation.requestStop({
+        commandId: `room_flow:${roomId}:${flowId}`,
+        requestedBy: { kind: 'user', id: 'owner' },
+        scope: { kind: 'room_flow', roomId, flowId },
+      });
+      for (const ticketId of operation.targetTicketIds) {
+        const ticket = this.deps.activation.getTicket(ticketId);
+        if (ticket) {
+          const runningId = this.deps.ledger.runningTurnOf(ticket.agentId);
+          const turn = (runningId ? this.deps.ledger.getTurn(runningId) : undefined) ?? this.deps.ledger.getTurn(ticket.runId);
+          if (turn?.treeId) {
+            const tree = this.deps.ledger.getTree(turn.treeId);
+            if (tree) {
+              tree.status = 'cancelling';
+              this.deps.ledger.putTree(tree);
+            }
+            for (const job of this.deps.ledger.jobsOf(turn.treeId)) {
+              job.abort();
+            }
+          }
+        }
+      }
+      // 停完必须结算：不结算的 StopOperation 永远停在 stopping，
+      // 轮询停止状态的界面会看到一个永不结束的指示器
+      const pending = await this.deps.effects?.waitFor(operation.targetEffectIds, 5_000) ?? [];
+      await this.deps.activation.settleStop(
+        operation.stopId,
+        pending.length > 0 ? 'needs_attention' : 'settled',
+      ).catch(() => undefined);
+    }
   }
 
   /** 回合结束时清空排队的停止令（在欠账续跑之前执行） */
@@ -261,23 +303,38 @@ export class StopCoordinator {
     };
   }
 
-  /** 等下级的 stop-ack；信箱里的 ack 由这里消费，不会进模型 */
+  /**
+   * 正在等待下级 stop-ack 的停止令：agentId → 还没收到的「子智能体:任务树」集合。
+   * ack 由收件方的 inbox 处理器确认时经 noteStopAck 登记，等待方只读这张表——
+   * 不再用 inbox.take 去抢信（那会绕过租约，把处理器正在领的批次拽掉，
+   * 轻则 ack 抛租约丢失、整批信卡 5 分钟，重则双方都消费不到）。
+   */
+  private readonly awaitingAcks = new Map<string, Set<string>>();
+
+  /** 收件方确认了一条 stop-ack：通知可能在等待它的停止令 */
+  noteStopAck(agentId: string, fromAgentId: string, treeId?: string): void {
+    const expected = this.awaitingAcks.get(agentId);
+    if (expected?.delete(`${fromAgentId}:${treeId ?? ''}`) && expected.size === 0) {
+      this.awaitingAcks.delete(agentId);
+    }
+  }
+
+  /** 等下级的 stop-ack；信箱里的 ack 由收件方的 inbox 处理器确认并登记，不会进模型 */
   private async awaitStopAcks(
     agentId: string,
     expectedChildren: Array<{ agentId: string; treeId: string }>,
     timeoutMs: number,
   ): Promise<void> {
-    const deadline = Date.now() + timeoutMs;
     const expected = new Set(expectedChildren.map((child) => `${child.agentId}:${child.treeId}`));
-    while (expected.size > 0 && Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, 120));
-      const taken = await this.deps.inbox
-        .take(
-          agentId,
-          (item) => item.kind === 'stop-ack' && expected.has(`${item.fromAgentId}:${item.treeId ?? ''}`),
-        )
-        .catch(() => []);
-      for (const item of taken) expected.delete(`${item.fromAgentId}:${item.treeId ?? ''}`);
+    if (expected.size === 0) return;
+    this.awaitingAcks.set(agentId, expected);
+    const deadline = Date.now() + timeoutMs;
+    try {
+      while (expected.size > 0 && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 60));
+      }
+    } finally {
+      if (this.awaitingAcks.get(agentId) === expected) this.awaitingAcks.delete(agentId);
     }
   }
 

@@ -29,7 +29,7 @@ import type { RuntimeTurn, SendOptions, SendResult, TaskTree, TurnResult } from 
 /**
  * RunExecutor（E2.2 拆出，E3.3 记账改经 RunLedger）：一次回合的执行核心。
  *
- * 实现《工程化执行计划.md》E2.2 的调度语义：
+ * 调度语义（E2.2）：
  *   - 用户的新句永远能开新回合——旧的断流挂起（park）、树记欠，结束后自动补跑（resume）
  *   - 同事信/群/续跑撞上忙智能体维持退避，不打扰正在进行的用户回合
  *   - 回合收尾顺序：停止令 → 欠账续跑 → 同事来信
@@ -56,7 +56,14 @@ export class RunExecutor {
       extractor: MemoryExtractor;
       agentService: AgentService;
       stopCoordinator: StopCoordinator;
-      activation?: { ticketOf(id: string): import('../../shared/contracts/execution-control.js').ActivationTicket | undefined };
+      activation?: {
+        ticketOf(id: string): import('../../shared/contracts/execution-control.js').ActivationTicket | undefined;
+        settleTicket?(id: string): Promise<void>;
+        tryActivate?(input: import('../../shared/contracts/execution-control.js').ActivationRequest): Promise<import('../../shared/contracts/execution-control.js').ActivationDecision>;
+        markRunning?(ticket: import('../../shared/contracts/execution-control.js').ActivationTicket): Promise<void>;
+      };
+      effectRunner?: import('./effect-runner.js').EffectRunner;
+      flowService?: import('./room-flow-service.js').RoomFlowService;
       /** 收件箱积压时的消费入口（InboxProcessor） */
       drainInbox: (agentId: string, options: SendOptions) => Promise<unknown>;
       canAutoActivate?: (agentId: string) => boolean;
@@ -131,7 +138,13 @@ export class RunExecutor {
     turn: {
       brief?: string;
       extraTools?: Tool<any>[];
-      toolContext?: { room?: import('../../tools/tool.js').RoomTurnContext; agentChainDepth?: number };
+      toolContext?: {
+        room?: import('../../tools/tool.js').RoomTurnContext;
+        agentChainDepth?: number;
+        replyRoute?: import('../../shared/contracts/room-flow.js').RoomReplyRoute;
+        flowContext?: import('../../shared/contracts/room-flow.js').FlowBriefContext;
+        flowService?: import('./room-flow-service.js').RoomFlowService;
+      };
       continuation?: RunContinuation;
       persistAssistantText?: boolean;
       skipPersist?: boolean;
@@ -233,6 +246,12 @@ export class RunExecutor {
         ? available.filter(tool => turn.continuation!.authority.toolNames.includes(tool.name)) : available);
       const authority = { toolNames: registry.list().map(tool => tool.name), projectIds: agent.memory.projectIds, model };
       runtimeTurn.continuation = { version: 1, source: task.source ?? 'user', model, authority,
+        inputId: options.authorization?.inputId,
+        chainId: options.authorization?.chainId,
+        grantId: options.authorization?.grantId,
+        flowId: options.authorization?.flowId,
+        flowGrantId: options.authorization?.flowGrantId,
+        replyRoute: options.authorization?.replyRoute,
         brief: turn.continuation?.brief ?? turn.brief, speaker: task.speaker, sender: task.sender, images: task.images,
         agentChainDepth: turn.toolContext?.agentChainDepth ?? 0, persistAssistantText: turn.persistAssistantText !== false,
         ...(turn.toolContext?.room ? { room: { roomId: turn.toolContext.room.roomId, roomName: turn.toolContext.room.roomName,
@@ -329,6 +348,10 @@ export class RunExecutor {
           emit: options.onEvent,
           outputs: this.deps.outputs,
           authorization: options.authorization,
+          effectRunner: this.deps.effectRunner,
+          replyRoute: options.authorization?.replyRoute ?? (turn.toolContext as any)?.replyRoute,
+          flowContext: (turn.toolContext as any)?.flowContext,
+          flowService: this.deps.flowService ?? (turn.toolContext as any)?.flowService,
         },
         progress: { store: this.deps.progress, id: turnId },
         persistAssistantText: turn.persistAssistantText,
@@ -429,6 +452,9 @@ export class RunExecutor {
       }
       throw error;
     } finally {
+      if (options.authorization?.ticketId) {
+        await this.deps.activation?.settleTicket?.(options.authorization.ticketId).catch(() => undefined);
+      }
       // 只有自己还占着坑才清；被插队时新回合已经接管了锁
       if (this.ledger.runningTurnOf(agentId) === turnId) {
         this.ledger.releaseRunning(agentId, turnId);
@@ -515,6 +541,29 @@ export class RunExecutor {
       source: 'user',
     };
     try {
+      const continuationAuth = root?.continuation;
+      let resumeOptions: SendOptions = {};
+      if (continuationAuth?.inputId && continuationAuth.chainId && this.deps.activation?.tryActivate) {
+        const decision = await this.deps.activation.tryActivate({
+          agentId,
+          runId: randomUUID(),
+          taskId: root?.id ?? tree.rootTurnId,
+          inputId: continuationAuth.inputId,
+          chainId: continuationAuth.chainId,
+          source: 'resume',
+          grantId: continuationAuth.grantId,
+          flowId: continuationAuth.flowId,
+          flowGrantId: continuationAuth.flowGrantId,
+          replyRoute: continuationAuth.replyRoute,
+        });
+        if (decision.kind !== 'admitted') {
+          root!.status = 'parked';
+          this.ledger.putTurn(root!);
+          return;
+        }
+        await this.deps.activation.markRunning?.(decision.ticket);
+        resumeOptions = { authorization: decision.ticket };
+      }
       const result = await this.runTurn(
         agentId,
         task,
@@ -524,7 +573,7 @@ export class RunExecutor {
           brief: composeResumeBrief(root?.text ?? ''),
           ...(root ? { resumeTaskId: root.id } : {}),
         },
-        {},
+        resumeOptions,
       );
       // 续跑本身又被插队 → 这笔账重新记欠
       if (result.stopReason === 'parked' && root && root.status === 'resuming') {

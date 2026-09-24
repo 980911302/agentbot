@@ -80,7 +80,11 @@ export interface ToolContext {
   /** 把事件推给界面（例如弹出选项卡等用户回答） */
   emit?: (event: import('../agent/types.js').AgentEvent) => void;
   authorization?: import('../shared/contracts/execution-control.js').ActivationTicket;
+  effectRunner?: import('../server/runtime/effect-runner.js').EffectRunner;
   workbenchScope?: { issuedByCommandId: string };
+  replyRoute?: import('../shared/contracts/room-flow.js').RoomReplyRoute;
+  flowContext?: import('../shared/contracts/room-flow.js').FlowBriefContext;
+  flowService?: import('../server/runtime/room-flow-service.js').RoomFlowService;
 }
 
 export interface ExecutionAuthority {

@@ -33,6 +33,7 @@ export interface AgentToolAccess {
     inputId?: string;
     content: string;
     deliveryRefs?: string[];
+    allowedReceiptIds?: string[];
     source?: 'user' | 'inbox' | 'room';
   }) => Promise<FinalizeResult>;
 }

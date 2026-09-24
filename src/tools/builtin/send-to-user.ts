@@ -1,16 +1,17 @@
+import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
 import { defineTool, type ToolContext } from '../tool.js';
 import type { InteractionBroker } from '../../interaction/broker.js';
 import type { SecretStore } from '../../secret/store.js';
 import { ArtifactService } from '../services/artifact-service.js';
 import { ControlError } from '../../storage/runtime-control-store.js';
-import type { FinalizeResult } from '../../server/runtime/reply-finalizer.js';
+import { ReplyFinalizer, type FinalizeResult } from '../../server/runtime/reply-finalizer.js';
 
 /**
  * SendToUser —— 参见 docs/工具参考.md。
  *
  * 文本 / 附件 / 选项卡（widget）/ 密钥框（secret-request）统一出口。
- * 私聊和群聊共用同一个出口；群回合默认进群，to="dm" 时私发给主人。
+ * 私聊和群聊共用同一个出口；群回合必须明确选择公开发群或私发给主人。
  */
 
 export function createSendToUserTool(input: {
@@ -25,8 +26,10 @@ export function createSendToUserTool(input: {
     inputId?: string;
     content: string;
     deliveryRefs?: string[];
+    allowedReceiptIds?: string[];
     source?: 'user' | 'inbox' | 'room';
   }) => Promise<FinalizeResult>;
+  flowService?: import('../../server/runtime/room-flow-service.js').RoomFlowService;
 }) {
   const root = resolve(input.rootDir);
 
@@ -40,7 +43,7 @@ export function createSendToUserTool(input: {
     type: 'text' | 'attachment' | 'widget' | 'secret-request';
     content?: string;
     url?: string;
-    to?: 'dm';
+    to?: 'room' | 'dm';
     end_turn?: boolean;
     delivery_refs?: string[];
     widget?: {
@@ -56,7 +59,7 @@ export function createSendToUserTool(input: {
     ephemeral: true,
     description: [
       '对用户说话：进度、结果、附件、选项卡、密钥框都走它。',
-      '群回合里默认发到群（像人在群里打字，1~3 句）；to:"dm" 才走私聊给主人。',
+      '群回合必须显式指定目标：to:"room" 公开发到当前群；to:"dm" 私发给主人。',
       'type=widget：弹可点的选项卡，拿到用户的选择再继续；选项卡必须是本回合最后一条。',
       'type=secret-request：弹遮罩框收密钥，值不进对话不进记忆，你只拿到名字。',
       'type=attachment：交付工作区文件或已在允许交付目录中的文件（≤50MiB），并告知位置；重名不覆盖。',
@@ -68,7 +71,7 @@ export function createSendToUserTool(input: {
         type: { type: 'string', enum: ['text', 'attachment', 'widget', 'secret-request'] },
         content: { type: 'string', maxLength: 20000, description: 'type=text 时的正文，用真实换行；最多 20000 字符' },
         url: { type: 'string', description: 'type=attachment：工作区或允许交付目录中的文件路径（file:// 前缀可省）' },
-        to: { type: 'string', enum: ['dm'], description: '群回合里传 "dm" 表示私发给主人而不是发进群' },
+        to: { type: 'string', enum: ['room', 'dm'], description: '群回合必填："room" 公开发到当前群，"dm" 私发给主人；私聊回合可省略' },
         end_turn: { type: 'boolean', description: '最终一条设 true' },
         delivery_refs: {
           type: 'array',
@@ -110,6 +113,17 @@ export function createSendToUserTool(input: {
     },
     async execute(args, context: ToolContext) {
       const type = args.type;
+      const inGroup = Boolean(context.room);
+      const replyRoute = context.replyRoute ?? context.authorization?.replyRoute;
+      const flowService = context.flowService ?? input.flowService;
+
+      if (inGroup && !args.to) {
+        throw new ControlError('群回合必须显式指定 to:"room" 或 to:"dm"；私发给主人使用 to:"dm"', 'DESTINATION_REQUIRED');
+      }
+      if (!inGroup && args.to === 'room' && !replyRoute) {
+        throw new ControlError('当前不在群回合且无受信群流程路由，不能发到群', 'INVALID_DESTINATION');
+      }
+      const destination = (inGroup || replyRoute) ? (args.to ?? 'dm') : 'dm';
       const finish = (visibleText?: string) => {
         if (!context.turnState) return;
         if (visibleText) context.turnState.lastVisibleText = visibleText;
@@ -120,12 +134,24 @@ export function createSendToUserTool(input: {
         const text = args.content?.trim();
         if (!text) throw new Error('content 不能为空');
         let outgoing = text;
-        if (input.finalizeReply) {
-          const verdict = await input.finalizeReply({
+        const finalize = input.finalizeReply ?? ((payload) => new ReplyFinalizer({
+          lookup: async () => undefined,
+          canView: () => false,
+        }).finalize({
+          actorId: payload.actorId,
+          inputId: payload.inputId ?? payload.actorId,
+          content: payload.content,
+          deliveryRefs: payload.deliveryRefs,
+          allowedReceiptIds: payload.allowedReceiptIds,
+          source: payload.source,
+        }));
+        if (finalize) {
+          const verdict = await finalize({
             actorId: context.agentId,
             inputId: context.authorization?.inputId,
             content: text,
             deliveryRefs: args.delivery_refs,
+            allowedReceiptIds: context.turnState?.acceptedDeliveryRefs,
             source: context.room ? 'room' : 'user',
           });
           if (verdict.kind === 'invalid') {
@@ -134,14 +160,43 @@ export function createSendToUserTool(input: {
           if (verdict.kind === 'contradicted') {
             throw new ControlError('回执目标与发送声明不一致，未发布错误的成功确认', verdict.code);
           }
+          if (verdict.kind === 'incomplete') {
+            throw new ControlError(verdict.reason, 'INCOMPLETE_DELIVERY_CLAIM');
+          }
           if (verdict.kind === 'ok' && verdict.statusLines.length > 0) {
             const lines = verdict.statusLines.map((line) => `已受理：${line.targetName}`).join('\n');
             outgoing = `${text}\n\n${lines}`;
           }
         }
-        const inGroup = Boolean(context.room);
-        if (inGroup && args.to !== 'dm') {
-          const room = context.room!;
+        if (destination === 'room') {
+          if (replyRoute && flowService) {
+            if (!flowService.verifyReplyRoute(replyRoute)) {
+              throw new ControlError('群流程回复路由签名无效或已被篡改', 'INVALID_REPLY_ROUTE');
+            }
+            const expectedVersion = context.flowContext?.version ?? 0;
+            const proposalResult = await flowService.submitProposal({
+              flowId: replyRoute.flowId,
+              grantId: replyRoute.grantId,
+              actor: { kind: 'agent', id: context.agentId },
+              clientActionId: context.authorization?.ticketId ?? randomUUID(),
+              content: { text: outgoing },
+              publicText: outgoing,
+              expectedVersion,
+            });
+            if (proposalResult.status === 'rejected') {
+              throw new ControlError(proposalResult.reason ?? '候选行动被协议拒绝', 'PROPOSAL_REJECTED');
+            }
+            if (proposalResult.status === 'stale') {
+              throw new ControlError(proposalResult.reason ?? '流程状态已演进，旧版本行动已作废', 'PROPOSAL_STALE');
+            }
+            finish(outgoing);
+            return `已向受控流程提交候选行动（flow: ${replyRoute.flowId}，grant: ${replyRoute.grantId}）${args.end_turn ? '，回合结束' : ''}`;
+          }
+
+          const room = context.room;
+          if (!room) {
+            throw new ControlError('当前不在群回合且无受信群流程路由，不能发到群', 'INVALID_DESTINATION');
+          }
           if (room.posts.length >= room.limit) {
             throw new Error(`这一轮已经说了 ${room.limit} 条，请结束回合`);
           }
@@ -159,7 +214,7 @@ export function createSendToUserTool(input: {
       }
 
       if (type === 'attachment') {
-        if (context.room && args.to !== 'dm') {
+        if (destination === 'room') {
           throw new Error('群里只能发纯文本；附件请使用 to="dm" 私发给主人');
         }
         if (!args.url) throw new Error('attachment 需要 url（工作区内的文件路径）');
@@ -172,7 +227,7 @@ export function createSendToUserTool(input: {
       }
 
       if (type === 'widget') {
-        if (context.room && args.to !== 'dm') {
+        if (destination === 'room') {
           throw new Error('群里不能发送选项卡；请使用 to="dm" 私发给主人');
         }
         const widget = args.widget;
@@ -210,7 +265,7 @@ export function createSendToUserTool(input: {
       }
 
       if (type === 'secret-request') {
-        if (context.room && args.to !== 'dm') {
+        if (destination === 'room') {
           throw new Error('群里不能发送密钥框；请使用 to="dm" 私发给主人');
         }
         const secret = args.secret;

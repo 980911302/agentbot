@@ -12,5 +12,11 @@ export interface RunContinuation {
   agentChainDepth: number;
   persistAssistantText: boolean;
   authority: ExecutionAuthority;
+  inputId?: string;
+  chainId?: string;
+  grantId?: string;
+  flowId?: string;
+  flowGrantId?: string;
+  replyRoute?: import('../shared/contracts/room-flow.js').RoomReplyRoute;
   room?: { roomId: string; roomName: string; roundId: string; limit: number; live?: boolean };
 }

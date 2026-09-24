@@ -88,7 +88,7 @@ export class AgentInbox implements DeliveryPort {
     return this.insert(state, item);
   }
 
-  async enqueueRoom(item: Omit<InboxItem, 'id' | 'createdAt'>, maxRuns: number): Promise<InboxItem | undefined> {
+  async enqueueRoom(item: Omit<InboxItem, 'id' | 'createdAt'> & { id?: string }, maxRuns: number): Promise<InboxItem | undefined> {
     if (item.kind !== 'room' || !item.room) throw new Error('群投递缺少上下文');
     const state = await this.load(item.toAgentId);
     const counts = state.roomDeliveryCounts ??= {};

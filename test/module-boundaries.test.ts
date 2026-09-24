@@ -174,7 +174,7 @@ describe('续跑目的地和记忆后处理', () => {
       await waitFor(() => provider.calls.length === 3, '群自动恢复');
       const resumed = runtime.chatRuns.list().find(run => run.source === 'resume')!;
       assert.equal(resumed.channelId, room.id);
-      provider.release(2, FakeProvider.toolCalls([{ id: 'out', name: 'SendToUser', arguments: JSON.stringify({ type: 'text', content: '群任务完成', end_turn: true }) }]));
+      provider.release(2, FakeProvider.toolCalls([{ id: 'out', name: 'SendToUser', arguments: JSON.stringify({ type: 'text', content: '群任务完成', to: 'room', end_turn: true }) }]));
       await waitFor(() => runtime.chatRuns.get(resumed.runId)?.status === 'succeeded', '续跑交付完成');
       assert.equal((await runtime.rooms.messages(room.id)).filter(m => m.text === '群任务完成').length, 1);
       const message = (await runtime.messages.list(agent.id)).find(m => m.content.type === 'text' && m.content.text === '群任务完成')!;

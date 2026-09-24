@@ -9,6 +9,16 @@ export class MessageStore implements MessageRepositoryPort {
 
   append(message: Message): Promise<void> { return this.log.append(message.agentId, message); }
 
+  async appendIfAbsent(message: Message): Promise<boolean> {
+    const existing = (await this.log.list(message.agentId)).find((item) => item.id === message.id);
+    if (existing) {
+      if (JSON.stringify(existing.content) !== JSON.stringify(message.content)) throw new Error('MESSAGE_ID_CONFLICT');
+      return false;
+    }
+    await this.append(message);
+    return true;
+  }
+
   async list(agentId: string, limit?: number): Promise<Message[]> {
     const list = await this.log.list(agentId);
     return !limit || limit >= list.length ? list : list.slice(-limit);

@@ -79,7 +79,10 @@ export function createWorkbenchTools(workbench: Workbench) {
       },
       required: ['agent_id'],
     },
-    async execute(args) {
+    async execute(args, context) {
+      if (context.authorization?.source === 'inbox') {
+        throw new ControlError('普通同事来信不能签发工作台管理授权', 'UNAUTHORIZED_ACTION');
+      }
       const record = await workbench.updateAgent(args.agent_id, {
         name: args.name,
         instructions: args.description,
@@ -110,6 +113,9 @@ export function createWorkbenchTools(workbench: Workbench) {
       required: ['name', 'member_ids'],
     },
     async execute(args, context) {
+      if (context.authorization?.source === 'inbox') {
+        throw new ControlError('普通同事来信不能签发工作台创建授权', 'UNAUTHORIZED_ACTION');
+      }
       const counters = context.turnState?.workbench;
       if (counters && counters.roomsCreated >= 1) {
         throw new Error('这一轮已经建过群了，先跟用户确认要不要再建');
@@ -153,6 +159,9 @@ export function createWorkbenchTools(workbench: Workbench) {
       required: ['channel_id'],
     },
     async execute(args, context) {
+      if (context.authorization?.source === 'inbox') {
+        throw new ControlError('普通同事来信不能签发工作台管理授权', 'UNAUTHORIZED_ACTION');
+      }
       const current = await workbench.listRooms();
       const room = current.find((item) => item.id === args.channel_id);
       if (!room) throw new Error(`找不到 id 为 ${args.channel_id} 的群`);
