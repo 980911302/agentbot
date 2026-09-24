@@ -22,7 +22,10 @@ export interface SidebarSection {
   /** 段 id：与折叠状态、aria-controls 同键 */
   id: 'rooms' | 'agents';
   title: string;
+  /** 该段全部可见频道。折叠与否都返回完整列表——段头常驻、计数才准确 */
   channels: ChannelItem[];
+  /** 是否折叠。折叠只藏内容，不藏段头；搜索时恒为 false */
+  collapsed: boolean;
 }
 
 /** 状态点优先级：暂停 > 有失败来信 > 有待处理来信 > 忙碌（脸在动即「在干活」） */
@@ -45,8 +48,12 @@ export function matchesKeyword(channel: ChannelItem, keyword: string): boolean {
 }
 
 /**
- * 分「群」「同事」两段。搜索时忽略折叠状态——搜到了就该看见；
- * 折叠态只对完整名单生效，空段不渲染。
+ * 分「群」「同事」两段。
+ *
+ * 段头必须常驻：折叠只藏内容，段头是唯一的展开入口，跟着一起藏掉用户就
+ * 再也展不开了。所以折叠段也返回段结构，由组件只渲染段头不渲染内容。
+ *
+ * 搜索时忽略折叠——搜到了就该看见；段一个都不匹配时整段不渲染。
  */
 export function sidebarSections(
   channels: ChannelItem[],
@@ -55,12 +62,15 @@ export function sidebarSections(
 ): SidebarSection[] {
   const keyword = query.trim().toLowerCase();
   const searching = keyword.length > 0;
-  const visible = channels.filter(channel => matchesKeyword(channel, keyword));
-  const rooms = visible.filter(channel => channel.kind === 'room');
-  const agents = visible.filter(channel => channel.kind !== 'room');
+  const rooms = channels.filter(channel => channel.kind === 'room' && matchesKeyword(channel, keyword));
+  const agents = channels.filter(channel => channel.kind !== 'room' && matchesKeyword(channel, keyword));
   const sections: SidebarSection[] = [];
-  if (rooms.length > 0 && (searching || !collapsed.rooms)) sections.push({ id: 'rooms', title: '群', channels: rooms });
-  if (agents.length > 0 && (searching || !collapsed.agents)) sections.push({ id: 'agents', title: '同事', channels: agents });
+  if (rooms.length > 0) {
+    sections.push({ id: 'rooms', title: '群', channels: rooms, collapsed: searching ? false : collapsed.rooms });
+  }
+  if (agents.length > 0) {
+    sections.push({ id: 'agents', title: '同事', channels: agents, collapsed: searching ? false : collapsed.agents });
+  }
   return sections;
 }
 

@@ -62,23 +62,31 @@ describe('channelStatusDot', () => {
 describe('sidebarSections', () => {
   const channels = [room('r1'), agent('a1'), agent('a2')];
   const open: SidebarSectionState = { rooms: false, agents: false };
+  const folded: SidebarSectionState = { rooms: true, agents: true };
 
   it('分成「群」「同事」两段，顺序固定', () => {
     const sections = sidebarSections(channels, open, '');
     assert.deepEqual(sections.map(section => section.title), ['群', '同事']);
     assert.deepEqual(sections[0]!.channels.map(item => item.id), ['r1']);
     assert.deepEqual(sections[1]!.channels.map(item => item.id), ['a1', 'a2']);
+    assert.equal(sections[0]!.collapsed, false);
   });
 
-  it('折叠后该段为空列表，不渲染', () => {
-    const sections = sidebarSections(channels, { rooms: true, agents: false }, '');
-    assert.equal(sections.length, 1);
-    assert.equal(sections[0]!.title, '同事');
+  it('折叠只藏内容、不藏段头：段结构仍在，collapsed 标记为 true，频道数保留供段头计数', () => {
+    const sections = sidebarSections(channels, folded, '');
+    assert.deepEqual(sections.map(section => section.title), ['群', '同事'], '折叠后两段都还在，段头才点得到');
+    const rooms = sections.find(section => section.id === 'rooms')!;
+    assert.equal(rooms.collapsed, true);
+    assert.deepEqual(rooms.channels.map(item => item.id), ['r1'], '频道仍随段返回，段头计数才准确');
+    const agents = sections.find(section => section.id === 'agents')!;
+    assert.equal(agents.collapsed, true);
+    assert.equal(agents.channels.length, 2);
   });
 
-  it('搜索时忽略折叠，两段都拿出来按名字过滤', () => {
-    const sections = sidebarSections(channels, { rooms: true, agents: true }, 'a2');
+  it('搜索时忽略折叠，两段都拿出来按名字过滤，且 collapsed 恒为 false', () => {
+    const sections = sidebarSections(channels, folded, 'a2');
     assert.deepEqual(sections.map(section => section.title), ['同事']);
+    assert.equal(sections[0]!.collapsed, false);
     assert.deepEqual(sections[0]!.channels.map(item => item.id), ['a2']);
   });
 
@@ -88,9 +96,10 @@ describe('sidebarSections', () => {
     assert.deepEqual(sections[0]!.channels.map(item => item.id), ['a1']);
   });
 
-  it('空段不渲染：没有群时只剩同事段', () => {
-    const sections = sidebarSections([agent('a1')], open, '');
-    assert.deepEqual(sections.map(section => section.title), ['同事']);
+  it('空段不渲染：没有群时只剩同事段（折叠与否都不造空段头）', () => {
+    assert.deepEqual(sidebarSections([agent('a1')], open, '').map(section => section.title), ['同事']);
+    assert.deepEqual(sidebarSections([agent('a1')], folded, '').map(section => section.title), ['同事']);
+    assert.deepEqual(sidebarSections([room('r1')], folded, '').map(section => section.title), ['群']);
   });
 });
 

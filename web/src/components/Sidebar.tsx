@@ -225,9 +225,12 @@ export function Sidebar({
     onResize?.(isMini ? 260 : 72);
   }, [isMini, onResize]);
 
+  // 搜索时段是强制展开的，此时点段头不写持久态：否则用户以为是展开/收起，
+  // 实际写进去的折叠态要等清空搜索才显现（验收打回点：折叠态不可见地写入）
   const toggleSection = useCallback((id: 'rooms' | 'agents') => {
+    if (keyword.trim().length > 0) return;
     setCollapsed(current => ({ ...current, [id]: !current[id] }));
-  }, []);
+  }, [keyword]);
 
   return (
     <aside className={`app-sidebar${isMini ? ' mini' : ''}`} style={{ width }}>
@@ -293,19 +296,21 @@ export function Sidebar({
               <button
                 type="button"
                 className="sidebar-section-head"
-                aria-expanded={!collapsed[section.id] || keyword.length > 0}
+                aria-expanded={!section.collapsed}
                 aria-controls={`sidebar-section-${section.id}`}
                 onClick={() => toggleSection(section.id)}
               >
                 <IconChevronRight
                   size={12}
-                  className={`sidebar-section-chevron${collapsed[section.id] && !keyword ? '' : ' open'}`}
+                  className={`sidebar-section-chevron${section.collapsed ? '' : ' open'}`}
                 />
                 <span className="sidebar-section-title">{section.title}</span>
                 <span className="sidebar-section-count">{section.channels.length}</span>
               </button>
-              <div className="sidebar-section-body" id={`sidebar-section-${section.id}`}>
-                {section.channels.map((channel) => {
+              {/* 折叠只藏内容不藏段头：段头是唯一的展开入口（验收打回点） */}
+              {section.collapsed ? null : (
+                <div className="sidebar-section-body" id={`sidebar-section-${section.id}`}>
+                  {section.channels.map((channel) => {
                   const index = flat.indexOf(channel);
                   const isActive = channel.id === activeId;
                   const dot = channelStatusDot(channel);
@@ -372,7 +377,8 @@ export function Sidebar({
                     </div>
                   );
                 })}
-              </div>
+                </div>
+              )}
             </section>
           ))
         )}
