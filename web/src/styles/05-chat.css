@@ -1419,3 +1419,50 @@ color: var(--accent-text);
 color: var(--danger);
 border-color: var(--danger);
 }
+
+/* ── UI-04 时间线：日期分隔与合并行 ─────────────────────────────
+   同一发言者 3 分钟内连说的几句：只首条显头像/名字/时间，
+   后续行只出气泡（compact），间距收窄，视觉上是一口气说完的。 */
+.date-divider {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: var(--sp-5) 0 var(--sp-3);
+}
+
+.date-divider span {
+  padding: 2px var(--sp-3);
+  border-radius: var(--r-full);
+  background: var(--bg-subtle);
+  color: var(--text-tertiary);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.msg-row.compact {
+  margin-top: calc(-1 * var(--sp-1));
+}
+
+/* 合并组里的后续行沿用左侧头像列的对齐：留出头像宽度的占位，
+   气泡才不会因为少了头像而错位。 */
+.msg-row.compact .msg-content-col {
+  margin-left: 46px;
+}
+
+.msg-row.compact.dm-user .msg-content-col,
+.msg-row.compact.group-stream .msg-content-col {
+  margin-left: 0;
+  margin-right: 46px;
+}
+
+/* 合并行里悬停操作条更靠左贴气泡，不飘到整行中间 */
+.msg-row.compact .msg-actions {
+  margin-top: var(--sp-1);
+}
+
+/* 错误行按规范用 danger-weak 底 + 重试入口，就地提示不遮挡 */
+.msg-bubble-box.error {
+  border: 1px solid var(--danger-border);
+  background: var(--danger-weak);
+  color: var(--danger-text);
+}

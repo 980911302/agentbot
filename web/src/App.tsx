@@ -749,6 +749,10 @@ export default function App() {
                 }
           }
           onRetry={(text, clientMessageId) => void send(text, clientMessageId)}
+          // 「重新编辑」：只把原文填回输入框（Composer 监听 agentbot:use_prompt）
+          onEditMessage={(text) =>
+            window.dispatchEvent(new CustomEvent('agentbot:use_prompt', { detail: text }))
+          }
         />
       )}
 

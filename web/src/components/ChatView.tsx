@@ -9,6 +9,7 @@ import { MessageItem } from './MessageItem';
 import { InteractionCard } from './InteractionCard';
 import { CorrespondenceRow, CorrespondencePanel } from './CorrespondenceView';
 import { chatRows } from '../features/chat/correspondence';
+import { jumpToBottomVisible, timelineBlocks } from '../features/chat/timeline-view';
 import { ChatWelcome } from './ChatWelcome';
 import type { MessageActor } from '../../../src/shared/contracts/message-identity';
 
@@ -27,7 +28,8 @@ interface ChatViewProps {
   onOpenProfile?: () => void;
   /** 错误消息的重试（重新发送原话） */
   onRetry?: (text: string, clientMessageId?: string) => void;
-  /** 频道内的轻状态行（任务挂起等系统提示） */
+  /** 用户消息「重新编辑」：只把原文填回输入框，不改发送逻辑 */
+  onEditMessage?: (text: string) => void;  /** 频道内的轻状态行（任务挂起等系统提示） */
   notices?: string[];
   /** 群回合：正在进入回合的成员（只改对应那张脸，不占「正在回复」气泡） */
   roundActive?: { id: string; name: string; color: string } | null;
@@ -60,6 +62,7 @@ export function ChatView({
   onToggleInfo,
   onOpenProfile,
   onRetry,
+  onEditMessage,
   notices,
   roundActive,
   doneFlash,
@@ -146,18 +149,29 @@ export function ChatView({
     return scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
   };
 
+  /** 是否该显示「回到最新」：规范 4.3 —— 离底部 >200px 才算离开 */
+  const shouldShowJump = () => {
+    const scroller = scrollerRef.current;
+    if (!scroller) return false;
+    return jumpToBottomVisible({
+      scrollHeight: scroller.scrollHeight,
+      scrollTop: scroller.scrollTop,
+      clientHeight: scroller.clientHeight,
+    });
+  };
+
   /** 只有用户明确向上滚（滚轮向上 / 触摸下滑）才脱离跟随 */
   const onWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
     if (event.deltaY < -2) stickToBottom.current = false;
-    else if (distanceFromBottom() < 24) stickToBottom.current = true;
+    else if (shouldShowJump() === false) stickToBottom.current = true;
   };
 
-  /** 滚回底部就重新跟随 */
+  /** 滚回底部附近就重新跟随 */
   const onScroll = () => {
-    const nearBottom = distanceFromBottom() < 24;
-    if (nearBottom) stickToBottom.current = true;
-    setAwayFromBottom(!nearBottom);
-    if (nearBottom) setPendingCount(0);
+    const away = shouldShowJump();
+    if (!away) stickToBottom.current = true;
+    setAwayFromBottom(away);
+    if (!away) setPendingCount(0);
   };
 
   const jumpToBottom = () => {
@@ -409,22 +423,39 @@ export function ChatView({
               isWorkspaceEmpty={false}
             />
           ) : (
-            chatRows(messages).map((row) =>
-              row.kind === 'correspondence' ? (
-                <CorrespondenceRow key={row.id} agentId={bot?.id ?? ''} transfers={row.transfers} onOpen={setPeer} />
-              ) : (
+            timelineBlocks(chatRows(messages), { isGroup: Boolean(isGroup) }).map((block) => {
+              if (block.kind === 'divider') {
+                return (
+                  <div className="date-divider" key={block.key}>
+                    <span>{block.label}</span>
+                  </div>
+                );
+              }
+              if (block.kind === 'correspondence') {
+                return (
+                  <CorrespondenceRow
+                    key={block.key}
+                    agentId={bot?.id ?? ''}
+                    transfers={block.transfers}
+                    onOpen={setPeer}
+                  />
+                );
+              }
+              return block.messages.map((message, index) => (
                 <MessageItem
-                  key={row.message.id}
-                  message={row.message}
+                  key={message.id}
+                  message={message}
                   bot={bot}
                   isGroup={Boolean(isGroup)}
                   members={faces}
                   memberNames={isGroup ? faces.map((member) => member.name) : []}
-                  notice={row.message.role === 'assistant' && row.message.id === lastSpeakerId}
+                  notice={message.role === 'assistant' && message.id === lastSpeakerId}
                   onRetry={onRetry}
+                  onEdit={onEditMessage}
+                  compact={index > 0}
                 />
-              ),
-            )
+              ));
+            })
           )}
 
           {artifacts.length > 0 ? <ArtifactRow artifacts={artifacts} /> : null}

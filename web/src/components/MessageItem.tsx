@@ -35,6 +35,10 @@ export function MessageItem({
   notice = false,
   onRetry,
   onMention,
+  onEdit,
+  /** 时间线合并（规范 5.6）：同一个人 3 分钟内连说的几句，
+   *  只有首条显示头像、名字与时间，后续只出气泡。 */
+  compact = false,
 }: {
   message: DisplayMessage;
   bot: BotSummary | null;
@@ -44,6 +48,9 @@ export function MessageItem({
   notice?: boolean;
   onRetry?: (text: string) => void;
   onMention?: (name: string) => void;
+  /** 用户消息：把原文填回输入框（不改发送逻辑） */
+  onEdit?: (text: string) => void;
+  compact?: boolean;
 }) {
   const isUser = message.role === 'user';
   const senderName = message.senderName || (isUser ? '我' : bot?.name || '助手');
@@ -54,7 +61,7 @@ export function MessageItem({
   const [copied, setCopied] = useState(false);
   const layout = timelineLayoutKind({ isGroup, role: message.role });
   const enter = messageEnterKind({ isGroup, role: message.role });
-  const rowClass = `msg-row ${layout} enter-${enter}`;
+  const rowClass = `msg-row ${layout} enter-${enter}${compact ? ' compact' : ''}`;
 
   const copy = () => {
     void navigator.clipboard.writeText(stripThinkingBlocks(message.content)).then(() => {
@@ -68,6 +75,11 @@ export function MessageItem({
       <button type="button" onClick={copy}>
         {copied ? '已复制' : '复制'}
       </button>
+      {isUser && onEdit && message.content.trim() ? (
+        <button type="button" onClick={() => onEdit(message.content)} title="把原文填回输入框">
+          重新编辑
+        </button>
+      ) : null}
       {!isUser && message.error && message.retryText && onRetry ? (
         <button type="button" onClick={() => onRetry(message.retryText!)}>
           重试
@@ -85,6 +97,18 @@ export function MessageItem({
       <BubbleContent message={message} memberNames={memberNames} />
     </div>
   );
+
+  /** 合并组里的后续消息：只出气泡，不重复头像、名字与时间 */
+  if (compact) {
+    return (
+      <div className={rowClass}>
+        <div className={`msg-content-col ${layout === 'dm-user' ? 'user-content' : 'assistant-content'}`}>
+          {text}
+          {actions}
+        </div>
+      </div>
+    );
+  }
 
   if (layout === 'dm-user') {
     return (
