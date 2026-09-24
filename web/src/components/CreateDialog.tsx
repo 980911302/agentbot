@@ -109,24 +109,24 @@ export function CreateDialog({
           </button>
         </header>
 
-        <div className="create-tabs">
-          <button
-            type="button"
-            className={`create-tab${mode === 'agent' ? ' active' : ''}`}
-            onClick={() => setMode('agent')}
-          >
-            智能体
-          </button>
-          <button
-            type="button"
-            className={`create-tab${mode === 'room' ? ' active' : ''}`}
-            onClick={() => setMode('room')}
-          >
-            群
-          </button>
-        </div>
-
         <div className="dialog-body">
+          <div className="create-tabs">
+            <button
+              type="button"
+              className={`create-tab${mode === 'agent' ? ' active' : ''}`}
+              onClick={() => setMode('agent')}
+            >
+              智能体
+            </button>
+            <button
+              type="button"
+              className={`create-tab${mode === 'room' ? ' active' : ''}`}
+              onClick={() => setMode('room')}
+            >
+              群
+            </button>
+          </div>
+
           {mode === 'agent' ? (
             <>
               <div className="preview-face">
@@ -228,9 +228,7 @@ export function CreateDialog({
                   成员（{picked.length}/{memberLimit}）
                 </span>
                 <div className="member-picker">
-                  {agents.length === 0 ? (
-                    <p className="field-hint">还没有智能体，先建一个</p>
-                  ) : null}
+                  {agents.length === 0 ? <p className="field-hint">还没有智能体，先建一个</p> : null}
                   {agents.map((agent) => {
                     const on = picked.includes(agent.id);
                     return (
@@ -255,15 +253,15 @@ export function CreateDialog({
               </p>
             </>
           )}
+        </div>
 
-          <div className="dialog-actions">
-            <button type="button" className="btn ghost" onClick={close}>
-              取消
-            </button>
-            <button type="button" className="btn primary" disabled={!canSubmit} onClick={submit}>
-              {mode === 'agent' ? '创建智能体' : '创建群'}
-            </button>
-          </div>
+        <div className="dialog-actions">
+          <button type="button" className="btn ghost" onClick={close}>
+            取消
+          </button>
+          <button type="button" className="btn primary" disabled={!canSubmit} onClick={submit}>
+            {mode === 'agent' ? '创建智能体' : '创建群'}
+          </button>
         </div>
       </div>
     </div>

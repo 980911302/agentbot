@@ -5,16 +5,7 @@ import { useModalKeys } from './ui/useModalKeys.js';
 import { ConfirmDialog } from './ConfirmDialog.js';
 import type { BotSummary } from '../types';
 
-const PALETTE = [
-  '#b89b6a',
-  '#93784a',
-  '#4a90e2',
-  '#34c759',
-  '#af52de',
-  '#5ac8fa',
-  '#ff9500',
-  '#f87171',
-];
+const PALETTE = ['#b89b6a', '#93784a', '#4a90e2', '#34c759', '#af52de', '#5ac8fa', '#ff9500', '#f87171'];
 
 interface BotProfileDialogProps {
   bot: BotSummary | null;
@@ -147,20 +138,20 @@ export function BotProfileDialog({ bot, onClose, onSave }: BotProfileDialogProps
           </div>
 
           {error ? <p className="profile-error">{error}</p> : null}
+        </div>
 
-          <div className="dialog-actions">
-            <button type="button" className="btn ghost" onClick={onClose}>
-              取消
-            </button>
-            <button
-              type="button"
-              className="btn primary"
-              disabled={!name.trim() || saving}
-              onClick={() => void submit()}
-            >
-              {saving ? '保存中…' : '保存'}
-            </button>
-          </div>
+        <div className="dialog-actions">
+          <button type="button" className="btn ghost" onClick={onClose}>
+            取消
+          </button>
+          <button
+            type="button"
+            className="btn primary"
+            disabled={!name.trim() || saving}
+            onClick={() => void submit()}
+          >
+            {saving ? '保存中…' : '保存'}
+          </button>
         </div>
       </div>
 

@@ -20,7 +20,11 @@ export function RenameDialog({ title, initial, open, onClose, onSubmit }: Rename
   const [error, setError] = useState<string | null>(null);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const presence = usePresence(open);
-  const dialogRef = useModalKeys({ open, onClose: () => (dirtyRef.current ? setConfirmDiscard(true) : onClose()), id: 'rename-dialog' });
+  const dialogRef = useModalKeys({
+    open,
+    onClose: () => (dirtyRef.current ? setConfirmDiscard(true) : onClose()),
+    id: 'rename-dialog',
+  });
   // 有未保存修改时 Esc 先确认，避免一按键盘就丢掉刚输入的内容
   const dirtyRef = useRef(false);
   dirtyRef.current = name.trim() !== initial.trim();
@@ -80,20 +84,20 @@ export function RenameDialog({ title, initial, open, onClose, onSubmit }: Rename
           </label>
 
           {error ? <p className="profile-error">{error}</p> : null}
+        </div>
 
-          <div className="dialog-actions">
-            <button type="button" className="btn ghost" onClick={onClose}>
-              取消
-            </button>
-            <button
-              type="button"
-              className="btn primary"
-              disabled={!name.trim() || saving}
-              onClick={() => void submit()}
-            >
-              {saving ? '保存中…' : '保存'}
-            </button>
-          </div>
+        <div className="dialog-actions">
+          <button type="button" className="btn ghost" onClick={onClose}>
+            取消
+          </button>
+          <button
+            type="button"
+            className="btn primary"
+            disabled={!name.trim() || saving}
+            onClick={() => void submit()}
+          >
+            {saving ? '保存中…' : '保存'}
+          </button>
         </div>
       </div>
 

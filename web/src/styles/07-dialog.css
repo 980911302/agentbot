@@ -15,7 +15,7 @@ background: var(--scrim);
   display: grid;
   grid-template-columns: 170px minmax(0, 1fr);
   width: min(760px, 100%);
-  max-height: 82vh;
+  max-height: min(720px, 100vh - 64px);
   border: 1px solid var(--border-strong);
   border-radius: 20px;
   overflow: hidden;
@@ -25,7 +25,10 @@ background: var(--scrim);
 }
 
 .dialog.narrow {
-  display: block;
+  /* 纵向 flex：主体 flex:1 自己滚动，操作条 flex-shrink:0 永不被压缩。
+     任何窗口高度下「取消 / 创建」都完整可见（bug_kifpk80c6uxg） */
+  display: flex;
+  flex-direction: column;
   width: min(440px, 100%);
 }
 
@@ -92,7 +95,12 @@ background: var(--scrim);
   gap: 18px;
   padding: 12px 24px 24px;
   overflow-y: auto;
-  max-height: calc(82vh - 64px);
+  /* 窄弹窗里主体是 grid 的中间行，自己滚动；宽弹窗仍用视口高度兜底 */
+  min-height: 0;
+}
+
+.dialog.narrow .dialog-body {
+  max-height: none;
 }
 
 .create-tabs {
@@ -220,6 +228,15 @@ color: var(--on-accent);
   justify-content: flex-end;
   gap: 8px;
   margin-top: 10px;
+}
+
+/* 窄弹窗：操作条是独立一行，永不被压缩、永远贴底 */
+.dialog.narrow .dialog-actions {
+  flex-shrink: 0;
+  margin-top: 0;
+  padding: 12px 24px;
+  border-top: 1px solid var(--divider);
+  background: var(--bg-card);
 }
 
 .group h3 {
