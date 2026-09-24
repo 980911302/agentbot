@@ -165,6 +165,11 @@ export async function createAgentServer(options: AgentServerOptions = {}): Promi
     tools: toolDefs,
     budget: config.budget,
     ownerName: config.ownerName,
+    // 环境变量里的模型默认值（bug_epxdph16hjut）：设置页只在没建供应商时拿它兜底
+    envDefaults: {
+      ...(config.baseURL ? { baseURL: config.baseURL } : {}),
+      ...(config.apiKey ? { apiKey: config.apiKey } : {}),
+    },
   };
 
   const server = createServer((request, response) => {

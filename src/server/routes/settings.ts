@@ -28,8 +28,8 @@ export async function handleModelSettingsRoute(
 
   if (method === 'GET' && url.pathname === '/api/settings/model') {
     const stored = await store.load({
-      baseURL: (context.runtime as any).deps?.baseURL,
-      apiKey: (context.runtime as any).deps?.apiKey,
+      baseURL: context.envDefaults?.baseURL,
+      apiKey: context.envDefaults?.apiKey,
       model: context.model,
       thinkingEnabled: true,
       thinkingLevel: 'medium',
@@ -171,8 +171,8 @@ export async function handleModelSettingsRoute(
             temperature,
           },
           {
-            baseURL: (context.runtime as any).deps?.baseURL,
-            apiKey: (context.runtime as any).deps?.apiKey,
+            baseURL: context.envDefaults?.baseURL,
+            apiKey: context.envDefaults?.apiKey,
             model: context.model,
             thinkingEnabled: true,
             thinkingLevel: 'medium',

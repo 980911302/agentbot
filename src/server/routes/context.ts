@@ -11,6 +11,13 @@ export interface RouteContext {
   tools: Array<{ name: string; description: string }>;
   budget: AppConfig['budget'];
   ownerName: string;
+  /**
+   * 启动时从环境变量解析出的模型默认值（bug_epxdph16hjut）。
+   *
+   * 只在 .env / 环境变量配 Key、没在设置页建供应商时，设置页要靠它如实显示
+   * 「已配置」，保存时也要靠它沿用环境 Key，不能把运行时 Provider 换成空 Key。
+   */
+  envDefaults?: { baseURL?: string; apiKey?: string };
 }
 
 export function readString(value: unknown): string | undefined {

@@ -77,7 +77,7 @@ npm run dev -- "读一下 package.json"   # 命令行单次对话
 | `/api/health` | GET：服务状态、模型、工具目录、预算、主人名 |
 | `/api/events` | GET：SSE 订阅，`?after=<seq>` 补发；先发 `ready {latestSeq, resync}` |
 | `/api/chat/state` | GET：`?channels=a,b` 取频道快照（消息、运行、待答卡、智能体控制状态） |
-| `/api/settings/model` | GET：模型配置（Key 打码）；POST：保存/新增/切换供应商与模型并热更新 |
+| `/api/settings/model` | GET：模型配置（Key 打码）；POST：保存/新增/切换供应商与模型并热更新。只在 `.env`/环境变量配了 Key 时，这里如实显示「已配置」；保存时没填 Key 就沿用环境里的 Key，不会把运行时换成空 Key |
 | `/api/settings/model/test` | POST：测试模型连接。改了 `baseURL` 就必须同时传新的 `apiKey`，否则 400——已保存的 Key 只会发往它所属供应商的地址 |
 | `/api/agents`、`/api/bots` | GET/POST：列出/创建同事（bots 为前端兼容视图） |
 | `/api/agents/:id` | GET/PATCH/DELETE：详情/修改/删除 |
