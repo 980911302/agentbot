@@ -10,3 +10,5 @@ desktop/release/
 .commandcode/
 *.tmp
 test-results/
+.agentbot-backups/
+.superpowers/
