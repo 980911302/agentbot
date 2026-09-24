@@ -29,6 +29,7 @@ npm run dev -- "读一下 package.json"   # 命令行单次对话
 | 命令 | 实际范围 |
 | --- | --- |
 | `npm test` | 根目录 `test/*.test.ts`，node:test + tsx，全部使用临时目录和假模型 |
+| `node --import tsx test/fixtures/ui-preview.ts` | 手动 UI 验收预览（先 `npm run web:build`）：临时数据 + 假模型一次造出 9 类界面场景，启动后打印 URL 与场景频道 id，Ctrl-C 清理 |
 | `npm run typecheck` | 后端 `tsc --noEmit` + 前端 `tsc --noEmit` |
 | `npm run build` | 先清 `dist/` 再编译后端 |
 | `npm run web:build` | 前端类型检查 + Vite 打包到 `web/dist/` |
