@@ -16,7 +16,8 @@ export interface ModalProps {
  * 统一弹窗（UI 设计规范 5.11）：Esc 关闭（多弹窗只关最上层）、
  * Tab 焦点陷阱、打开聚焦首个控件、关闭还原焦点。
  * 最大高度 min(720px, 100vh - 64px)，主体滚动，操作条吸底任何窗口高度可见；
- * <768px 由媒体查询全屏（见 09-ui.css）。
+ * <768px 全屏（贴边满窗、去圆角）的规则在 09-ui.css 的
+ * `@media (max-width: 768px)` 段，与旧 `.scrim`/`.dialog` 路径同一套。
  */
 export function Modal({ open, onClose, title, size = 'm', children, actions }: ModalProps) {
   const dialogRef = useModalKeys({ open, onClose, id: `ui-modal-${title}` });
