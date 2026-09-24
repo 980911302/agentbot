@@ -182,6 +182,11 @@ export default function App() {
           return true;
         });
       }
+      // ⌘K / Ctrl+K：聚焦侧栏搜索（UI-03）。Shift 版留给浏览器/输入法，不抢。
+      if ((event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        window.dispatchEvent(new CustomEvent('agentbot:focus-search'));
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);

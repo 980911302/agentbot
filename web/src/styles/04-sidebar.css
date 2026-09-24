@@ -140,6 +140,57 @@ z-index: var(--z-sidebar)
   gap: 3px;
 }
 
+/* ── 分段：「同事」/「群」可折叠（UI-03） ───────────────────────── */
+.sidebar-section {
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar-section-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  width: 100%;
+  padding: var(--sp-2) var(--sp-2) var(--sp-1);
+  border-radius: var(--r-sm);
+  color: var(--text-tertiary);
+  text-align: left;
+}
+
+.sidebar-section-head:hover {
+  color: var(--text-secondary);
+  background: var(--bg-hover);
+}
+
+.sidebar-section-chevron {
+  flex: none;
+  color: var(--text-tertiary);
+  transition: transform var(--dur-fast) var(--ease);
+}
+
+.sidebar-section-chevron.open {
+  transform: rotate(90deg);
+}
+
+.sidebar-section-title {
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+}
+
+.sidebar-section-count {
+  margin-left: auto;
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-tertiary);
+}
+
+.sidebar-section-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
 .sidebar-empty {
   display: flex;
   flex-direction: column;
@@ -171,7 +222,7 @@ z-index: var(--z-sidebar)
   display: flex;
   align-items: center;
   gap: 10px;
-  min-height: 56px;
+  min-height: 60px;
   padding: 8px 10px;
   border-radius: 12px;
   border: 1px solid transparent;
@@ -190,6 +241,43 @@ z-index: var(--z-sidebar)
   background: var(--bg-active) !important;
   border-color: transparent !important;
   box-shadow: none;
+}
+
+/* 键盘游标高亮（⌘K 搜索结果里上下键移动）；与 active 同时出现时以选中态为准 */
+.channel-item.cursor:not(.active) {
+  background: var(--bg-hover);
+  border-color: var(--border);
+}
+
+/* ── 状态点（UI-03）：忙碌 / 暂停 / 失败来信 / 待处理来信 ────────── */
+.channel-status-dot {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid var(--bg-sidebar);
+  box-sizing: content-box;
+}
+
+.channel-status-dot.busy {
+  background: var(--info);
+  animation: pulse 1.15s var(--ease) infinite;
+}
+
+.channel-status-dot.paused {
+  background: var(--warn);
+}
+
+.channel-status-dot.failed {
+  background: var(--danger);
+}
+
+.channel-status-dot.pending {
+  background: var(--bg-sidebar);
+  border: 2px solid var(--warn);
+  box-sizing: border-box;
 }
 
 .channel-blue-dot,
@@ -230,8 +318,8 @@ z-index: var(--z-sidebar)
 }
 
 .channel-title {
-  font-size: 13.5px;
-  font-weight: 550;
+  font-size: 14px;
+  font-weight: 600;
   color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -356,9 +444,9 @@ z-index: var(--z-panel);
 
 /* ── Mini (Collapsed) Sidebar Styles (Matching Image 3) ──── */
 .app-sidebar.mini {
-  width: 70px !important;
-  min-width: 70px !important;
-  max-width: 70px !important;
+  width: 72px !important;
+  min-width: 72px !important;
+  max-width: 72px !important;
 }
 
 .app-sidebar.mini .sidebar-window-header {

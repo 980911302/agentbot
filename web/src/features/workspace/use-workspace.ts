@@ -16,6 +16,9 @@ export function useWorkspace(deps: {
   const [roomMemberLimit, setRoomMemberLimit] = useState(6);
   const [channels, setChannels] = useState<ChannelItem[]>([]);
   const [unread, setUnread] = useState<Record<string, number>>({});
+  /** 智能体控制/来信快照（UI-03 状态点）：暂停、待处理、失败 */
+  const [agentFlags, setAgentFlags] = useState<Record<string, { paused: boolean; pendingMail: number; failedMail: number }>>({});
+  const agentFlagsRef = useRef(agentFlags);
   const seenRoomsRef = useRef<Map<string, number>>(new Map());
   const activeChannelIdRef = useRef('');
   const agentsRef = useRef<BotSummary[]>([]);
@@ -126,9 +129,52 @@ export function useWorkspace(deps: {
   }, []);
 
   const sidebarChannels = useMemo(
-    () => channels.map((item) => ({ ...item, unread: unread[item.id] ?? 0 })),
-    [channels, unread],
+    () =>
+      channels.map((item) => ({
+        ...item,
+        unread: unread[item.id] ?? 0,
+        ...(item.kind === 'agent' ? (agentFlags[item.id] ?? {}) : {}),
+      })),
+    [channels, unread, agentFlags],
   );
+
+  useEffect(() => {
+    agentFlagsRef.current = agentFlags;
+  }, [agentFlags]);
+
+  // 状态点数据源：控制视图与来信队列（UI-03）。失败不打扰主流程，下个周期再试。
+  useEffect(() => {
+    let disposed = false;
+    const poll = async () => {
+      const list = agentsRef.current.filter((bot) => !bot.hidden);
+      const flags: Record<string, { paused: boolean; pendingMail: number; failedMail: number }> = {};
+      await Promise.all(
+        list.map(async (bot) => {
+          try {
+            const [control, inbox] = await Promise.all([
+              api.fetchAgentControl(bot.id),
+              api.fetchAgentInbox(bot.id),
+            ]);
+            flags[bot.id] = {
+              paused: control.autoActivation === 'paused',
+              pendingMail: inbox.pending,
+              failedMail: inbox.failed,
+            };
+          } catch {
+            // 单个智能体拉取失败：保持上次已知状态，不清点
+            flags[bot.id] = agentFlagsRef.current[bot.id] ?? { paused: false, pendingMail: 0, failedMail: 0 };
+          }
+        }),
+      );
+      if (!disposed) setAgentFlags(flags);
+    };
+    void poll();
+    const timer = window.setInterval(() => void poll(), 15000);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, []);
 
   return {
     backendAgents,

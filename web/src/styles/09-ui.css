@@ -120,7 +120,20 @@
 }
 
 /* ── Menu：下拉菜单（键盘上下、Esc） ──────────────────────────────── */
+.ui-menu-root {
+  z-index: var(--z-dropdown);
+}
+
+/* 右键菜单承载层：固定到点击处，Menu 的弹层再相对它定位 */
+.ui-context-layer {
+  position: fixed;
+  z-index: var(--z-dropdown);
+}
+
 .ui-menu {
+  position: absolute;
+  top: 0;
+  left: 0;
   min-width: 180px;
   padding: var(--sp-2);
   border: 1px solid var(--border-strong);
@@ -128,6 +141,33 @@
   background: var(--bg-elevated);
   box-shadow: var(--shadow-md);
   animation: pop var(--dur-fast) var(--ease);
+}
+
+.ui-menu-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+}
+
+.ui-menu-head-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-base);
+  font-weight: 550;
+  color: var(--text);
+}
+
+.ui-menu-head-kind {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: var(--r-full);
+  border: 1px solid var(--border);
+  font-size: var(--fs-xs);
+  color: var(--text-tertiary);
 }
 
 .ui-menu-item {

@@ -171,6 +171,35 @@ export async function fetchSecretNames(): Promise<string[]> {
   return data.names;
 }
 
+// ── 智能体状态（侧栏状态点：暂停 / 来信）─────────────────
+
+/** 控制面视图（GET /api/agents/:id/control） */
+export interface AgentControlView {
+  agentId: string;
+  autoActivation: 'enabled' | 'paused';
+  generation: number;
+  lastStopId?: string;
+  held: number;
+  faulted: boolean;
+}
+
+/** 来信积压（GET /api/agents/:id/inbox）：待处理条数 + 失败条数 */
+export interface AgentInboxView {
+  pending: number;
+  failed: number;
+}
+
+export async function fetchAgentControl(agentId: string): Promise<AgentControlView> {
+  return request(`/api/agents/${encodeURIComponent(agentId)}/control`);
+}
+
+export async function fetchAgentInbox(agentId: string): Promise<AgentInboxView> {
+  const data = await request<{ items: unknown[]; failed: number }>(
+    `/api/agents/${encodeURIComponent(agentId)}/inbox`,
+  );
+  return { pending: data.items.length, failed: data.failed };
+}
+
 // ── 房间（群） ─────────────────────────────────────────
 
 export async function fetchRooms(): Promise<{ rooms: RoomView[]; memberLimit: number }> {
