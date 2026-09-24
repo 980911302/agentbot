@@ -28,7 +28,7 @@ export async function handleBotsCollection(
 
   if (method === 'POST') {
     const body = await readJson(request);
-    const record = await runtime.registry.create({
+    const record = await runtime.createAgent({
       name: readString(body.name),
       title: readString(body.title),
       instructions: readString(body.instructions) ?? readString(body.role),

@@ -27,6 +27,8 @@ export interface WorkbenchDeps {
   postToRoom: (roomId: string, text: string, excludeAgentIds: string[], depth?: number, signal?: AbortSignal, callerId?: string) => Promise<PostToRoomResult>;
   /** 主人在群里的显示名 */
   ownerName: string;
+  /** 由运行时注入：给新建智能体登记 enabled 控制条目，避免重启后被当成旧智能体暂停 */
+  enrollAgent?: (agentId: string) => Promise<void>;
 }
 
 /**
@@ -71,7 +73,7 @@ export class Workbench {
     }
 
     if (input.resourceId) {
-      return this.deps.registry.createIfAbsent(input.resourceId, {
+      const absent = await this.deps.registry.createIfAbsent(input.resourceId, {
         name,
         title: input.title,
         description: input.description,
@@ -80,9 +82,11 @@ export class Workbench {
         avatar: input.avatar,
         section: input.section,
       });
+      await this.deps.enrollAgent?.(absent.id);
+      return absent;
     }
 
-    return this.deps.registry.create({
+    const created = await this.deps.registry.create({
       name,
       title: input.title,
       description: input.description,
@@ -91,6 +95,8 @@ export class Workbench {
       avatar: input.avatar,
       section: input.section,
     });
+    await this.deps.enrollAgent?.(created.id);
+    return created;
   }
 
   /**

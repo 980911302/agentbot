@@ -255,6 +255,8 @@ export class AgentRuntime {
       rooms: this.rooms,
       messages: this.messages,
       ownerName: options.ownerName ?? DEFAULT_OWNER_NAME,
+      // 新建同事务必登记 enabled，否则重启后会被迁移逻辑当成旧智能体暂停
+      enrollAgent: (agentId) => this.enrollAgent(agentId),
       postToRoom: async (roomId, text, excludeAgentIds, agentChainDepth, signal, callerId) => {
         if (!callerId) throw new Error('代群发言缺少真实发送者');
         const summary = await this.roomDispatcher.enqueueMessage(roomId, text, { excludeAgentIds, agentChainDepth, signal,
@@ -430,11 +432,36 @@ export class AgentRuntime {
 
   // ── 智能体 ──────────────────────────────────────────
 
+  /**
+   * 新建智能体时登记 enabled 控制条目（bug_trhd1ffe8580）。
+   *
+   * 没有条目的话，重启时迁移逻辑会把它当成「升级前的旧智能体」打上 paused，
+   * 于是新建的同事一重启就在群里静默。创建时写 entry，就不必依赖迁移兜底。
+   */
+  async enrollAgent(agentId: string): Promise<void> {
+    await this.control.transact((draft) => {
+      if (draft.agents[agentId]) return 'skip';
+      draft.agents[agentId] = {
+        agentId,
+        generation: 0,
+        autoActivation: 'enabled',
+        revision: 0,
+      };
+    }).catch(() => undefined);
+  }
+
+  /** 建同事：登记 + 立刻给 enabled 控制条目 */
+  async createAgent(input: Parameters<AgentRegistry['create']>[0]): Promise<AgentRecord> {
+    const record = await this.registry.create(input);
+    await this.enrollAgent(record.id);
+    return record;
+  }
+
   async ensureDefaultAgent(): Promise<AgentRecord> {
     const list = await this.registry.list();
     for (const seed of this.options.seed ?? []) {
       if (list.some((item) => item.name === seed.name)) continue;
-      await this.registry.create(seed);
+      await this.createAgent(seed);
     }
 
     await this.registry.syncDefaultTools();
@@ -442,7 +469,7 @@ export class AgentRuntime {
 
     const refreshed = await this.registry.list();
     const preferred = this.options.seed?.[this.options.seed.length - 1]?.name;
-    return refreshed.find((item) => item.name === preferred) ?? refreshed[0] ?? (await this.registry.create({ name: '通用助手' }));
+    return refreshed.find((item) => item.name === preferred) ?? refreshed[0] ?? (await this.createAgent({ name: '通用助手' }));
   }
 
   /** 预置房间；成员名解析不到就跳过 */
@@ -879,6 +906,13 @@ export class AgentRuntime {
    *   1) 上次进程留下、没有结果的工具调用 → 标 unknown 并给出核对计划（不自动重放）；
    *   2) 上次进程领走却没确认的来信 → 一律作废重投（重启不重置尝试预算）；
    *   3) 有待处理来信的同事 → 立刻排一次消费，重启后接着办。
+   */
+  /**
+   * 升级前的旧智能体补 paused 控制条目（bug_trhd1ffe8580）。
+   *
+   * 判据是「注册表里有、控制存储里没有条目」——这只可能是控制存储建立之前的
+   * 旧智能体，按设计进待确认。新建的同事务必走 createAgent / workbench.createAgent
+   * 登记 enabled，所以不会落进这条路径。
    */
   async migrateExistingAgents(): Promise<void> {
     const agents = await this.registry.list();
