@@ -71,6 +71,41 @@ const emptySnapshot = (processEpoch: string): ControlSnapshot => ({
 export interface RuntimeControlStoreOptions {
   softLimitBytes?: number;
   processEpoch?: string;
+  /** 已终结票据的保留条数；超过就裁掉最旧的（bug_duderhc68jjw）。0 表示不保留 */
+  ticketRetention?: number;
+  /** 快照接近软上限时的告警回调；不传则静默 */
+  onNearLimit?: (bytes: number, limitBytes: number) => void;
+}
+
+/** 默认保留最近 2000 条已终结票据：够排查近期的执行，又不会让文件无限增长 */
+const DEFAULT_TICKET_RETENTION = 2000;
+
+/** 快照用到软上限的这个比例就开始告警（真撞上去时写入已被拒绝，来不及处理） */
+const SOFT_LIMIT_WARN_RATIO = 0.8;
+
+/**
+ * 裁掉最旧的已终结票据。
+ *
+ * 只在 admitted/running 的票据占用执行位、需要被 tryActivate 与 assertCurrent
+ * 查到；settled/revoked 的票据已经终结，除了事后排查没有读者。此前它们一条不删，
+ * 每次 transact 又全量克隆 + 序列化 + 整文件写，文件随消息数线性增长，最终撞到
+ * 48MB 软上限后 transact 直接抛 PAYLOAD_LIMIT，同事之间的投递就此失败。
+ *
+ * 只删「超出保留数量」的最旧终结票：仍在飞的票据、刚结束的票据都不动。
+ */
+function pruneFinishedTickets(snapshot: ControlSnapshot, retention: number): void {
+  if (retention < 0) return;
+  const finished: ActivationTicket[] = [];
+  for (const ticket of Object.values(snapshot.tickets)) {
+    if (ticket.state === 'settled' || ticket.state === 'revoked') finished.push(ticket);
+  }
+  if (finished.length <= retention) return;
+  // 按受理序号排序，序号越小越旧；缺序号的老数据排在最前（最早该被裁）
+  finished.sort((left, right) => (left.admittedSeq ?? 0) - (right.admittedSeq ?? 0));
+  const drop = finished.length - retention;
+  for (let index = 0; index < drop; index += 1) {
+    delete snapshot.tickets[finished[index]!.ticketId];
+  }
 }
 
 export class RuntimeControlStore {
@@ -80,6 +115,8 @@ export class RuntimeControlStore {
   private queue: Promise<unknown> = Promise.resolve();
   private readonly file: string;
   private readonly softLimitBytes: number;
+  private readonly ticketRetention: number;
+  private readonly onNearLimit?: (bytes: number, limitBytes: number) => void;
 
   private constructor(input: {
     file: string;
@@ -87,18 +124,24 @@ export class RuntimeControlStore {
     faulted: boolean;
     softLimitBytes: number;
     currentProcessEpoch: string;
+    ticketRetention: number;
+    onNearLimit?: (bytes: number, limitBytes: number) => void;
   }) {
     this.file = input.file;
     this.state = input.state;
     this.faulted = input.faulted;
     this.softLimitBytes = input.softLimitBytes;
     this.currentProcessEpoch = input.currentProcessEpoch;
+    this.ticketRetention = input.ticketRetention;
+    this.onNearLimit = input.onNearLimit;
   }
 
   static openSync(dataDir: string, options: RuntimeControlStoreOptions = {}): RuntimeControlStore {
     const file = join(dataDir, 'control', 'state.json');
     const currentProcessEpoch = options.processEpoch ?? randomUUID();
     const softLimitBytes = options.softLimitBytes ?? DEFAULT_SOFT_LIMIT_BYTES;
+    const ticketRetention = options.ticketRetention ?? DEFAULT_TICKET_RETENTION;
+    const onNearLimit = options.onNearLimit;
     if (!existsSync(file)) {
       return new RuntimeControlStore({
         file,
@@ -106,6 +149,8 @@ export class RuntimeControlStore {
         faulted: false,
         softLimitBytes,
         currentProcessEpoch,
+        ticketRetention,
+        onNearLimit,
       });
     }
     try {
@@ -116,7 +161,7 @@ export class RuntimeControlStore {
         if (ticket.state === 'admitted' || ticket.state === 'running') ticket.state = 'revoked';
       }
       state.processEpoch = currentProcessEpoch;
-      return new RuntimeControlStore({ file, state, faulted: false, softLimitBytes, currentProcessEpoch });
+      return new RuntimeControlStore({ file, state, faulted: false, softLimitBytes, currentProcessEpoch, ticketRetention, onNearLimit });
     } catch {
       return new RuntimeControlStore({
         file,
@@ -124,6 +169,8 @@ export class RuntimeControlStore {
         faulted: true,
         softLimitBytes,
         currentProcessEpoch,
+        ticketRetention,
+        onNearLimit,
       });
     }
   }
@@ -132,6 +179,8 @@ export class RuntimeControlStore {
     const file = join(dataDir, 'control', 'state.json');
     const currentProcessEpoch = options.processEpoch ?? randomUUID();
     const softLimitBytes = options.softLimitBytes ?? DEFAULT_SOFT_LIMIT_BYTES;
+    const ticketRetention = options.ticketRetention ?? DEFAULT_TICKET_RETENTION;
+    const onNearLimit = options.onNearLimit;
     try {
       const raw = await readFile(file, 'utf8');
       const parsed = JSON.parse(raw) as ControlSnapshot;
@@ -143,7 +192,7 @@ export class RuntimeControlStore {
         if (ticket.state === 'admitted' || ticket.state === 'running') ticket.state = 'revoked';
       }
       state.processEpoch = currentProcessEpoch;
-      return new RuntimeControlStore({ file, state, faulted: false, softLimitBytes, currentProcessEpoch });
+      return new RuntimeControlStore({ file, state, faulted: false, softLimitBytes, currentProcessEpoch, ticketRetention, onNearLimit });
     } catch (error) {
       if (isMissingFile(error)) {
         return new RuntimeControlStore({
@@ -152,6 +201,7 @@ export class RuntimeControlStore {
           faulted: false,
           softLimitBytes,
           currentProcessEpoch,
+          ticketRetention,          onNearLimit
         });
       }
       return new RuntimeControlStore({
@@ -160,6 +210,8 @@ export class RuntimeControlStore {
         faulted: true,
         softLimitBytes,
         currentProcessEpoch,
+        ticketRetention,
+        onNearLimit,
       });
     }
   }
@@ -168,8 +220,39 @@ export class RuntimeControlStore {
     return structuredClone(this.state);
   }
 
+  /**
+   * 按 id 读单条票据（bug_duderhc68jjw）。
+   *
+   * snapshot() 会全量 structuredClone，而 assertCurrent 这类校验在工具执行前
+   * 每次都要跑；票据越多，一次开关副作用的成本越高。这里只克隆拿到的那一条。
+   */
+  ticket(ticketId: string): ActivationTicket | undefined {
+    const found = this.state.tickets[ticketId];
+    return found ? structuredClone(found) : undefined;
+  }
+
+  /** 按 id 读单个智能体的控制条目（同样是热路径单条读取） */
+  agentControl(agentId: string): AgentControl | undefined {
+    const found = this.state.agents[agentId];
+    return found ? structuredClone(found) : undefined;
+  }
+
   allowsAutomaticExecution(): boolean {
     return !this.faulted;
+  }
+
+  /** 当前快照的字节数（用于观测增长，不触发写入） */
+  approximateBytes(): number {
+    return Buffer.byteLength(JSON.stringify(this.state), 'utf8');
+  }
+
+  /** 已终结票据的当前条数 */
+  finishedTicketCount(): number {
+    let count = 0;
+    for (const ticket of Object.values(this.state.tickets)) {
+      if (ticket.state === 'settled' || ticket.state === 'revoked') count += 1;
+    }
+    return count;
   }
 
   async transact(
@@ -183,8 +266,14 @@ export class RuntimeControlStore {
       draft.controlSeq += 1;
       draft.schemaVersion = CONTROL_SCHEMA_VERSION;
       draft.processEpoch = this.currentProcessEpoch;
+      pruneFinishedTickets(draft, this.ticketRetention);
       const encoded = JSON.stringify(draft);
-      if (!opts.allowOverLimit && Buffer.byteLength(encoded, 'utf8') > this.softLimitBytes) {
+      const bytes = Buffer.byteLength(encoded, 'utf8');
+      // 快到软上限前先告警：真撞上去时 transact 会直接拒绝，投递就失败了（bug_duderhc68jjw）
+      if (bytes >= this.softLimitBytes * SOFT_LIMIT_WARN_RATIO) {
+        this.onNearLimit?.(bytes, this.softLimitBytes);
+      }
+      if (!opts.allowOverLimit && bytes > this.softLimitBytes) {
         throw new ControlError('控制快照已接近容量上限，拒绝新增 payload', 'PAYLOAD_LIMIT');
       }
       await writeJsonAtomic(this.file, draft, { mode: 0o600 });

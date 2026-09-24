@@ -278,18 +278,19 @@ export class ActivationCoordinator {
   }
 
   ticketOf(ticketId: string) {
-    return this.store.snapshot().tickets[ticketId];
+    return this.store.ticket(ticketId);
   }
 
   assertCurrent(ticket: ActivationTicket): void {
     if (ticket.processEpoch !== this.processEpoch) {
       throw new ControlError('票据属于旧进程，不能继续执行', 'STALE_ACTIVATION');
     }
-    const live = this.store.snapshot().tickets[ticket.ticketId];
+    // 只读单条：这个方法在每次副作用执行前都会跑，不能每次都全量克隆状态
+    const live = this.store.ticket(ticket.ticketId);
     if (!live || (live.state !== 'admitted' && live.state !== 'running')) {
       throw new ControlError('票据已失效', 'STALE_ACTIVATION');
     }
-    const agent = this.store.snapshot().agents[ticket.agentId];
+    const agent = this.store.agentControl(ticket.agentId);
     if (agent && agent.generation !== ticket.generation) {
       throw new ControlError('停止代次已更新', 'STALE_ACTIVATION');
     }

@@ -172,7 +172,15 @@ export class AgentRuntime {
     this.chatRuns = new ChatRunCoordinator(options.dataDir, this.events);
     this.ledger = new JsonRunLedger(options.dataDir);
     this.registry = new AgentRegistry(options.dataDir, []);
-    this.control = RuntimeControlStore.openSync(options.dataDir);
+    this.control = RuntimeControlStore.openSync(options.dataDir, {
+      // 接近软上限时告警：真撞上去 transact 会直接拒绝，同事之间的投递就失败了
+      onNearLimit: (bytes, limit) => {
+        console.warn(
+          `控制存储已达 ${(bytes / 1024).toFixed(0)}KiB／上限 ${(limit / 1024).toFixed(0)}KiB：`
+          + '已终结票据超量时会拒绝新写入，请减小 ticketRetention 或清理历史数据',
+        );
+      },
+    });
     this.activation = new ActivationCoordinator(this.control, {
       processEpoch: this.control.currentProcessEpoch,
       exists: async (agentId) => Boolean(await this.registry.get(agentId)),

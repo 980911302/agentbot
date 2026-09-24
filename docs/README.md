@@ -129,7 +129,7 @@ npm run dev -- "读一下 package.json"   # 命令行单次对话
 | `inbox/*.json` | 同事来信与排队群回合（领取/期限/尝试次数/检查点/held） |
 | `correspondence/accepted.jsonl` | 已受理来信的往来档案 |
 | `chat/runs.json` | 聊天运行账本（重启时把未结束的运行标为中断） |
-| `control/state.json` | 执行控制：许可、票据、停止、投递回执、副作用 |
+| `control/state.json` | 执行控制：许可、票据、停止、投递回执、副作用。已终结的票据只保留最近若干条（默认 2000，`ticketRetention` 可调），文件不会随消息数无限增长；接近 48MB 软上限约 80% 时开始告警 |
 | `runs/ledger.json` | 回合与任务树账本 |
 | `received/index.json` | clientMessageId 幂等索引 |
 | `tools/invocations.json`、`tools/outputs/` | 工具执行账本、落盘的工具原文 |
