@@ -25,6 +25,8 @@ export interface Room {
   memberJoinedAt?: Record<string, number>;
   createdAt: number;
   updatedAt: number;
+  mode?: import('../shared/contracts/room-flow.js').RoomMode;
+  activeFlowId?: string;
 }
 
 export type RoomSenderKind = 'user' | 'agent' | 'system';
@@ -74,6 +76,7 @@ export type RoomEvent =
   | { type: 'room_message'; message: RoomMessage }
   | { type: 'round_start'; roundId: string; agentId: string; agentName: string }
   | { type: 'round_end'; outcome: RoundOutcome }
-  | { type: 'fanout_done'; roundId: string; spoke: number; silent: number };
+  | { type: 'fanout_done'; roundId: string; spoke: number; silent: number }
+  | { type: 'flow_updated'; flow: import('../shared/contracts/room-flow.js').RoomFlowView };
 
 export type RoomEventHandler = (event: RoomEvent) => void;

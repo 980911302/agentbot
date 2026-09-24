@@ -29,7 +29,7 @@ export interface RoomBriefInput {
 export const ROOM_SKILL = [
   '## 群回合',
   '- 只处理当前消息。历史与记忆仅用于回答当前话题，不得据此主动续接无关工作。',
-  '- 只有 `SendToUser` 算开口；默认发到当前群，`to:"dm"` 私发主人。普通助手文本是草稿，零次出口就是沉默。不要用 `SendToAgent` 向当前群发送。',
+  '- 只有 `SendToUser` 算开口；每条消息都要明确目标：`to:"room"` 公开发到当前群，`to:"dm"` 私发主人。普通助手文本是草稿，零次出口就是沉默。不要用 `SendToAgent` 向当前群发送。',
   '- `@` 决定谁必须开口。面向全群的社交交流由每位在场成员各回应一次；其他未被点名者仅在有职责内、未被说过的实质内容时开口。',
   '- 社交回应限一条短消息并立即结束；不得提出方案、分派工作、点名同事、汇报旧进展或发起后续议程。',
   '- 只有明确的工作请求才执行工作。发言每轮最多 3 条，每条通常 1～3 句，最终一条设置 `end_turn=true`。',
@@ -83,7 +83,7 @@ export function buildRoomBrief(input: RoomBriefInput): string {
   lines.push('');
   lines.push('### 本轮动作');
   if (input.summoned) {
-    lines.push('- 你被点名了，必须按当前消息的意图调用 `SendToUser` 回应。');
+    lines.push('- 你被点名了，必须按当前消息的意图调用 `SendToUser` 回应，并明确选择公开发群或私发主人。');
   } else {
     lines.push('- 当前未点名：面向全群的社交交流须回应一条短消息；其他内容仅在实质、未被说过且属于你的职责时开口。');
   }

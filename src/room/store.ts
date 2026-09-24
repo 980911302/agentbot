@@ -113,6 +113,17 @@ export class RoomStore {
     return room;
   }
 
+  async setMode(roomId: string, mode: import('../shared/contracts/room-flow.js').RoomMode, activeFlowId?: string): Promise<Room> {
+    await this.load();
+    const room = this.doc.rooms.find((item) => item.id === roomId);
+    if (!room) throw new RoomError('房间不存在');
+    room.mode = mode;
+    room.activeFlowId = activeFlowId;
+    room.updatedAt = Date.now();
+    await this.save();
+    return cloneRoom(room);
+  }
+
   async remove(roomId: string): Promise<boolean> {
     await this.load();
     const before = this.doc.rooms.length;

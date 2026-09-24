@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Room } from '../../room/types.js';
 import { ROOM_MEMBER_LIMIT } from '../../room/types.js';
 import { json, readJson } from '../transport/index.js';
+import { toRoomFlowView } from '../presenters.js';
 import { messageOf, readString, readStringArray, type RouteContext } from './context.js';
 
 async function roomView(runtime: RouteContext['runtime'], room: Room) {
@@ -127,6 +128,43 @@ export async function handleRoomRoute(
     });
     json(response, 202, accepted.receipt);
     void accepted.execute().catch(() => undefined);
+    return;
+  }
+
+  if (rest === '/flow' && method === 'GET') {
+    const flow = await runtime.getActiveRoomFlow(roomId);
+    if (!flow) {
+      json(response, 200, { flow: null });
+      return;
+    }
+    json(response, 200, { flow: toRoomFlowView(flow) });
+    return;
+  }
+
+  if (rest === '/flow/control' && method === 'POST') {
+    const body = await readJson(request);
+    const action = readString(body.action);
+    const flow = await runtime.getActiveRoomFlow(roomId);
+    if (!flow) {
+      json(response, 404, { error: '当前房间无活动受控流程' });
+      return;
+    }
+    if (action === 'pause') {
+      const updated = await runtime.pauseRoomFlow(flow.id, readString(body.reason));
+      json(response, 200, { flow: toRoomFlowView(updated) });
+      return;
+    }
+    if (action === 'resume') {
+      const updated = await runtime.resumeRoomFlow(flow.id);
+      json(response, 200, { flow: toRoomFlowView(updated) });
+      return;
+    }
+    if (action === 'cancel') {
+      const updated = await runtime.cancelRoomFlow(flow.id, readString(body.reason));
+      json(response, 200, { flow: toRoomFlowView(updated) });
+      return;
+    }
+    json(response, 400, { error: `不支持的控制动作：${action}` });
     return;
   }
 

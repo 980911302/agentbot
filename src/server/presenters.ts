@@ -64,6 +64,17 @@ export function toCorrespondenceView(transfer: Correspondence): DisplayMessageVi
 }
 
 /**
+ * 私聊界面的读模型。
+ *
+ * 群消息会写入每位成员的 MessageStore，供该智能体后续理解群上下文；它们不是
+ * 主人与该智能体的私聊消息，不能因为共用一份内部存储就被投影到私聊时间线。
+ * 同时检查 roomId 与 source，兼容只写入其中一个来源字段的旧数据。
+ */
+export function privateConversationMessages(raw: Message[]): Message[] {
+  return raw.filter((message) => !message.roomId && message.source !== 'room');
+}
+
+/**
  * 把存下来的消息折成界面用的形状。
  * 一次工具调用 + 它的结果是两条消息，这里合并回一张卡片。
  */
@@ -155,4 +166,24 @@ export function collectArtifacts(raw: Message[]): ArtifactChip[] {
     });
   }
   return [...seen.values()];
+}
+import type { RoomFlow, RoomFlowView } from '../shared/contracts/room-flow.js';
+export type { RoomFlowView };
+
+
+export function toRoomFlowView(flow: import('../shared/contracts/room-flow.js').RoomFlow): RoomFlowView {
+  return {
+    id: flow.id,
+    roomId: flow.roomId,
+    coordinatorId: flow.coordinatorId,
+    protocol: flow.protocol,
+    status: flow.status,
+    phase: flow.phase,
+    version: flow.version,
+    currentActors: flow.currentActors,
+    transitionCount: flow.transitionCount,
+    maxTransitions: flow.maxTransitions,
+    createdAt: flow.createdAt,
+    updatedAt: flow.updatedAt,
+  };
 }
