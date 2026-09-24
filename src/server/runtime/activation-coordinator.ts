@@ -29,6 +29,17 @@ export interface UserCommand {
   text: string;
 }
 
+/** 用户新的群发言（§6.2）：一条命令、多个受众，共用同一条新链 */
+export interface RoomCommand {
+  commandId: string;
+  agentIds: string[];
+}
+
+export interface AcceptedRoomCommand {
+  chainId: string;
+  grantIds: string[];
+}
+
 export class ActivationCoordinator {
   readonly processEpoch: string;
   constructor(
@@ -91,6 +102,63 @@ export class ActivationCoordinator {
       };
     });
     if (!accepted) throw new ControlError('受理用户命令失败', 'ACCEPT_FAILED');
+    return accepted;
+  }
+
+  /**
+   * 用户新的群发言（docs/执行控制与可靠投递修复设计.md §6.2）。
+   *
+   * 群发言是一条命令、多个受众：建一条新链，给每个受众各签发一个覆盖该链的
+   * 命令范围许可。被停止过的成员凭这个许可参与本轮，而停止前积压的旧链来信
+   * 仍然 held——许可只认 chainId，不会把旧链洗成新任务。
+   *
+   * 许可必须逐成员签发：grantCovers 要求 grant.agentId 与主体一致，
+   * 甲链条上的许可不会顺带激活乙。
+   */
+  async acceptRoomInput(input: RoomCommand): Promise<AcceptedRoomCommand> {
+    if (input.agentIds.length === 0) throw new ControlError('群命令没有受众', 'EMPTY_AUDIENCE');
+    let accepted: AcceptedRoomCommand | undefined;
+    await this.store.transact((draft) => {
+      const existing = draft.commands[input.commandId];
+      if (existing?.kind === 'user' && existing.chainId) {
+        accepted = { chainId: existing.chainId, grantIds: [existing.grantId ?? ''] };
+        return 'skip';
+      }
+      const committedSeq = draft.controlSeq + 1;
+      const chainId = randomUUID();
+      draft.chains[chainId] = { chainId, rootCreatedSeq: committedSeq };
+      const grantIds: string[] = [];
+      for (const agentId of input.agentIds) {
+        const agent = draft.agents[agentId] ?? {
+          agentId,
+          generation: 0,
+          autoActivation: 'enabled' as const,
+          revision: 0,
+        };
+        draft.agents[agentId] = agent;
+        const grantId = randomUUID();
+        draft.grants[grantId] = {
+          grantId,
+          agentId,
+          // 停止会抬 generation：用受理时的代次签发，旧代次的许可自然失效
+          generation: agent.generation,
+          issuedByCommandId: input.commandId,
+          issuedSeq: committedSeq,
+          scope: { kind: 'chain', chainId },
+          state: 'active',
+        };
+        grantIds.push(grantId);
+      }
+      // 命令表里记一条：群命令不是单智能体命令，链与许可的关系由 grants 表按 chainId 关联
+      draft.commands[input.commandId] = {
+        commandId: input.commandId,
+        kind: 'user',
+        grantId: grantIds[0] ?? '',
+        chainId,
+      };
+      accepted = { chainId, grantIds };
+    });
+    if (!accepted) throw new ControlError('受理群命令失败', 'ACCEPT_FAILED');
     return accepted;
   }
 

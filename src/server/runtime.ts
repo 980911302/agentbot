@@ -784,7 +784,23 @@ export class AgentRuntime {
       const { run, duplicate } = this.chatRuns.prepare({ channelId: roomId, roomId, kind: 'room',
         source: options.roomSenderId ? 'agent' : 'user', input: text, clientMessageId: options.clientMessageId, messageId: randomUUID(),
       }, [options.model ?? '', options.ownerName ?? '', options.excludeAgentIds ?? [], options.roomSenderId ?? '']);
-      const opts = this.chatRuns.bind(run, { ...options, messageId: run.messageId });
+
+      // §6.2：用户新的群发言为受众签发新链许可。没有它，停止后的成员在这一轮
+      // 全部判定 held，于是「私聊说一次停 → 群里再也不响应」。
+      // 工作台代发（roomSenderId）不是用户命令，不签发；停止词更不签发。
+      let chainId: string | undefined;
+      if (!options.roomSenderId && !duplicate && !this.stopCoordinator.isStopSentence(text)) {
+        const excluded = new Set(options.excludeAgentIds ?? []);
+        const audience = members.map((member) => member.id).filter((id) => !excluded.has(id));
+        if (audience.length > 0) {
+          chainId = (await this.activation.acceptRoomInput({
+            commandId: options.clientMessageId ?? run.runId,
+            agentIds: audience,
+          })).chainId;
+        }
+      }
+
+      const opts = this.chatRuns.bind(run, { ...options, messageId: run.messageId, ...(chainId ? { chainId } : {}) });
       const queued = !waitForRounds && !duplicate
         ? await this.chatRuns.execute(run.runId, () => this.roomDispatcher.enqueueMessage(roomId, text, opts), () => ({}))
         : { roundId: run.runId, roomId, roomName: room.name, outcomes: [], queued: [] };
