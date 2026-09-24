@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useRef, useState, useMemo } from 'react';
 import {
   IconClose,
   IconPlus,
@@ -13,6 +13,7 @@ import {
 import type { ModelOption } from '../types';
 import type { ThemePreference } from '../theme';
 import { usePresence } from '../motion';
+import { useModalKeys } from './ui/useModalKeys.js';
 import {
   fetchModelSettings,
   saveProviderConfig,
@@ -67,6 +68,7 @@ export function SettingsDialog({
   onClose,
 }: SettingsDialogProps) {
   const presence = usePresence(open);
+  const windowRef = useModalKeys({ open, onClose, id: 'settings-dialog' });
 
   // 核心数据
   const [modelSettings, setModelSettings] = useState<ModelSettingsData | null>(null);
@@ -421,14 +423,19 @@ export function SettingsDialog({
   return (
     <div
       className={`provider-settings-scrim ${presence.state}`}
-      role="dialog"
-      aria-modal="true"
-      aria-label="模型服务商管理"
+      role="presentation"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="provider-settings-window">
+      {/* 窗口本体才是 dialog，遮罩只是 presentation */}
+      <div
+        ref={windowRef}
+        className="provider-settings-window"
+        role="dialog"
+        aria-modal="true"
+        aria-label="模型服务商管理"
+      >
         {/* 关闭按钮 */}
         <button
           type="button"

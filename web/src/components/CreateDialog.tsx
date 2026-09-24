@@ -10,6 +10,7 @@ import {
   type AvatarShape,
 } from './LivingAvatar';
 import { usePresence } from '../motion';
+import { useModalKeys } from './ui/useModalKeys.js';
 import type { BotSummary } from '../types';
 
 export interface CreateAgentInput {
@@ -50,7 +51,6 @@ export function CreateDialog({
   const [shape, setShape] = useState<AvatarShape>('squircle');
   const [picked, setPicked] = useState<string[]>([]);
   const presence = usePresence(open);
-  if (!presence.mounted) return null;
 
   const reset = () => {
     setName('');
@@ -65,6 +65,10 @@ export function CreateDialog({
     reset();
     onClose();
   };
+
+  // Esc 与点遮罩、点关闭按钮同一个语义：直接关掉并清空表单（本来就是新建，没有可丢的旧值）
+  const dialogRef = useModalKeys({ open, onClose: close, id: 'create-dialog' });
+  if (!presence.mounted) return null;
 
   const toggle = (id: string) => {
     setPicked((current) =>
@@ -91,9 +95,15 @@ export function CreateDialog({
       role="presentation"
       onMouseDown={(event) => event.target === event.currentTarget && close()}
     >
-      <div className="dialog narrow" role="dialog" aria-label="新建">
+      <div
+        ref={dialogRef}
+        className="dialog narrow"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="create-dialog-title"
+      >
         <header className="dialog-head">
-          <h2>{mode === 'agent' ? '新建智能体' : '新建群'}</h2>
+          <h2 id="create-dialog-title">{mode === 'agent' ? '新建智能体' : '新建群'}</h2>
           <button type="button" className="dialog-close" aria-label="关闭" onClick={close}>
             <IconClose size={16} />
           </button>

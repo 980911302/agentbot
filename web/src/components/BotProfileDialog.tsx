@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { BotAvatar } from './BotAvatar';
 import { usePresence } from '../motion';
+import { useModalKeys } from './ui/useModalKeys.js';
+import { ConfirmDialog } from './ConfirmDialog.js';
 import type { BotSummary } from '../types';
 
 const PALETTE = [
@@ -28,18 +30,38 @@ export function BotProfileDialog({ bot, onClose, onSave }: BotProfileDialogProps
   const [color, setColor] = useState<string>(PALETTE[0]!);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
 
   const presence = usePresence(bot !== null);
   const shownRef = useRef(bot);
   if (bot) shownRef.current = bot;
   const shown = bot ?? shownRef.current;
+  // 有未保存修改时 Esc 先确认，别一按键盘就丢内容
+  const baselineRef = useRef({ name: '', instructions: '', color: PALETTE[0]! });
+  const dirtyRef = useRef(false);
+  dirtyRef.current =
+    name.trim() !== baselineRef.current.name ||
+    instructions.trim() !== baselineRef.current.instructions ||
+    color !== baselineRef.current.color;
+  const dialogRef = useModalKeys({
+    open: bot !== null,
+    onClose: () => (dirtyRef.current ? setConfirmDiscard(true) : onClose()),
+    id: 'bot-profile-dialog',
+  });
 
   useEffect(() => {
     if (!bot) return;
     setName(bot.name);
     setInstructions(bot.instructions ?? bot.role);
     setColor(bot.color || PALETTE[0]!);
+    // 基线跟着打开的同务走：之后用它判断有没有未保存修改
+    baselineRef.current = {
+      name: bot.name.trim(),
+      instructions: (bot.instructions ?? bot.role).trim(),
+      color: bot.color || PALETTE[0]!,
+    };
     setError(null);
+    setConfirmDiscard(false);
   }, [bot]);
 
   if (!presence.mounted || !shown) return null;
@@ -65,9 +87,15 @@ export function BotProfileDialog({ bot, onClose, onSave }: BotProfileDialogProps
       role="presentation"
       onMouseDown={(event) => event.target === event.currentTarget && onClose()}
     >
-      <div className="dialog narrow" role="dialog" aria-label="智能体资料">
+      <div
+        ref={dialogRef}
+        className="dialog narrow"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="bot-profile-title"
+      >
         <header className="dialog-head">
-          <h2>智能体资料</h2>
+          <h2 id="bot-profile-title">智能体资料</h2>
           <button type="button" className="dialog-close" aria-label="关闭" onClick={onClose}>
             ×
           </button>
@@ -135,6 +163,20 @@ export function BotProfileDialog({ bot, onClose, onSave }: BotProfileDialogProps
           </div>
         </div>
       </div>
+
+      <ConfirmDialog
+        open={confirmDiscard}
+        title="放弃这次修改？"
+        message="资料还没有保存，关掉就没了。"
+        confirmLabel="放弃修改"
+        cancelLabel="继续编辑"
+        danger
+        onConfirm={() => {
+          setConfirmDiscard(false);
+          onClose();
+        }}
+        onCancel={() => setConfirmDiscard(false)}
+      />
     </div>
   );
 }

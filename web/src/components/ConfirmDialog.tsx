@@ -1,5 +1,6 @@
 import { useRef } from 'react';
 import { usePresence } from '../motion';
+import { useModalKeys } from './ui/useModalKeys.js';
 
 interface ConfirmDialogProps {
   open: boolean;
@@ -23,6 +24,7 @@ export function ConfirmDialog({
   onCancel,
 }: ConfirmDialogProps) {
   const presence = usePresence(open);
+  const dialogRef = useModalKeys({ open, onClose: onCancel, id: 'confirm-dialog' });
   const snap = useRef({ title, message, confirmLabel, danger });
   if (open) snap.current = { title, message, confirmLabel, danger };
   if (!presence.mounted) return null;
@@ -35,7 +37,13 @@ export function ConfirmDialog({
       role="presentation"
       onMouseDown={(event) => event.target === event.currentTarget && onCancel()}
     >
-      <div className="dialog narrow confirm" role="dialog" aria-label={view.title}>
+      <div
+        ref={dialogRef}
+        className="dialog narrow confirm"
+        role="dialog"
+        aria-modal="true"
+        aria-label={view.title}
+      >
         <div className="dialog-body">
           <h2 className="confirm-title">{view.title}</h2>
           <p className="confirm-text">{view.message}</p>
