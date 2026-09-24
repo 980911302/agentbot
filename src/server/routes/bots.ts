@@ -92,15 +92,16 @@ export async function handleBotItem(
   }
 
   if (method === 'DELETE') {
-    if (context.runtime.isBusy(record.id)) {
-      json(response, 409, { error: '这个智能体正在跑任务，等它结束后再删' });
-      return true;
+    try {
+      const result = await context.runtime.removeAgent(record.id);
+      json(response, 200, { ok: result.removed, removed: record.name });
+    } catch (error) {
+      if ((error as { code?: string }).code === 'AGENT_BUSY') {
+        json(response, 409, { error: '这个智能体正在跑任务，等它结束后再删' });
+        return true;
+      }
+      throw error;
     }
-    await context.runtime.messages.clear(record.id);
-    await context.runtime.memory.clear('self', record.id);
-    await context.runtime.compaction.clear(record.id);
-    const ok = await context.runtime.registry.remove(record.id);
-    json(response, 200, { ok, removed: record.name });
     return true;
   }
 

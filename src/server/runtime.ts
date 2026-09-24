@@ -457,6 +457,41 @@ export class AgentRuntime {
     return record;
   }
 
+  /**
+   * 删同事的统一生命周期入口（bug_x3wyowcuabut）。
+   *
+   * 两个删除接口此前各做一半：/api/agents/:id 只清消息与注册表、不查忙碌，
+   * /api/bots/:id 查忙碌并清消息/记忆/摘要，但都不清收件箱与排队投递、不移出
+   * 群成员表、不清控制条目与待答卡。删完 id 还留在群 memberIds 里，点名解析
+   * 与投递都会继续指向一个不存在的同事。这里收敛成一条路径。
+   *
+   * 保留的审计信息：往来档案、任务进度、运行与工具账本（都是历史事实）。
+   */
+  async removeAgent(agentId: string): Promise<{ removed: boolean }> {
+    if (this.isBusy(agentId)) {
+      throw Object.assign(new Error('这个智能体正在跑任务，等它结束后再删'), { code: 'AGENT_BUSY' });
+    }
+    const removed = await this.registry.remove(agentId);
+    if (!removed) return { removed: false };
+
+    // 对话线与自己的记忆、压缩摘要：没有同事就没有主人
+    await this.messages.clear(agentId);
+    await this.memory.clear('self', agentId);
+    await this.compaction.clear(agentId);
+    // 收件箱与还没处理的来信：同事没了，信没有归属
+    await this.inbox.clear(agentId);
+    // 等用户回答的卡片：留着会永远挂着（停止协调器已封装「取消该智能体全部待答卡」）
+    this.stopCoordinator.voidPendingInteractions(agentId);
+    // 从所有群的成员表移出，避免点名与扇出指向已删同事
+    for (const room of await this.rooms.list()) {
+      if (!room.memberIds.includes(agentId)) continue;
+      await this.rooms.setMembers(room.id, room.memberIds.filter((id) => id !== agentId));
+    }
+    // 控制条目、票据与许可
+    await this.activation.forgetAgent(agentId);
+    return { removed: true };
+  }
+
   async ensureDefaultAgent(): Promise<AgentRecord> {
     const list = await this.registry.list();
     for (const seed of this.options.seed ?? []) {

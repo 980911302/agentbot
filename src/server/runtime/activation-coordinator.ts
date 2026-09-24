@@ -162,6 +162,41 @@ export class ActivationCoordinator {
     return accepted;
   }
 
+  /**
+   * 删除智能体时清掉它的控制痕迹（bug_x3wyowcuabut）。
+   *
+   * 同事没了以后，控制条目、票据和许可都不该留着：留着会让 agents[id] 长期
+   * 滞留，还会让迁移与准入看到不存在的同事。命令记录只按 grantId 反查清理
+   * （记录本身没有 agentId 字段）；链、outbox 与回执是审计信息，按设计保留。
+   */
+  async forgetAgent(agentId: string): Promise<void> {
+    await this.store.transact((draft) => {
+      const before =
+        Object.keys(draft.agents).length +
+        Object.keys(draft.tickets).length +
+        Object.keys(draft.grants).length;
+      delete draft.agents[agentId];
+      for (const [ticketId, ticket] of Object.entries(draft.tickets)) {
+        if (ticket.agentId === agentId) delete draft.tickets[ticketId];
+      }
+      const droppedGrants = new Set<string>();
+      for (const [grantId, grant] of Object.entries(draft.grants)) {
+        if (grant.agentId === agentId) {
+          delete draft.grants[grantId];
+          droppedGrants.add(grantId);
+        }
+      }
+      for (const [commandId, command] of Object.entries(draft.commands)) {
+        if (command.grantId !== undefined && droppedGrants.has(command.grantId)) delete draft.commands[commandId];
+      }
+      const after =
+        Object.keys(draft.agents).length +
+        Object.keys(draft.tickets).length +
+        Object.keys(draft.grants).length;
+      if (after === before) return 'skip';
+    }).catch(() => undefined);
+  }
+
   async tryActivate(input: ActivationRequest): Promise<ActivationDecision> {
     if (this.store.faulted || !this.store.allowsAutomaticExecution()) {
       return { kind: 'held', reason: 'manual_review' };

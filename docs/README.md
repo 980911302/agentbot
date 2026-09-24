@@ -80,7 +80,7 @@ npm run dev -- "读一下 package.json"   # 命令行单次对话
 | `/api/settings/model` | GET：模型配置（Key 打码）；POST：保存/新增/切换供应商与模型并热更新。只在 `.env`/环境变量配了 Key 时，这里如实显示「已配置」；保存时没填 Key 就沿用环境里的 Key，不会把运行时换成空 Key |
 | `/api/settings/model/test` | POST：测试模型连接。改了 `baseURL` 就必须同时传新的 `apiKey`，否则 400——已保存的 Key 只会发往它所属供应商的地址 |
 | `/api/agents`、`/api/bots` | GET/POST：列出/创建同事（bots 为前端兼容视图） |
-| `/api/agents/:id` | GET/PATCH/DELETE：详情/修改/删除 |
+| `/api/agents/:id`、`/api/bots/:id` | GET/PATCH/DELETE：详情/修改/删除。两条删除路径走同一个生命周期（`AgentRuntime.removeAgent`）：忙碌时 409；删完清对话线、自己的记忆与摘要、收件箱积压、待答卡、控制条目，并从所有群的成员表移出。往来档案、任务进度、运行与工具账本作为历史事实保留 |
 | `/api/agents/:id/messages` | GET：原始消息；POST：私聊发送（202） |
 | `/api/agents/:id/correspondence/:peerId` | GET：与某同事的往来记录（分页） |
 | `/api/agents/:id/tasks`、`/tasks/:taskId` | GET：任务进度分页摘要 / 完整快照 |

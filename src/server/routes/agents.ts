@@ -59,10 +59,16 @@ export async function handleAgentRoute(
   }
 
   if (rest === '/' && method === 'DELETE') {
-    await runtime.messages.clear(agentId);
-    await runtime.memory.clear('self', agentId);
-    await runtime.compaction.clear(agentId);
-    json(response, 200, { ok: await runtime.registry.remove(agentId) });
+    try {
+      const result = await runtime.removeAgent(agentId);
+      json(response, 200, { ok: result.removed });
+    } catch (error) {
+      if ((error as { code?: string }).code === 'AGENT_BUSY') {
+        json(response, 409, { error: '这个智能体正在跑任务，等它结束后再删' });
+        return;
+      }
+      throw error;
+    }
     return;
   }
 
