@@ -14,6 +14,16 @@
   to { opacity: 1; }
 }
 
+@keyframes msg-rise {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes swap-in {
+  from { opacity: 0; transform: translateX(8px); }
+  to { opacity: 1; transform: none; }
+}
+
 @keyframes shimmer {
   from { transform: translateX(-100%); }
   to { transform: translateX(100%); }
@@ -40,9 +50,17 @@
   overflow: hidden;
 }
 
-/* 切页/切频道短淡入（key 变化时重挂） */
+/* 切页/切频道：短淡入 + 6–10px 横向错位，不整页滑 */
 .swap {
-  animation: fade var(--dur-base) var(--ease);
+  animation: swap-in var(--dur-base) var(--ease);
+}
+
+.msg-row.enter-pop {
+  animation: pop var(--dur-fast) var(--ease);
+}
+
+.msg-row.enter-rise {
+  animation: msg-rise var(--dur-base) var(--ease);
 }
 
 /* 思考气泡三个点 */
@@ -92,25 +110,25 @@
 .scrim.enter .dialog,
 .scrim.exit .dialog {
   opacity: 0;
-  transform: scale(0.96) translateY(8px);
+  transform: scale(0.94) translateY(10px);
 }
 
 .scrim.enter-active .dialog {
   opacity: 1;
   transform: none;
-  transition: opacity var(--dur-base) var(--ease), transform var(--dur-base) var(--ease);
+  transition: opacity var(--dur-slow) var(--ease), transform var(--dur-slow) var(--ease);
 }
 
 .scrim.exit-active .dialog {
   opacity: 0;
-  transform: scale(0.98) translateY(6px);
-  transition: opacity var(--dur-base) var(--ease), transform var(--dur-base) var(--ease);
+  transform: scale(0.98) translateY(8px);
+  transition: opacity var(--dur-slow) var(--ease), transform var(--dur-slow) var(--ease);
 }
 
 .drawer.enter,
 .drawer.exit {
   opacity: 0;
-  transform: translateX(14px);
+  transform: translateX(18px);
 }
 
 .drawer.enter-active {
@@ -121,8 +139,42 @@
 
 .drawer.exit-active {
   opacity: 0;
-  transform: translateX(16px);
-  transition: opacity var(--dur-base) var(--ease), transform var(--dur-base) var(--ease);
+  transform: translateX(18px);
+  transition: opacity var(--dur-slow) var(--ease), transform var(--dur-slow) var(--ease);
+}
+
+.provider-settings-scrim.enter,
+.provider-settings-scrim.exit {
+  opacity: 0;
+}
+
+.provider-settings-scrim.enter-active {
+  opacity: 1;
+  transition: opacity var(--dur-slow) var(--ease);
+}
+
+.provider-settings-scrim.exit-active {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-slow) var(--ease);
+}
+
+.provider-settings-scrim.enter .provider-settings-window,
+.provider-settings-scrim.exit .provider-settings-window {
+  opacity: 0;
+  transform: scale(0.94) translateY(10px);
+}
+
+.provider-settings-scrim.enter-active .provider-settings-window {
+  opacity: 1;
+  transform: none;
+  transition: opacity var(--dur-slow) var(--ease), transform var(--dur-slow) var(--ease);
+}
+
+.provider-settings-scrim.exit-active .provider-settings-window {
+  opacity: 0;
+  transform: scale(0.98) translateY(8px);
+  transition: opacity var(--dur-slow) var(--ease), transform var(--dur-slow) var(--ease);
 }
 
 .skeleton {
@@ -139,7 +191,7 @@
   background: linear-gradient(
     90deg,
     transparent,
-    rgba(255, 255, 255, 0.08),
+    var(--skeleton-sheen),
     transparent
   );
   animation: shimmer 1.5s infinite;
@@ -159,6 +211,13 @@
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+
+  .living-avatar .body,
+  .living-avatar .eyes,
+  .living-avatar .wrap {
+    animation: none !important;
+    transform: none !important;
+  }
 }
 
 /* ══════════════════════════════════════════════════════════
@@ -170,19 +229,34 @@
   flex-direction: column;
   gap: 12px;
   padding: 14px 16px;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--card);
-  background: linear-gradient(180deg, var(--panel), var(--sunken));
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-lg);
+  background: var(--bg-card);
+  box-shadow: var(--shadow-md);
+  transition: opacity var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
 }
 
 .interaction-card.secret {
-  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
-  background: linear-gradient(180deg, var(--accent-soft), var(--sunken));
+  border-color: var(--accent-border);
+  background: var(--bg-card);
 }
 
 .interaction-card.expired {
-  opacity: 0.6;
+  opacity: 0.75;
+  border-color: var(--border);
+}
+
+.interaction-expired-banner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: var(--r-sm);
+  background: var(--warn-weak);
+  border: 1px solid var(--warn);
+  color: var(--warn-text);
+  font-size: 11.5px;
+  line-height: 1.4;
 }
 
 .interaction-head {

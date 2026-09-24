@@ -1,131 +1,251 @@
 /* ═══════════════════════════════════════════════════════════════
-   AgentBot Design System & Modern UI Styles
+   AgentBot Design System · 白泽观智（Baize Guanzhi）主题
+   古金 × 中性灰 —— 与 yudao-ui/baize-guanzhi 视觉体系对齐
    ═══════════════════════════════════════════════════════════════ */
 
 :root {
-  --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
-    'Microsoft YaHei', sans-serif;
-  --mono: 'JetBrains Mono', 'Fira Code', 'IBM Plex Mono', SFMono-Regular, Menlo, Consolas, monospace;
-  --ease: cubic-bezier(0.16, 1, 0.3, 1);
-  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
-  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'SF Pro Text', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', 'Helvetica Neue', Arial, sans-serif;
+  /* 白泽衬线：品牌名、展示标题、首字头像统一使用 */
+  --serif: 'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', 'STSong', 'SimSun', serif;
+  --mono: 'JetBrains Mono', SFMono-Regular, ui-monospace, Menlo, Consolas, monospace;
+
+  /* 白泽标准缓动 */
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --ease-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
 
   --r-xs: 4px;
   --r-sm: 8px;
   --r-md: 12px;
-  --r-lg: 18px;
-  --r-xl: 24px;
+  --r-lg: 16px;
+  --r-xl: 20px;
+  --r-2xl: 24px;
   --r-full: 9999px;
 
-  --dur-fast: 120ms;
-  --dur-base: 200ms;
-  --dur-slow: 350ms;
+  --dur-instant: 80ms;
+  --dur-fast: 140ms;
+  --dur-base: 220ms;
+  --dur-slow: 320ms;
+
+  /* 白泽技能卡配色（身份色小块统一取这里） */
+  --skill-blue: #4a90e2;
+  --skill-green: #34c759;
+  --skill-purple: #af52de;
+  --skill-cyan: #5ac8fa;
+  --skill-orange: #ff9500;
+  --skill-indigo: #5856d6;
 }
 
-/* ── Dark Theme (Default) ─────────────────────────────────── */
+/* ═══════════════════════════════════════════════════════════════
+   浅色 · 白泽古金（米纸底 + 古金强调 + 中性灰）
+   ═══════════════════════════════════════════════════════════════ */
 :root,
-:root[data-theme='dark'] {
-  --bg: #000000;                     /* 聊天主界面大背景：极致纯黑 #000000 */
-  --bg-sidebar: #111111;             /* 侧边栏背景：深黑灰 #111111 */
-  --sidebar-border: rgba(255, 255, 255, 0.06);
-  --panel: #000000;                  /* 顶栏/窗口栏：极致纯黑 #000000 */
-  --raised: #2f2f2f;
-  --sunken: #232323;                 /* 搜索框等内凹块：#232323 */
-  --hover: rgba(255, 255, 255, 0.05);
-  --active: #313131;                 /* 选中项背景：#313131 */
+:root[data-theme='light'] {
+  --theme-mode: 'light';
 
-  --fg: #ededed;
-  --fg-muted: #8e8e93;
-  --fg-faint: #636366;
+  /* 背景层级：暖米纸页面 + 纯白卡片/侧栏（白泽 --bg-page/--bg-card） */
+  --bg: #f7f3ec;
+  --bg-sidebar: #ffffff;
+  --bg-raised: #ffffff;
+  --bg-elevated: #ffffff;
+  --bg-card: #ffffff;
+  --bg-subtle: #faf8f5;
+  --bg-hover: #f3eee2;
+  --bg-active: #ede4d0;
+  --bg-input: #ffffff;
+  --bg-code: #faf8f5;
+  --bg-code-header: #f0eadd;
+  --text-code: #4a4033;
 
-  --line: rgba(255, 255, 255, 0.07);
-  --line-strong: rgba(255, 255, 255, 0.14);
+  /* 边框与分割（白泽 --border-subtle/--border-strong） */
+  --border: #ececec;
+  --border-strong: #d5d5d5;
+  --divider: #f0ece3;
 
-  --accent: #8b5cf6;
-  --accent-hover: #9d74f8;
-  --accent-soft: rgba(139, 92, 246, 0.16);
-  --accent-glow: rgba(139, 92, 246, 0.35);
+  /* 文字（白泽三级中性灰） */
+  --text: #1a1a1a;
+  --text-secondary: #666666;
+  --text-tertiary: #999999;
+  --text-think: #5c564b;
+  --text-muted: var(--text-tertiary);
 
-  --pill-blue: #469ffe;              /* 未读药丸与指示蓝点：#469ffe */
-  --pill-blue-hover: #3b8fe8;
+  /* 强调：古金（白泽 --accent-gold） */
+  --accent: #b8924e;
+  --accent-hover: #a67f42;
+  --accent-weak: #fdf8ee;
+  --accent-soft: rgba(184, 146, 78, 0.08);
+  --accent-faint: rgba(184, 146, 78, 0.12);
+  --accent-border: #e8dbbe;
+  --accent-glow: rgba(184, 146, 78, 0.30);
+  --accent-gradient: linear-gradient(135deg, #ad8a54 0%, #947442 100%);
+  --glow: 0 0 0 1px rgba(173, 138, 84, 0.18), 0 8px 22px rgba(148, 116, 66, 0.16);
+  --aura-glow: radial-gradient(circle at 50% 36%, rgba(184, 146, 78, 0.12) 0%, rgba(173, 138, 84, 0.04) 42%, transparent 72%);
 
-  --bubble-user: #343438;            /* 用户消息气泡：深灰 #343438 */
-  --bubble-user-border: rgba(255, 255, 255, 0.08);
-  --bubble-user-fg: #ffffff;
+  /* 语义色（白泽 --accent-red / 技能绿橙） */
+  --danger: #ff3b30;
+  --danger-weak: rgba(255, 59, 48, 0.10);
+  --danger-border: rgba(255, 59, 48, 0.26);
+  --danger-text: #c22e21;
+  --ok: #34c759;
+  --ok-weak: rgba(52, 199, 89, 0.12);
+  --ok-text: #1e8a3c;
+  --warn: #ff9500;
+  --warn-weak: rgba(255, 149, 0, 0.12);
+  --warn-text: #a35a00;
+  --bad: var(--danger);
+  --error: var(--danger);
 
-  --bubble-assistant: #202024;       /* 机器人消息气泡：深灰黑圆角气泡 #202024 */
-  --bubble-assistant-border: rgba(255, 255, 255, 0.07);
-  --bubble-assistant-fg: #ededed;
+  /* 阴影：白泽的克制柔影 */
+  --shadow: 0 8px 24px rgba(43, 35, 20, 0.10);
+  --shadow-soft: 0 4px 16px rgba(43, 35, 20, 0.06), 0 2px 4px rgba(43, 35, 20, 0.04);
+  --shadow-card: 0 1px 3px rgba(43, 35, 20, 0.05), 0 1px 2px rgba(43, 35, 20, 0.04);
+  --shadow-sm: var(--shadow-card);
+  --shadow-md: var(--shadow-soft);
+  --shadow-lg: var(--shadow);
+  --ring: 0 0 0 3px rgba(184, 146, 78, 0.22);
+  --skeleton-sheen: rgba(26, 26, 26, 0.05);
 
-  --code-inline-bg: #4f393b;         /* 行内代码背景：暗灰红 #4f393b */
-  --code-inline-fg: #ff5767;         /* 行内代码文字：草莓红 #ff5767 */
-  --code-inline-border: transparent;
+  /* AI 气泡与输入条映射：用户气泡古金淡底 + 金描边 */
+  --ai-user-bubble: #fdf8ee;
+  --ai-user-bubble-text: #1a1a1a;
 
-  --composer-bg: #2f2f2f;            /* 输入框胶囊背景：#2f2f2f */
-  --composer-border: rgba(255, 255, 255, 0.08);
-  --composer-fade: linear-gradient(to top, #000000 70%, rgba(0, 0, 0, 0) 100%);
-
-  --card-bg: #202020;
-  --card-border: rgba(255, 255, 255, 0.07);
-
-  --code-bg: #1a1a1a;
-  --code-border: rgba(255, 255, 255, 0.07);
-
-  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.25);
-  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.38);
-  --shadow-lg: 0 20px 60px rgba(0, 0, 0, 0.55);
-
-  --ok: #30d158;
-  --warn: #ffd60a;
-  --bad: #ff453a;
+  /* 兼容现有变量名，平滑过渡 */
+  --sidebar-border: var(--border);
+  --panel: var(--bg-sidebar);
+  --raised: var(--bg-raised);
+  --sunken: var(--bg-subtle);
+  --hover: var(--bg-hover);
+  --active: var(--bg-active);
+  --fg: var(--text);
+  --fg-muted: var(--text-secondary);
+  --fg-faint: var(--text-tertiary);
+  --line: var(--border);
+  --line-strong: var(--border-strong);
+  --bubble-user: var(--ai-user-bubble);
+  --bubble-user-border: var(--accent-border);
+  --bubble-user-fg: var(--ai-user-bubble-text);
+  --bubble-assistant: var(--bg-card);
+  --bubble-assistant-border: var(--border);
+  --bubble-assistant-fg: var(--text);
+  --composer-bg: var(--bg-card);
+  --composer-border: var(--border);
+  --composer-fade: linear-gradient(to top, var(--bg) 70%, transparent 100%);
+  --card-bg: var(--bg-card);
+  --card-border: var(--border);
+  --surface: var(--bg-card);
+  --card: var(--bg-card);
+  --pill-blue: rgba(184, 146, 78, 0.35);
+  --code-bg: var(--bg-code);
+  --code-border: var(--border);
+  --code-inline-bg: var(--bg-code);
+  --code-inline-fg: var(--accent);
+  --code-inline-border: var(--border);
 }
 
-/* ── Light Theme ─────────────────────────────────────────── */
-:root[data-theme='light'] {
-  --bg: #f8f9fc;
-  --bg-sidebar: #f0f2f7;
-  --sidebar-border: #e2e5ed;
-  --panel: #ffffff;
-  --raised: #ffffff;
-  --sunken: #edf0f5;
-  --hover: rgba(0, 0, 0, 0.04);
-  --active: rgba(0, 0, 0, 0.08);
+/* ═══════════════════════════════════════════════════════════════
+   深色 · 白泽墨金（深炭底 + 亮金强调）
+   ═══════════════════════════════════════════════════════════════ */
+:root[data-theme='dark'] {
+  --theme-mode: 'dark';
 
-  --fg: #111827;
-  --fg-muted: #4b5563;
-  --fg-faint: #9ca3af;
+  /* 背景层级（白泽深色中性阶梯） */
+  --bg: #0c0e12;
+  --bg-sidebar: #12141a;
+  --bg-raised: #181b24;
+  --bg-elevated: #181b24;
+  --bg-card: #181b24;
+  --bg-subtle: #14161f;
+  --bg-hover: #222634;
+  --bg-active: rgba(212, 167, 106, 0.16);
+  --bg-input: #14161f;
+  --bg-code: #0f1218;
+  --bg-code-header: #1a1d26;
+  --text-code: #d8dbe2;
 
-  --line: rgba(0, 0, 0, 0.08);
-  --line-strong: rgba(0, 0, 0, 0.15);
+  /* 边框与分割 */
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.16);
+  --divider: rgba(255, 255, 255, 0.06);
 
-  --accent: #7c3aed;
-  --accent-hover: #6d28d9;
-  --accent-soft: rgba(124, 58, 237, 0.1);
-  --accent-glow: rgba(124, 58, 237, 0.25);
+  /* 文字 */
+  --text: #f4f6fb;
+  --text-secondary: #c3cad6;
+  --text-tertiary: #8b93a3;
+  --text-think: #aab2c0;
+  --text-muted: var(--text-tertiary);
 
-  --bubble-user: #ede9fe;
-  --bubble-user-border: rgba(124, 58, 237, 0.25);
-  --bubble-user-fg: #1e143b;
+  /* 强调：亮金（白泽深色 --accent-gold） */
+  --accent: #d4a76a;
+  --accent-hover: #e0b87e;
+  --accent-weak: rgba(212, 167, 106, 0.14);
+  --accent-soft: rgba(212, 167, 106, 0.10);
+  --accent-faint: rgba(212, 167, 106, 0.14);
+  --accent-border: rgba(212, 167, 106, 0.32);
+  --accent-glow: rgba(212, 167, 106, 0.38);
+  --accent-gradient: linear-gradient(135deg, #d4a76a 0%, #b8924e 100%);
+  --glow: 0 0 0 1px rgba(212, 167, 106, 0.22), 0 8px 22px rgba(0, 0, 0, 0.45);
+  --aura-glow: radial-gradient(circle at 50% 36%, rgba(212, 167, 106, 0.12) 0%, rgba(184, 146, 78, 0.05) 42%, transparent 72%);
 
-  --bubble-assistant: #ffffff;
-  --bubble-assistant-border: rgba(0, 0, 0, 0.09);
-  --bubble-assistant-fg: #1e293b;
+  /* 语义色：深色下提亮一档 */
+  --danger: #f87171;
+  --danger-weak: rgba(248, 113, 113, 0.14);
+  --danger-border: rgba(248, 113, 113, 0.28);
+  --danger-text: #fca5a5;
+  --ok: #34d399;
+  --ok-weak: rgba(52, 211, 153, 0.14);
+  --ok-text: #6ee7b7;
+  --warn: #fbbf24;
+  --warn-weak: rgba(251, 191, 36, 0.14);
+  --warn-text: #fde68a;
+  --bad: var(--danger);
+  --error: var(--danger);
 
-  --composer-bg: #ffffff;
-  --composer-border: rgba(0, 0, 0, 0.12);
-  --composer-fade: linear-gradient(to top, #f8f9fc 65%, transparent 100%);
+  /* 阴影 & 环 */
+  --shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --shadow-soft: 0 4px 16px rgba(0, 0, 0, 0.35), 0 2px 4px rgba(0, 0, 0, 0.25);
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.30), 0 0 0 1px rgba(255, 255, 255, 0.02);
+  --shadow-sm: var(--shadow-card);
+  --shadow-md: var(--shadow-soft);
+  --shadow-lg: var(--shadow);
+  --ring: 0 0 0 3px rgba(212, 167, 106, 0.25);
+  --skeleton-sheen: rgba(255, 255, 255, 0.08);
 
-  --card-bg: #ffffff;
-  --card-border: rgba(0, 0, 0, 0.09);
+  /* AI 气泡映射：深色金调 */
+  --ai-user-bubble: rgba(212, 167, 106, 0.14);
+  --ai-user-bubble-text: #f4efe4;
 
-  --code-bg: #f1f3f7;
-  --code-border: rgba(0, 0, 0, 0.08);
-
-  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.05);
-  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.08);
-  --shadow-lg: 0 20px 60px rgba(0, 0, 0, 0.14);
-
-  --ok: #059669;
-  --warn: #d97706;
-  --bad: #dc2626;
+  /* 兼容现有变量名 */
+  --sidebar-border: var(--border);
+  --panel: var(--bg-sidebar);
+  --raised: var(--bg-raised);
+  --sunken: var(--bg-subtle);
+  --hover: var(--bg-hover);
+  --active: var(--bg-active);
+  --fg: var(--text);
+  --fg-muted: var(--text-secondary);
+  --fg-faint: var(--text-tertiary);
+  --line: var(--border);
+  --line-strong: var(--border-strong);
+  --bubble-user: var(--ai-user-bubble);
+  --bubble-user-border: var(--accent-border);
+  --bubble-user-fg: var(--ai-user-bubble-text);
+  --bubble-assistant: var(--bg-card);
+  --bubble-assistant-border: var(--border);
+  --bubble-assistant-fg: var(--text);
+  --composer-bg: var(--bg-elevated);
+  --composer-border: var(--border);
+  --composer-fade: linear-gradient(to top, var(--bg) 70%, transparent 100%);
+  --card-bg: var(--bg-card);
+  --card-border: var(--border);
+  --surface: var(--bg-card);
+  --card: var(--bg-card);
+  --pill-blue: rgba(212, 167, 106, 0.38);
+  --code-bg: var(--bg-code);
+  --code-border: var(--border);
+  --code-inline-bg: var(--bg-hover);
+  --code-inline-fg: var(--accent);
+  --code-inline-border: var(--border);
 }

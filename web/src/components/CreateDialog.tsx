@@ -1,13 +1,22 @@
 import { useState } from 'react';
 import { IconClose } from '../icons';
 import { BotAvatar } from './BotAvatar';
-import { BotFace } from './BotFace';
-import { Collapsible, usePresence } from '../motion';
+import {
+  AVATAR_COLORS,
+  AVATAR_COLOR_HEX,
+  AVATAR_SHAPES,
+  LivingAvatar,
+  type AvatarColor,
+  type AvatarShape,
+} from './LivingAvatar';
+import { usePresence } from '../motion';
 import type { BotSummary } from '../types';
 
 export interface CreateAgentInput {
   name: string;
   role: string;
+  color?: string;
+  shape?: AvatarShape;
 }
 
 export interface CreateRoomInput {
@@ -37,6 +46,8 @@ export function CreateDialog({
   const [mode, setMode] = useState<'agent' | 'room'>('agent');
   const [name, setName] = useState('');
   const [role, setRole] = useState('通用任务');
+  const [color, setColor] = useState<AvatarColor>('brown');
+  const [shape, setShape] = useState<AvatarShape>('squircle');
   const [picked, setPicked] = useState<string[]>([]);
   const presence = usePresence(open);
   if (!presence.mounted) return null;
@@ -44,6 +55,8 @@ export function CreateDialog({
   const reset = () => {
     setName('');
     setRole('通用任务');
+    setColor('violet');
+    setShape('squircle');
     setPicked([]);
     setMode('agent');
   };
@@ -67,7 +80,7 @@ export function CreateDialog({
 
   const submit = () => {
     if (!canSubmit) return;
-    if (mode === 'agent') onCreateAgent({ name: name.trim(), role });
+    if (mode === 'agent') onCreateAgent({ name: name.trim(), role, color: AVATAR_COLOR_HEX[color], shape });
     else onCreateRoom({ name: name.trim(), memberIds: picked });
     reset();
   };
@@ -107,8 +120,8 @@ export function CreateDialog({
           {mode === 'agent' ? (
             <>
               <div className="preview-face">
-                <BotFace color="#8b5cf6" status="idle" size={54} />
-                <span>颜色由系统分配</span>
+                <LivingAvatar shape={shape} color={color} size={54} />
+                <span>默认脸：形状 + 颜色</span>
               </div>
 
               <label className="field">
@@ -140,12 +153,53 @@ export function CreateDialog({
                 </div>
               </div>
 
+              <div className="field">
+                <span>形状（可选）</span>
+                <div className="profile-shape-grid compact">
+                  {AVATAR_SHAPES.map((item) => (
+                    <button
+                      type="button"
+                      key={item}
+                      className={`profile-shape-swatch${item === shape ? ' selected' : ''}`}
+                      onClick={() => setShape(item)}
+                      title={item}
+                    >
+                      <LivingAvatar shape={item} color={color} size={22} frozen />
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="field">
+                <span>颜色（可选）</span>
+                <div className="profile-color-grid">
+                  {AVATAR_COLORS.map((item) => (
+                    <button
+                      type="button"
+                      key={item}
+                      className={`profile-color-swatch${item === color ? ' selected' : ''}`}
+                      style={{ background: AVATAR_COLOR_HEX[item] }}
+                      title={item}
+                      onClick={() => setColor(item)}
+                    />
+                  ))}
+                </div>
+              </div>
+
               <p className="field-hint">职责会写进它的系统提示词，影响它看待任务的方式。</p>
             </>
           ) : (
             <>
               <div className="preview-face">
-                <BotFace color="#a855f7" status="idle" size={54} />
+                <BotAvatar
+                  name={name || '群'}
+                  isGroup
+                  members={picked
+                    .map((id) => agents.find((agent) => agent.id === id))
+                    .filter((agent): agent is BotSummary => Boolean(agent))
+                    .map((agent) => ({ id: agent.id, name: agent.name, color: agent.color }))}
+                  size={54}
+                />
                 <span>群只是成员表 + 广播，本身不思考、不存档</span>
               </div>
 

@@ -78,7 +78,7 @@ export function MemberPanel({ room, agents, memberLimit, busy, onSave, onClose }
                   setAdding(false);
                 }}
               >
-                <BotAvatar name={agent.name} color={agent.color} size={24} />
+                <BotAvatar name={agent.name} color={agent.color} size={24} agentId={agent.id} status={agent.status} />
                 <span className="member-option-name">{agent.name}</span>
                 <span className="member-option-role">{agent.role}</span>
                 <span className="member-option-mark">＋</span>
@@ -94,7 +94,7 @@ export function MemberPanel({ room, agents, memberLimit, busy, onSave, onClose }
             const last = picked.length <= 1;
             return (
               <li className="member-row" key={id}>
-                <BotAvatar name={agent.name} color={agent.color} size={30} />
+                <BotAvatar name={agent.name} color={agent.color} size={30} agentId={agent.id} status={agent.status} />
                 <div className="member-row-text">
                   <span className="member-row-name">{agent.name}</span>
                   <span className="member-row-role">{agent.role}</span>

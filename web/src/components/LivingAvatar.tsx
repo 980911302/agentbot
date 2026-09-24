@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 export const AVATAR_SHAPES = [
   "blob",
@@ -60,9 +60,9 @@ const SHAPES: Record<AvatarShape, string> = {
   leaf: "M14 42C14 22 24 10 44 8c2 20-4 34-20 42-6 2-10-2-10-8Z",
 };
 
-const COLORS: Record<AvatarColor, string> = {
+export const AVATAR_COLOR_HEX: Record<AvatarColor, string> = {
   black: "#1b1d22",
-  brown: "#8a5a32",
+  brown: "#b89b6a",
   red: "#e24b4b",
   orange: "#f08a2c",
   yellow: "#e6c041",
@@ -73,6 +73,52 @@ const COLORS: Record<AvatarColor, string> = {
   magenta: "#d946a6",
   gray: "#8b93a7",
 };
+
+const COLORS = AVATAR_COLOR_HEX;
+
+const SHAPE_STORAGE_PREFIX = 'agentbot.avatarShape.';
+
+export function resolveAvatarColorFromHex(color?: string): AvatarColor {
+  if (!color) return 'brown';
+  const c = color.toLowerCase();
+  if ((AVATAR_COLORS as readonly string[]).includes(c)) return c as AvatarColor;
+  if (c.includes('a855f7') || c.includes('8b5cf6') || c.includes('7c3aed') || c.includes('purple') || c.includes('violet')) return 'violet';
+  if (c.includes('3b82f6') || c.includes('60a5fa') || c.includes('blue') || c.includes('#2563eb')) return 'blue';
+  if (c.includes('38bdf8') || c.includes('cyan') || c.includes('06b6d4') || c.includes('39c1c8')) return 'cyan';
+  if (c.includes('30d158') || c.includes('10b981') || c.includes('green') || c.includes('22c55e') || c.includes('3cb86c')) return 'green';
+  if (c.includes('f59e0b') || c.includes('eab308') || c.includes('yellow') || c.includes('e6c041') || c.includes('facc15')) return 'yellow';
+  if (c.includes('f97316') || c.includes('orange') || c.includes('f08a2c')) return 'orange';
+  if (c.includes('ef4444') || c.includes('f87171') || c.includes('red') || c.includes('e24b4b')) return 'red';
+  if (c.includes('ec4899') || c.includes('d946a6') || c.includes('magenta')) return 'magenta';
+  if (c.includes('8b93a7') || c.includes('gray') || c.includes('1b1d22') || c.includes('black')) return c.includes('1b1d22') || c.includes('black') ? 'black' : 'gray';
+  if (c.includes('8a5a32') || c.includes('b89b6a') || c.includes('93784a') || c.includes('ad8a54') || c.includes('b8924e') || c.includes('brown')) return 'brown';
+  return 'brown';
+}
+
+export function loadAvatarShape(agentId?: string): AvatarShape {
+  if (!agentId || typeof localStorage === 'undefined') return 'squircle';
+  const raw = localStorage.getItem(`${SHAPE_STORAGE_PREFIX}${agentId}`);
+  if (raw && (AVATAR_SHAPES as readonly string[]).includes(raw)) return raw as AvatarShape;
+  return 'squircle';
+}
+
+export function saveAvatarShape(agentId: string, shape: AvatarShape): void {
+  if (typeof localStorage === 'undefined') return;
+  localStorage.setItem(`${SHAPE_STORAGE_PREFIX}${agentId}`, shape);
+}
+
+function usePrefersReducedMotion(): boolean {
+  const [reduced, setReduced] = useState(() =>
+    typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+  );
+  useEffect(() => {
+    const media = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const onChange = () => setReduced(media.matches);
+    media.addEventListener('change', onChange);
+    return () => media.removeEventListener('change', onChange);
+  }, []);
+  return reduced;
+}
 
 function eyeFill(hex: string): string {
   const n = hex.replace("#", "");
@@ -89,6 +135,8 @@ export function LivingAvatar({
   size = 38,
   title,
   className = "",
+  frozen = false,
+  notice = false,
 }: {
   shape?: AvatarShape;
   color?: AvatarColor;
@@ -96,20 +144,31 @@ export function LivingAvatar({
   size?: number;
   title?: string;
   className?: string;
+  /** 群复合头像里的闲置小脸、以及 reduced-motion 时冻结为静态一帧 */
+  frozen?: boolean;
+  /** 新开口的一闪，不循环 */
+  notice?: boolean;
 }) {
   const fill = COLORS[color];
   const eyes = useMemo(() => eyeFill(fill), [fill]);
+  const reduced = usePrefersReducedMotion();
+  const still = frozen || reduced;
 
   return (
     <svg
       className={`living-avatar ${className}`}
-      data-state={state}
+      data-state={still ? 'idle' : state}
+      data-frozen={still ? 'true' : undefined}
+      data-notice={notice && !still ? 'true' : undefined}
       width={size}
       height={size}
       viewBox="0 0 64 64"
       aria-label={title}
     >
       <style>{`
+        .living-avatar[data-frozen="true"] .body,
+        .living-avatar[data-frozen="true"] .eyes,
+        .living-avatar[data-frozen="true"] .wrap { animation: none !important; transform: none !important; }
         .living-avatar[data-state="idle"] .body { animation: la-breathe 3.4s ease-in-out infinite; transform-origin: 32px 36px; }
         .living-avatar[data-state="idle"] .eyes { animation: la-blink 4.6s steps(2, jump-none) infinite; transform-origin: 32px 28px; }
         .living-avatar[data-state="thinking"] .body { animation: la-breathe 2.6s ease-in-out infinite; transform-origin: 32px 36px; }
@@ -122,6 +181,8 @@ export function LivingAvatar({
         .living-avatar[data-state="blocked"] .eyes { transform: scaleY(0.72); transform-origin: 32px 28px; }
         .living-avatar[data-state="done"] .body { animation: la-settle 1.2s ease-out 1; transform-origin: 32px 36px; }
         .living-avatar[data-state="done"] .eyes { animation: la-happy 1.6s ease-in-out infinite; transform-origin: 32px 28px; }
+        .living-avatar[data-notice="true"] .wrap { animation: la-notice 0.32s var(--ease, cubic-bezier(0.16, 1, 0.3, 1)) 1; transform-origin: 32px 32px; }
+        @keyframes la-notice { 0% { filter: brightness(1); } 40% { filter: brightness(1.45); } 100% { filter: brightness(1); } }
         @keyframes la-breathe { 0%,100% { transform: scale(1,1); } 50% { transform: scale(1.045, 0.97); } }
         @keyframes la-blink { 0%, 86%, 100% { transform: scaleY(1); } 90%, 92% { transform: scaleY(0.12); } }
         @keyframes la-glance { 0%,100% { transform: translateX(0); } 40% { transform: translateX(-2.2px); } 70% { transform: translateX(2.2px); } }

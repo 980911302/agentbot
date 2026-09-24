@@ -11,7 +11,7 @@ function systemTheme(): Theme {
 
 function stored(): ThemePreference {
   const value = window.localStorage.getItem(STORAGE_KEY);
-  return value === 'light' || value === 'dark' ? value : 'dark';
+  return value === 'light' || value === 'dark' ? value : 'light';
 }
 
 export function useTheme(): {

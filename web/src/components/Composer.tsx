@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useClickOutside } from '../hooks';
-import { IconArrowUp, IconCheck, IconMic, IconPlus, IconTool } from '../icons';
+import { IconArrowUp, IconCheck, IconChevronDown, IconMic, IconPlus, IconTool } from '../icons';
 import { BotAvatar } from './BotAvatar';
+import { mentionCandidateList } from '../features/chat/ui-chrome';
 import type { ModelOption, ToolInfo } from '../types';
 
 export interface ChannelMemberItem {
@@ -19,7 +20,8 @@ interface ComposerProps {
   isGroup?: boolean;
   members?: ChannelMemberItem[];
   onSend: (text: string) => void;
-  onModelChange: (model: string) => void;
+  onModelChange: (model: string, option?: ModelOption) => void;
+  onManageModels?: () => void;
 }
 
 export function Composer({
@@ -32,9 +34,11 @@ export function Composer({
   members = [],
   onSend,
   onModelChange,
+  onManageModels,
 }: ComposerProps) {
   const [value, setValue] = useState('');
   const [plusOpen, setPlusOpen] = useState(false);
+  const [modelOpen, setModelOpen] = useState(false);
   const [voiceToast, setVoiceToast] = useState(false);
 
   // Mention State
@@ -46,11 +50,14 @@ export function Composer({
   const areaRef = useRef<HTMLTextAreaElement | null>(null);
 
   const closePlus = useCallback(() => setPlusOpen(false), []);
+  const closeModel = useCallback(() => setModelOpen(false), []);
   const plusRef = useClickOutside<HTMLDivElement>(plusOpen, closePlus);
+  const modelRef = useClickOutside<HTMLDivElement>(modelOpen, closeModel);
 
-  const mentionCandidates = members.filter((m) =>
-    mentionQuery ? m.name.toLowerCase().includes(mentionQuery.toLowerCase()) : true,
-  );
+  const currentModel = models.find((option) => option.id === model);
+  const currentLabel = currentModel?.label || model || '选择模型';
+
+  const mentionCandidates = isGroup ? mentionCandidateList(members, mentionQuery) : [];
 
   const resize = () => {
     const area = areaRef.current;
@@ -58,6 +65,21 @@ export function Composer({
     area.style.height = 'auto';
     area.style.height = `${Math.min(area.scrollHeight, 140)}px`;
   };
+
+  useEffect(() => {
+    const onUsePrompt = (event: Event) => {
+      const customEvent = event as CustomEvent<string>;
+      if (typeof customEvent.detail === 'string') {
+        setValue(customEvent.detail);
+        window.requestAnimationFrame(() => {
+          resize();
+          areaRef.current?.focus();
+        });
+      }
+    };
+    window.addEventListener('agentbot:use_prompt', onUsePrompt);
+    return () => window.removeEventListener('agentbot:use_prompt', onUsePrompt);
+  }, []);
 
   const handleVoiceClick = () => {
     setVoiceToast(true);
@@ -93,7 +115,7 @@ export function Composer({
     const textBeforeCursor = text.slice(0, cursor);
     const match = textBeforeCursor.match(/@([^@\s]*)$/);
 
-    if (match && members.length > 0) {
+    if (match && isGroup) {
       setMentionOpen(true);
       setMentionPos(cursor - match[0].length);
       setMentionQuery(match[1] ?? '');
@@ -171,9 +193,9 @@ export function Composer({
                 onMouseEnter={() => setMentionIndex(idx)}
                 onClick={() => insertMention(member)}
               >
-                <BotAvatar name={member.name} color={member.color} size={22} />
-                <span className="mention-name">{member.name}</span>
-                <span className="mention-tag">@唤醒</span>
+                <BotAvatar name={member.name} color={member.color} size={22} agentId={member.id} />
+                <span className="mention-name">{member.name === 'everyone' ? '@everyone' : member.name}</span>
+                <span className="mention-tag">{member.name === 'everyone' ? '全员' : '@唤醒'}</span>
               </button>
             ))}
           </div>
@@ -181,13 +203,14 @@ export function Composer({
       ) : null}
 
       <div className="composer-capsule">
+        <div className="capsule-row">
         {/* Left Circular + Button */}
         <div ref={plusRef} className="capsule-slot">
           <button
             type="button"
             className={`capsule-plus-btn${plusOpen ? ' active' : ''}`}
             aria-label="操作与工具"
-            title="选择模型与查看工具"
+            title="查看工具"
             onClick={() => setPlusOpen((open) => !open)}
           >
             <IconPlus size={16} />
@@ -195,30 +218,6 @@ export function Composer({
 
           {plusOpen ? (
             <div className="menu up left capsule-menu">
-              <div className="menu-label">当前模型</div>
-              <div className="capsule-model-selector">
-                {models.map((option) => (
-                  <button
-                    type="button"
-                    key={option.id}
-                    className={`menu-row${option.id === model ? ' selected' : ''}`}
-                    onClick={() => {
-                      onModelChange(option.id);
-                      setPlusOpen(false);
-                    }}
-                  >
-                    <span className="menu-row-icon">
-                      {option.id === model ? <IconCheck size={14} /> : null}
-                    </span>
-                    <span className="menu-row-text">
-                      <span className="menu-row-title">{option.label}</span>
-                      <span className="menu-row-hint">{option.hint}</span>
-                    </span>
-                  </button>
-                ))}
-              </div>
-
-              <div className="menu-divider" />
               <div className="menu-label">可用工具 ({tools.length})</div>
               <div className="capsule-tools-list">
                 {tools.map((tool) => (
@@ -239,6 +238,13 @@ export function Composer({
             </div>
           ) : null}
         </div>
+
+        {isGroup ? (
+          <div className="capsule-group-tag" title="当前为群聊协作模式，输入 @ 唤醒指定成员">
+            <span className="group-tag-dot" />
+            <span>群聊</span>
+          </div>
+        ) : null}
 
         {/* Center Input Field */}
         <textarea
@@ -273,6 +279,76 @@ export function Composer({
             <IconMic size={18} />
           </button>
         )}
+        </div>
+
+      {/* 底部行与输入框同属一张卡片（对齐白泽观智的输入区排法）：
+          模型与思考选择器紧挨在左下，上面一条细分隔线，不再单独漂一行 */}
+      <div className="composer-model-bar">
+        <div ref={modelRef} className="composer-model-slot">
+          <button
+            type="button"
+            className={`composer-model-trigger${modelOpen ? ' open' : ''}`}
+            aria-label="当前模型"
+            title={currentModel && currentModel.label !== currentModel.id ? `实际调用：${currentModel.id}` : '选择模型'}
+            onClick={() => {
+              setModelOpen((open) => !open);
+            }}
+          >
+            {/* 折叠态只显示一个名字：并排展示名称和模型标识会被读成两个模型。
+                真实标识放在 title 提示和下拉行里，需要时能看到。 */}
+            <span className="composer-model-name">{currentLabel}</span>
+            <IconChevronDown size={12} />
+          </button>
+          {modelOpen ? (
+            <div className="menu up left composer-model-menu">
+              {models.length === 0 ? (
+                <div className="menu-row read-only">
+                  <span className="menu-row-text">
+                    <span className="menu-row-title">还没有可用模型</span>
+                    <span className="menu-row-hint">在模型设置里启用供应商并添加模型</span>
+                  </span>
+                </div>
+              ) : (
+                models.map((option) => (
+                  <button
+                    type="button"
+                    key={`${option.providerId ?? ''}:${option.modelConfigId ?? option.id}`}
+                    className={`menu-row${option.id === model ? ' selected' : ''}`}
+                    onClick={() => {
+                      onModelChange(option.id, option);
+                      setModelOpen(false);
+                    }}
+                  >
+                    <span className="menu-row-icon">
+                      {option.id === model ? <IconCheck size={14} /> : null}
+                    </span>
+                    <span className="menu-row-text">
+                      <span className="menu-row-title">{option.label}</span>
+                      <span className="menu-row-hint">
+                        {option.label === option.id ? option.hint : `${option.id}${option.hint ? ` · ${option.hint}` : ''}`}
+                      </span>
+                    </span>
+                  </button>
+                ))
+              )}
+              <div className="menu-divider" />
+              <button
+                type="button"
+                className="menu-row composer-manage-models"
+                onClick={() => {
+                  setModelOpen(false);
+                  onManageModels?.();
+                }}
+              >
+                <span className="menu-row-text">
+                  <span className="menu-row-title">管理模型</span>
+                  <span className="menu-row-hint">打开设置 → 模型设置</span>
+                </span>
+              </button>
+            </div>
+          ) : null}
+        </div>
+      </div>
       </div>
     </div>
   );

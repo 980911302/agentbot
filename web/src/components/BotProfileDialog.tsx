@@ -4,14 +4,14 @@ import { usePresence } from '../motion';
 import type { BotSummary } from '../types';
 
 const PALETTE = [
-  '#a855f7',
-  '#38bdf8',
-  '#30d158',
-  '#f97316',
-  '#f472b6',
-  '#facc15',
-  '#5eead4',
-  '#60a5fa',
+  '#b89b6a',
+  '#93784a',
+  '#4a90e2',
+  '#34c759',
+  '#af52de',
+  '#5ac8fa',
+  '#ff9500',
+  '#f87171',
 ];
 
 interface BotProfileDialogProps {

@@ -114,6 +114,13 @@ export class ChatEngine {
     } else if (entry.seq > (this.historySeq.get(channelId) ?? 0)) {
       if (entry.kind === 'agent' && !entry.roomId) {
         const event = entry.payload as AgentEvent;
+        // 旧版本曾把内部群经历作为 agent 事件广播。群消息只属于群频道，不能
+        // 因缺少 JournalEntry.roomId 而落进成员私聊；服务端修正后这里仍做防御。
+        if (event.type === 'message' && (event.message.roomId || event.message.source === 'room')) {
+          this.historySeq.set(channelId, entry.seq);
+          this.changed();
+          return true;
+        }
         if (event.type === 'delta' && entry.runId) this.live.set(entry.runId, (this.live.get(entry.runId) ?? '') + event.text);
         if (event.type === 'final' && entry.runId) this.live.delete(entry.runId);
         if (event.type === 'message' || event.type === 'correspondence') {

@@ -20,13 +20,32 @@ export function CorrespondenceRow({ agentId, transfers, onOpen }: {
   agentId: string; transfers: Correspondence[]; onOpen: (peer: MessageActor) => void;
 }) {
   const peers = transferPeers(agentId, transfers);
+  if (!peers.length) return null;
+  const label = transferLabel(agentId, transfers);
+  const peerIdentity = (peer: MessageActor) => <>
+    <BotAvatar name={peer.name} color={peer.color} size={22} agentId={peer.id} />
+    <span className="correspondence-peer-name">{peer.name}</span>
+  </>;
+
+  if (peers.length === 1) {
+    const onlyPeer = peers[0]!;
+    return <button type="button" className="correspondence-line correspondence-single-peer"
+      aria-label={`${label}${onlyPeer.name}，查看双方消息往来`}
+      title="查看双方实际发送的消息"
+      onClick={() => onOpen(onlyPeer)}>
+      <span>{label}</span>
+      <span className="correspondence-peer-identity">{peerIdentity(onlyPeer)}</span>
+      <span className="correspondence-enter" aria-hidden="true">›</span>
+    </button>;
+  }
+
   return <div className="correspondence-line">
-    <span>{transferLabel(agentId, transfers)}</span>
+    <span>{label}</span>
     <details className="correspondence-peers">
       <summary aria-label="选择智能体查看往来" title="只显示真实投递；已投递不代表任务完成">
         <span className="correspondence-avatars">{peers.slice(0, 3).map(peer =>
-          <BotAvatar key={peer.id} name={peer.name} color={peer.color} size={22} shape="circle" />)}</span>
-        {peers.length === 1 ? peers[0]!.name : `${peers.length} 个智能体`}
+          <BotAvatar key={peer.id} name={peer.name} color={peer.color} size={22} agentId={peer.id} />)}</span>
+        <span>{peers.length} 个智能体</span>
         <span aria-hidden="true">⌄</span>
       </summary>
       <div className="correspondence-peer-menu">
@@ -38,20 +57,16 @@ export function CorrespondenceRow({ agentId, transfers, onOpen }: {
   </div>;
 }
 
-export function CorrespondenceDialog({ agentId, agentName, peer, live, onClose }: {
+export function CorrespondencePanel({ agentId, agentName, peer, live, onClose }: {
   agentId: string; agentName: string; peer: MessageActor; live: Correspondence[]; onClose: () => void;
 }) {
-  const dialog = useRef<HTMLDialogElement>(null);
   const [messages, setMessages] = useState<Correspondence[]>([]);
   const [before, setBefore] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [refresh, setRefresh] = useState(0);
   const request = useRef<AbortController | null>(null);
-  useEffect(() => {
-    const element = dialog.current!; element.showModal();
-    return () => { request.current?.abort(); element.close(); };
-  }, []);
+  useEffect(() => () => request.current?.abort(), []);
   useEffect(() => {
     const controller = new AbortController(); request.current?.abort(); request.current = controller;
     setLoading(true); setError('');
@@ -75,21 +90,26 @@ export function CorrespondenceDialog({ agentId, agentName, peer, live, onClose }
     } catch (reason) { if (!controller.signal.aborted) setError(String(reason)); }
     finally { if (!controller.signal.aborted) setLoading(false); }
   };
-  return <dialog ref={dialog} className="correspondence-dialog" aria-label={`${agentName} 与 ${peer.name} 的消息往来`}
-    onCancel={event => { event.preventDefault(); onClose(); }}>
-    <header><h2>{agentName} <span>↔</span> {peer.name}</h2><button type="button" className="btn ghost" onClick={onClose}>关闭</button></header>
-    <div className="correspondence-thread">
+  return <section className="correspondence-panel" aria-label={`${agentName} 与 ${peer.name} 的消息往来`}>
+    <div className="correspondence-thread-scroll">
+      <div className="correspondence-thread">
       <p className="correspondence-explanation">仅显示双方实际发送的消息，不含各自与用户的私聊。投递不代表任务已完成。</p>
       {before ? <button className="btn ghost" type="button" disabled={loading} onClick={() => void loadOlder()}>加载更早的往来</button> : null}
       {loading ? <p role="status">正在加载…</p> : null}
       {error ? <p role="alert">加载失败：{error} <button type="button" onClick={() => setRefresh(value => value + 1)}>重试</button></p> : null}
       {!loading && !error && !merged.length ? <p>暂无可追溯的往来记录。</p> : null}
       {merged.map(item => <article className="correspondence-entry" key={item.id}>
-        <div className="correspondence-entry-heading"><BotAvatar name={item.from.name} color={item.from.color} size={28} />
-          <strong>{item.from.name}</strong><span>→ {item.to.name}</span><time>{formatMessageTime(new Date(item.createdAt).toISOString())}</time></div>
-        <div className="msg-bubble-box assistant-bubble"><RichText text={item.text} /><LetterImages images={item.images} /></div>
+        <BotAvatar name={item.from.name} color={item.from.color} size={32} />
+        <div className="correspondence-entry-body">
+          <div className="correspondence-entry-heading">
+            <strong style={{ color: item.from.color }}>{item.from.name}</strong>
+            <time>{formatMessageTime(new Date(item.createdAt).toISOString())}</time>
+          </div>
+          <div className="msg-bubble-box assistant-bubble"><RichText text={item.text} /><LetterImages images={item.images} /></div>
+        </div>
       </article>)}
+      </div>
     </div>
     <footer><span>🔒 此聊天仅供查看</span><button type="button" className="btn ghost" onClick={onClose}>关闭聊天</button></footer>
-  </dialog>;
+  </section>;
 }

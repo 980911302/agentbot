@@ -1,4 +1,5 @@
-import { useState, type ReactNode } from 'react';
+import { Fragment, useState, type ReactNode } from 'react';
+import { splitMentions } from './features/chat/ui-chrome';
 
 export type Block =
   | { type: 'heading'; level: number; content: string }
@@ -8,6 +9,11 @@ export type Block =
   | { type: 'hr' }
   | { type: 'paragraph'; content: string };
 
+/** 剥掉历史消息里残留的思维链段落，只留可见正文（复制用；渲染侧由 parseBlocks 丢弃） */
+export function stripThinkingBlocks(text: string): string {
+  return text.replace(/<think>[\s\S]*? Maç\s*/g, '').trim();
+}
+
 export function parseBlocks(text: string): Block[] {
   const blocks: Block[] = [];
   const lines = text.split('\n');
@@ -15,6 +21,22 @@ export function parseBlocks(text: string): Block[] {
 
   while (i < lines.length) {
     const line = lines[i]!;
+
+    // 0. Thinking block (<think>...</think>)
+    // 思维链不再展示：解析出来直接丢弃，历史消息里残留的段落也不会渲染成折叠框
+    if (line.trimStart().startsWith('<think>')) {
+      if (!line.includes('</think>')) {
+        i += 1;
+        while (i < lines.length && !lines[i]!.includes('</think>')) {
+          i += 1;
+        }
+        if (i < lines.length) i += 1;
+      } else {
+        i += 1;
+      }
+      continue;
+    }
+
 
     // 1. Code fence
     if (line.trimStart().startsWith('```')) {
@@ -210,7 +232,40 @@ function CodeBlock({ language, content }: { language: string; content: string })
   );
 }
 
-export function RichText({ text }: { text: string }) {
+/** 段内 @ 与前后文同属一个 <p>，不把每个碎片包成块级 RichText。 */
+export function layoutMentionParagraph(content: string, mentionNames: string[]): {
+  tag: 'p';
+  className: 'rich-p';
+  children: Array<{ kind: 'mention' | 'text'; text: string }>;
+} {
+  return {
+    tag: 'p',
+    className: 'rich-p',
+    children: splitMentions(content, mentionNames).map((part) => ({
+      kind: part.mention ? 'mention' : 'text',
+      text: part.text,
+    })),
+  };
+}
+
+function renderParagraphWithMentions(content: string, mentionNames: string[], key: number) {
+  const layout = layoutMentionParagraph(content, mentionNames);
+  return (
+    <p key={key} className={layout.className}>
+      {layout.children.map((child, index) =>
+        child.kind === 'mention' ? (
+          <span className="mention" key={index}>
+            {child.text}
+          </span>
+        ) : (
+          <Fragment key={index}>{renderInline(child.text)}</Fragment>
+        ),
+      )}
+    </p>
+  );
+}
+
+export function RichText({ text, mentionNames = [] }: { text: string; mentionNames?: string[] }) {
   const blocks = parseBlocks(text);
 
   return (
@@ -244,6 +299,9 @@ export function RichText({ text }: { text: string }) {
             return <hr key={index} className="rich-hr" />;
           case 'paragraph':
           default:
+            if (mentionNames.length > 0 && block.type === 'paragraph') {
+              return renderParagraphWithMentions(block.content, mentionNames, index);
+            }
             return (
               <p key={index} className="rich-p">
                 {renderInline(block.content)}

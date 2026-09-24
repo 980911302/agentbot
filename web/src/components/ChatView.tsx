@@ -1,16 +1,19 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ReactNode, WheelEvent as ReactWheelEvent } from 'react';
-import type { ArtifactView, BotSummary, DisplayMessage, InteractionRequest } from '../types';
+import type { ArtifactView, BotSummary, DisplayMessage, InteractionRequest, RoomFlowView } from '../types';
+import { fetchRoomFlow, controlRoomFlow } from '../api';
 import { RichText } from '../markdown';
 import { BotAvatar } from './BotAvatar';
 import { IconArrowDown, IconArrowUp, IconCheck, IconShare, IconSidebar } from '../icons';
 import { MessageItem } from './MessageItem';
 import { InteractionCard } from './InteractionCard';
-import { CorrespondenceRow, CorrespondenceDialog } from './CorrespondenceView';
+import { CorrespondenceRow, CorrespondencePanel } from './CorrespondenceView';
 import { chatRows } from '../features/chat/correspondence';
+import { ChatWelcome } from './ChatWelcome';
 import type { MessageActor } from '../../../src/shared/contracts/message-identity';
 
 interface ChatViewProps {
+  ownerName?: string;
   bot: BotSummary | null;
   messages: DisplayMessage[];
   artifacts: ArtifactView[];
@@ -26,14 +29,13 @@ interface ChatViewProps {
   onRetry?: (text: string, clientMessageId?: string) => void;
   /** 频道内的轻状态行（任务挂起等系统提示） */
   notices?: string[];
-  /** 群回合：正在进入回合的成员 */
+  /** 群回合：正在进入回合的成员（只改对应那张脸，不占「正在回复」气泡） */
   roundActive?: { id: string; name: string; color: string } | null;
   /** 回合/回复刚结束的短暂绿勾 */
   doneFlash?: boolean;
-  /** 群回合：这一轮看过但没开口的成员 */
-  silentNotes?: string[];
   isGroup?: boolean;
-  members?: Array<{ id: string; name: string; color: string }>;
+  members?: Array<{ id: string; name: string; color: string; status?: string }>;
+  memberLimit?: number;
   /** 切换频道时用它触发内容淡入 */
   channelKey?: string;
   /** 正在等用户回答的卡片 */
@@ -45,6 +47,7 @@ interface ChatViewProps {
 }
 
 export function ChatView({
+  ownerName = '主人',
   bot,
   messages,
   artifacts,
@@ -58,9 +61,9 @@ export function ChatView({
   notices,
   roundActive,
   doneFlash,
-  silentNotes,
   isGroup,
   members = [],
+  memberLimit = 6,
   channelKey,
   interactions,
   onAnswerInteraction,
@@ -73,8 +76,54 @@ export function ChatView({
   const [awayFromBottom, setAwayFromBottom] = useState(false);
   const lastSeenCount = useRef(messages.length);
   const title = channelTitle || bot?.name || '对话';
+  const lastSpeakerId = [...messages].reverse().find((item) => item.role === 'assistant')?.id;
+  const faces = members.map((member) => ({
+    ...member,
+    status: roundActive?.id === member.id ? 'working' : member.status,
+  }));
   const [peer, setPeer] = useState<MessageActor | null>(null);
   useEffect(() => setPeer(null), [channelKey]);
+
+  const [roomFlow, setRoomFlow] = useState<RoomFlowView | null>(null);
+  useEffect(() => {
+    if (!isGroup || !channelKey) {
+      setRoomFlow(null);
+      return;
+    }
+    let active = true;
+    const loadFlow = () => {
+      void fetchRoomFlow(channelKey)
+        .then((flow) => {
+          if (active) setRoomFlow(flow);
+        })
+        .catch(() => {});
+    };
+    loadFlow();
+
+    const onFlowUpdated = (e: Event) => {
+      const custom = e as CustomEvent<RoomFlowView>;
+      if (custom.detail && custom.detail.roomId === channelKey) {
+        setRoomFlow(custom.detail);
+      } else {
+        loadFlow();
+      }
+    };
+    window.addEventListener('agentbot:flow_updated', onFlowUpdated);
+    return () => {
+      active = false;
+      window.removeEventListener('agentbot:flow_updated', onFlowUpdated);
+    };
+  }, [isGroup, channelKey, messages.length]);
+
+  const handleFlowAction = async (action: 'pause' | 'resume' | 'cancel') => {
+    if (!channelKey) return;
+    try {
+      const updated = await controlRoomFlow(channelKey, action);
+      setRoomFlow(updated);
+    } catch (err) {
+      console.error('Failed to control room flow:', err);
+    }
+  };
 
   /** 最近一次还在跑的工具调用：悬停时告诉用户「它此刻在做什么」 */
   const runningCall = (() => {
@@ -147,16 +196,37 @@ export function ChatView({
   }, [channelKey]);
 
   return (
-    <div className="main-chat-container">
+    <div className={`main-chat-container${isGroup ? ' is-group' : ''}`}>
       <header className="chat-top-header">
         <div className="chat-header-left">
+          {peer ? (
+            <div className="correspondence-header-pair">
+              <span className="correspondence-header-agent">
+                <BotAvatar name={title} size={28} color={bot?.color || '#b89b6a'} agentId={bot?.id} />
+                <strong>{title}</strong>
+              </span>
+              <span className="correspondence-swap" aria-hidden="true">↔</span>
+              <span className="correspondence-header-agent">
+                <BotAvatar name={peer.name} size={28} color={peer.color} />
+                <strong>{peer.name}</strong>
+              </span>
+            </div>
+          ) : <>
           <div
             className={`chat-header-avatar${doneFlash ? ' done-flash' : ''}${onOpenProfile ? ' clickable' : ''}`}
             title={busy ? (actionHint ?? '正在处理…') : (onOpenProfile ? '编辑智能体资料' : undefined)}
             onClick={onOpenProfile}
             role={onOpenProfile ? 'button' : undefined}
           >
-            <BotAvatar name={title} size={28} color={bot?.color || '#a855f7'} status={bot?.status} />
+            <BotAvatar
+              name={title}
+              size={28}
+              color={bot?.color || '#b89b6a'}
+              status={isGroup ? undefined : bot?.status}
+              agentId={bot?.id}
+              isGroup={isGroup}
+              members={faces}
+            />
             {doneFlash ? (
               <span className="done-check">
                 <IconCheck size={11} />
@@ -169,30 +239,36 @@ export function ChatView({
             role={onOpenProfile ? 'button' : undefined}
             title={onOpenProfile ? '编辑智能体资料' : undefined}
           >
-            <h2 className="chat-header-title">{title}</h2>
-            {isGroup && members.length > 0 ? (
-              <span className="chat-header-subtitle">
-                多智能体协同群 · {members.length} 位成员
-              </span>
+            <div className="chat-header-title-row">
+              <h2 className="chat-header-title">{title}</h2>
+              {isGroup ? <span className="chat-header-group-badge">{faces.length}/{memberLimit}</span> : null}
+            </div>
+            {isGroup && faces.length > 0 ? (
+              <span className="chat-header-subtitle">群聊</span>
             ) : null}
           </div>
 
-          {isGroup && members.length > 0 ? (
+          {isGroup && faces.length > 0 ? (
             <div className="chat-header-member-stack" onClick={onToggleInfo} title="查看成员详情">
-              {members.slice(0, 4).map((m) => (
+              {faces.slice(0, 4).map((m) => (
                 <div key={m.id} className="header-member-avatar" title={m.name}>
-                  <BotAvatar name={m.name} color={m.color} size={22} />
+                  <BotAvatar name={m.name} color={m.color} size={22} agentId={m.id} status={m.status} />
                 </div>
               ))}
-              {members.length > 4 ? (
-                <span className="header-member-more">+{members.length - 4}</span>
+              {faces.length > 4 ? (
+                <span className="header-member-more">+{faces.length - 4}</span>
               ) : null}
             </div>
           ) : null}
+          </>}
           {/* header actions */}
         </div>
 
         <div className="chat-header-right">
+          {peer ? (
+            <button type="button" className="chat-header-icon-btn correspondence-back"
+              aria-label={`返回${title}主对话`} title="返回主对话" onClick={() => setPeer(null)}>←</button>
+          ) : null}
           <button
             type="button"
             className="chat-header-icon-btn"
@@ -216,6 +292,66 @@ export function ChatView({
         </div>
       </header>
 
+      {isGroup && roomFlow && roomFlow.status !== 'completed' && roomFlow.status !== 'cancelled' ? (
+        <div className="room-flow-bar">
+          <div className="room-flow-info">
+            <span className="room-flow-badge">{roomFlow.protocol}</span>
+            <span className="room-flow-phase">阶段: {roomFlow.phase}</span>
+            <span className={`room-flow-status status-${roomFlow.status}`}>
+              {roomFlow.status === 'active'
+                ? '● 进行中'
+                : roomFlow.status === 'awaiting_user'
+                  ? '👤 等待用户'
+                  : roomFlow.status === 'paused'
+                    ? '⏸ 已暂停'
+                    : roomFlow.status}
+            </span>
+            {roomFlow.currentActors.length > 0 ? (
+              <span className="room-flow-actors">
+                行动方:{' '}
+                {roomFlow.currentActors
+                  .map((actor) => {
+                    if (actor.kind === 'user') return '用户';
+                    const member = members.find((m) => m.id === actor.id);
+                    return member?.name ?? actor.id;
+                  })
+                  .join(', ')}
+              </span>
+            ) : null}
+          </div>
+          <div className="room-flow-actions">
+            {roomFlow.status === 'active' ? (
+              <button
+                type="button"
+                className="flow-btn pause"
+                onClick={() => void handleFlowAction('pause')}
+              >
+                暂停
+              </button>
+            ) : roomFlow.status === 'paused' ? (
+              <button
+                type="button"
+                className="flow-btn resume"
+                onClick={() => void handleFlowAction('resume')}
+              >
+                继续
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className="flow-btn cancel"
+              onClick={() => void handleFlowAction('cancel')}
+            >
+              取消
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {peer && bot?.id ? (
+        <CorrespondencePanel key={`${channelKey}:${peer.id}`} agentId={bot.id} agentName={title} peer={peer}
+          live={messages.flatMap(message => message.correspondence ? [message.correspondence] : [])} onClose={() => setPeer(null)} />
+      ) : <>
       {/* 顶部悬浮未读药丸 (图二对应) */}
       {awayFromBottom ? (
         <div
@@ -249,50 +385,35 @@ export function ChatView({
         onWheel={onWheel}
       >
         <div className="chat-message-list swap" key={channelKey}>
-          {chatRows(messages).map((row) =>
-            row.kind === 'correspondence' ? (
-              <CorrespondenceRow key={row.id} agentId={bot?.id ?? ''} transfers={row.transfers} onOpen={setPeer} />
-            ) : (
-              <MessageItem
-                key={row.message.id}
-                message={row.message}
-                bot={bot}
-                memberNames={isGroup ? members.map((member) => member.name) : []}
-                onRetry={onRetry}
-              />
-            ),
+          {messages.length === 0 ? (
+            <ChatWelcome
+              ownerName={ownerName}
+              bot={bot}
+              isGroup={isGroup}
+              members={faces}
+              isWorkspaceEmpty={false}
+            />
+          ) : (
+            chatRows(messages).map((row) =>
+              row.kind === 'correspondence' ? (
+                <CorrespondenceRow key={row.id} agentId={bot?.id ?? ''} transfers={row.transfers} onOpen={setPeer} />
+              ) : (
+                <MessageItem
+                  key={row.message.id}
+                  message={row.message}
+                  bot={bot}
+                  isGroup={Boolean(isGroup)}
+                  members={faces}
+                  memberNames={isGroup ? faces.map((member) => member.name) : []}
+                  notice={row.message.role === 'assistant' && row.message.id === lastSpeakerId}
+                  onRetry={onRetry}
+                />
+              ),
+            )
           )}
 
           {artifacts.length > 0 ? <ArtifactRow artifacts={artifacts} /> : null}
 
-          {/* 群回合进行中：谁的回合谁的气泡在动 */}
-          {isGroup && roundActive ? (
-            <div className="msg-group-item assistant thinking-indicator">
-              <div className="msg-avatar-col">
-                <BotAvatar name={roundActive.name} color={roundActive.color} size={34} />
-              </div>
-              <div className="msg-content-col assistant-content">
-                <div className="msg-sender-header assistant-header" style={{ color: roundActive.color }}>
-                  <span>{roundActive.name}</span>
-                </div>
-                <div className="msg-bubble-box working-bubble" title={roundActive.name}>
-                  <span className="dot-pulse" />
-                  <span className="dot-pulse" />
-                  <span className="dot-pulse" />
-                  <span className="working-label">正在回复…</span>
-                </div>
-              </div>
-            </div>
-          ) : null}
-
-          {/* 沉默是一等公民：只做轻提示，不进正文 */}
-          {isGroup && !roundActive && (silentNotes?.length ?? 0) > 0 ? (
-            <div className="silent-line">
-              {silentNotes?.map((note) => <span key={note}>{note}</span>)}
-            </div>
-          ) : null}
-
-          {/* 系统状态行：任务挂起等 */}
           {(notices ?? []).map((notice, index) => (
             <div className="silent-line notice-line" key={`${notice}-${index}`}>
               <span>{notice}</span>
@@ -309,41 +430,24 @@ export function ChatView({
               ))
             : null}
 
-          {/* 正在打字：增量文本实时渲染；还没出字时退回三个点 */}
           {busy && !isGroup && liveText ? (
-            <div className="msg-group-item assistant streaming-indicator">
+            <div className="msg-row dm-agent streaming-indicator">
               <div className="msg-avatar-col">
-                <BotAvatar name={bot?.name || '助手'} color={bot?.color || '#94a3b8'} size={34} />
+                <BotAvatar
+                  name={bot?.name || '助手'}
+                  color={bot?.color || '#b89b6a'}
+                  size={34}
+                  agentId={bot?.id}
+                  status="thinking"
+                />
               </div>
               <div className="msg-content-col assistant-content">
-                <div className="msg-sender-header assistant-header" style={{ color: bot?.color || '#94a3b8' }}>
+                <div className="msg-sender-header assistant-header" style={{ color: bot?.color || 'var(--fg-muted)' }}>
                   <span>{bot?.name || '助手'}</span>
                 </div>
-                <div
-                  className="msg-bubble-box assistant-bubble live-bubble"
-                  title={actionHint ?? '正在生成…'}
-                >
+                <div className="msg-bubble-box dm-agent live-bubble" title={actionHint ?? '正在生成…'}>
                   <RichText text={liveText} />
                   <span className="type-caret" />
-                </div>
-              </div>
-            </div>
-          ) : null}
-
-          {busy && !isGroup && !liveText ? (
-            <div className="msg-group-item assistant thinking-indicator">
-              <div className="msg-avatar-col">
-                <BotAvatar name={bot?.name || '助手'} color={bot?.color || '#94a3b8'} size={34} />
-              </div>
-              <div className="msg-content-col assistant-content">
-                <div className="msg-sender-header assistant-header" style={{ color: bot?.color || '#94a3b8' }}>
-                  <span>{bot?.name || '助手'}</span>
-                </div>
-                <div className="msg-bubble-box working-bubble" title={actionHint ?? '正在处理…'}>
-                  <span className="dot-pulse" />
-                  <span className="dot-pulse" />
-                  <span className="dot-pulse" />
-                  <span className="working-label">{bot?.activity || '正在处理…'}</span>
                 </div>
               </div>
             </div>
@@ -364,9 +468,14 @@ export function ChatView({
         </button>
       ) : null}
 
+      {busy && !isGroup ? (
+        <div className="chat-status-line" title={actionHint ?? undefined}>
+          <span>{bot?.activity ? `正在 ${bot.activity}` : '正在…'}</span>
+        </div>
+      ) : null}
+
       {composer}
-      {peer && channelKey ? <CorrespondenceDialog key={`${channelKey}:${peer.id}`} agentId={channelKey} agentName={title} peer={peer}
-        live={messages.flatMap(message => message.correspondence ? [message.correspondence] : [])} onClose={() => setPeer(null)} /> : null}
+      </>}
     </div>
   );
 }

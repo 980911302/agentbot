@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Sidebar, type ChannelItem } from './components/Sidebar';
 import { BotScreen } from './components/BotScreen';
 import { ChatView } from './components/ChatView';
 import { Composer } from './components/Composer';
 import { SettingsDialog } from './components/SettingsDialog';
+import { ChatWelcome } from './components/ChatWelcome';
 import { CreateDialog } from './components/CreateDialog';
+import { saveAvatarShape, type AvatarShape } from './components/LivingAvatar';
 import { ConfirmDialog } from './components/ConfirmDialog';
 import { BotProfileDialog } from './components/BotProfileDialog';
 import { BotProfileDrawer } from './components/BotProfileDrawer';
@@ -31,6 +33,7 @@ import type {
   DisplayMessage,
   HealthInfo,
   InteractionRequest,
+  ModelOption,
   RoomView,
 } from './types';
 
@@ -42,6 +45,8 @@ export default function App() {
   // 侧边栏 = 群（扇出）+ 智能体（1:1），全部来自后端
   const [activeChannelId, setActiveChannelId] = useState<string>('');
   const chatEngine = useChatEngine();
+  // runs 是引擎内部原地增删的 Map，引用终生不变；订阅版本号才能让下面的 memo 跟随运行状态刷新
+  const chatEngineVersion = useSyncExternalStore(chatEngine.subscribe, chatEngine.getVersion);
   const channelHistories = chatEngine.histories;
   const setChannelHistories = chatEngine.setHistories;
 
@@ -65,6 +70,32 @@ export default function App() {
     run.kind === 'agent' && (run.status === 'queued' || run.status === 'running'));
   const roomAgent = roomRun ? backendAgents.find(agent => agent.id === roomRun.agentId) : undefined;
   const roundActive = roomAgent ? { id: roomAgent.id, name: roomAgent.name, color: roomAgent.color } : null;
+  const workingAgentIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const run of chatEngine.runs.values()) {
+      if (run.agentId && (run.status === 'queued' || run.status === 'running')) ids.add(run.agentId);
+    }
+    return ids;
+  }, [chatEngine.runs, chatEngineVersion]);
+  const liveSidebarChannels = useMemo(
+    () =>
+      sidebarChannels.map((channel) => ({
+        ...channel,
+        status: workingAgentIds.has(channel.id) ? 'working' : channel.status,
+        members: channel.members?.map((member) => ({
+          ...member,
+          status: workingAgentIds.has(member.id) ? 'working' : member.status,
+        })),
+      })),
+    [sidebarChannels, workingAgentIds],
+  );
+  const liveMembers = useMemo(
+    () =>
+      (activeChannelId
+        ? liveSidebarChannels.find((item) => item.id === activeChannelId)?.members
+        : undefined) ?? [],
+    [liveSidebarChannels, activeChannelId],
+  );
   /** 回合/回复刚结束的短暂绿勾（done 的在场感） */
   const [doneFlash, setDoneFlash] = useState(false);
   /** 这一轮谁沉默了（沉默是合法结果，只做轻提示，不进正文） */
@@ -106,6 +137,7 @@ export default function App() {
     onResync: resync,
   });
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsSection, setSettingsSection] = useState<'general' | 'models'>('general');
   const [newBotOpen, setNewBotOpen] = useState(false);
   /** 右键菜单选中的待删对象，确认后才真正动手 */
   const [pendingDelete, setPendingDelete] = useState<ChannelItem | null>(null);
@@ -133,14 +165,35 @@ export default function App() {
   const [isResizing, setIsResizing] = useState(false);
   const prevBusyRef = useRef(false);
 
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key === ',') {
+        event.preventDefault();
+        setSettingsOpen(true);
+        return;
+      }
+      if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === 'i') {
+        event.preventDefault();
+        setScreenOpen((open) => {
+          if (open && drawerTab === 'profile') return false;
+          setDrawerTab('profile');
+          setScreenFull(false);
+          return true;
+        });
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [drawerTab]);
+
   const activeChannel = useMemo<ChannelItem>(
     () =>
       channels.find((item) => item.id === activeChannelId) ??
       channels[0] ?? {
         id: '',
-        name: '未连接',
+        name: '暂无智能体',
         time: '',
-        lastMessage: '后端未连接',
+        lastMessage: '点击左上方 + 创建智能体',
       },
     [channels, activeChannelId],
   );
@@ -212,7 +265,9 @@ export default function App() {
         if (cancelled) return;
         setHealth(info);
         setOnline(Boolean(info));
-        if (info) setModel((curr) => curr || info.model);
+        if (info) {
+          setModel((curr) => curr || info.model);
+        }
 
         const channelList = await syncWorkspace();
         if (cancelled) return;
@@ -233,8 +288,12 @@ export default function App() {
 
   /** 新建智能体：只有服务端确认建成才进侧栏，避免出现发不出消息的死频道 */
   const createAgent = useCallback(
-    async (input: { name: string; role: string }) => {
-      const created = await api.createBot(input).catch(() => null);
+    async (input: { name: string; role: string; color?: string; shape?: AvatarShape }) => {
+      const created = await api.createBot({
+        name: input.name,
+        role: input.role,
+        color: input.color,
+      }).catch(() => null);
       if (!created) {
         setChannels((current) => [
           {
@@ -248,6 +307,7 @@ export default function App() {
         ]);
         return;
       }
+      if (input.shape) saveAvatarShape(created.id, input.shape);
       await syncWorkspace();
       const channel: ChannelItem = {
         id: created.id,
@@ -278,7 +338,7 @@ export default function App() {
         name: room.name,
         time: formatClock(room.updatedAt),
         lastMessage: '还没有人说话',
-        color: room.members[0]?.color ?? '#a855f7',
+        color: room.members[0]?.color ?? '#b89b6a',
         role: `${room.members.length} 位成员`,
         isGroup: true,
         kind: 'room',
@@ -369,6 +429,7 @@ export default function App() {
       input: {
         name?: string;
         section?: string;
+        title?: string;
         description?: string;
         instructions?: string;
         color?: string;
@@ -432,6 +493,60 @@ export default function App() {
 
   const models = health?.models ?? [];
   const tools = health?.tools ?? [];
+
+  const refreshHealth = useCallback(async () => {
+    try {
+      const info = await api.fetchHealth();
+      setHealth(info);
+      setOnline(Boolean(info));
+      if (info?.model) setModel(info.model);
+    } catch {
+      setOnline(false);
+    }
+  }, []);
+
+  const handleModelChange = useCallback(
+    async (next: string, picked?: ModelOption) => {
+      setModel(next);
+      // 优先用下拉直接传来的整项：同一上游模型可能挂在多个供应商下，
+      // 只按 id 反查会命中第一个，激活到用户没点的那个供应商
+      const option = picked ?? models.find((item) => item.id === next);
+      if (option?.providerId && option?.modelConfigId) {
+        try {
+          await api.setActiveProviderModel(option.providerId, option.modelConfigId);
+          await refreshHealth();
+        } catch {
+          // 本地已切换；持久化失败时下次启动会回到服务端当前模型
+        }
+      }
+    },
+    [models, refreshHealth],
+  );
+
+  /**
+   * health 只在启动时拉过一次：模型与工具清单之后再不刷新，
+   * 设置里改完（或在别处改完）输入框还显示旧模型。这里补上定时刷新和
+   * 窗口重新聚焦时的刷新——切回窗口就该看到最新状态。
+   */
+  useEffect(() => {
+    const timer = window.setInterval(() => void refreshHealth(), 20000);
+    const onFocus = () => void refreshHealth();
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void refreshHealth();
+    };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [refreshHealth]);
+
+  const handleManageModels = useCallback(() => {
+    setSettingsSection('models');
+    setSettingsOpen(true);
+  }, []);
   const activeRoom = useMemo(
     () => rooms.find((room) => room.id === activeChannelId) ?? null,
     [rooms, activeChannelId],
@@ -458,7 +573,7 @@ export default function App() {
       section: record?.section,
       hidden: record?.hidden,
       role: record?.role ?? activeChannel.role ?? '',
-      color: record?.color ?? activeChannel.color ?? '#a855f7',
+      color: record?.color ?? activeChannel.color ?? '#b89b6a',
       status: activeResponding ? (activeLiveText ? 'thinking' : 'working') : (record?.status ?? 'idle'),
       activity: runningTool ?? '',
       conversationCount: record?.conversationCount ?? 0,
@@ -475,15 +590,27 @@ export default function App() {
         busy={activeResponding}
         botName={activeChannel.name}
         isGroup={activeChannel.kind === 'room'}
-        members={activeChannel.members ?? []}
+        members={liveMembers}
         model={model}
         models={models}
         tools={tools}
         onSend={(text) => void send(text)}
-        onModelChange={setModel}
+        onModelChange={(next, option) => void handleModelChange(next, option)}
+        onManageModels={handleManageModels}
       />
     ),
-    [activeChannel.name, activeChannel.kind, activeChannel.members, activeResponding, model, models, send, tools],
+    [
+      activeChannel.name,
+      activeChannel.kind,
+      liveMembers,
+      activeResponding,
+      model,
+      models,
+      send,
+      tools,
+      handleModelChange,
+      handleManageModels,
+    ],
   );
 
   const endpoint = useMemo(() => {
@@ -498,15 +625,17 @@ export default function App() {
     >
       {/* 1. 左侧导航栏 */}
       <Sidebar
-        channels={sidebarChannels}
+        channels={liveSidebarChannels}
         activeId={activeChannelId}
         onSelect={(id) => {
           // 忙碌也能自由查看别的频道：事件仍会写进发起发送的那个频道
           setActiveChannelId(id);
         }}
         onNew={() => setNewBotOpen(true)}
-        onOpenMarket={() => setSettingsOpen(true)}
-        onOpenProfile={() => setSettingsOpen(true)}
+        onOpenProfile={() => {
+          setSettingsSection('general');
+          setSettingsOpen(true);
+        }}
         onDelete={(channel) => {
           if (busy) return;
           setPendingDelete(channel);
@@ -534,51 +663,62 @@ export default function App() {
         onResizingChange={setIsResizing}
       />
 
-      {/* 2. 主消息区 */}
-      <ChatView
-        bot={currentBotSummary}
-        interactions={interactions}
-        onAnswerInteraction={(id, answer) => void answerInteraction(id, answer)}
-        channelTitle={activeChannel.name}
-        messages={currentMessages}
-        artifacts={artifacts}
-        busy={activeResponding}
-        liveText={activeLiveText}
-        notices={notices[activeChannelId] ?? []}
-        composer={composer}
-        onToggleInfo={() => {
-          if (screenOpen) {
-            if (drawerTab === 'profile') {
-              setDrawerTab('screen');
-            } else {
-              setScreenOpen(false);
-            }
-          } else {
-            setDrawerTab('screen');
-            setScreenOpen(true);
-          }
-        }}
-        isGroup={activeChannel.kind === 'room'}
-        members={activeChannel.members ?? []}
-        channelKey={activeChannelId}
-        roundActive={roundActive}
-        doneFlash={doneFlash}
-        silentNotes={silentNotes[activeChannelId] ?? []}
-        onOpenProfile={
-          activeChannel.kind === 'room'
-            ? undefined
-            : () => {
-                if (screenOpen && drawerTab === 'profile') {
-                  setScreenOpen(false);
-                } else {
-                  setDrawerTab('profile');
-                  setScreenOpen(true);
-                  setScreenFull(false);
-                }
+      {/* 2. 主消息区：如果无智能体或未选中，展示欢迎与引导页 */}
+      {channels.length === 0 || !activeChannel ? (
+        <div className="empty-workbench-view">
+          <ChatWelcome
+            ownerName={ownerName}
+            isWorkspaceEmpty={true}
+            onCreateAgent={() => setNewBotOpen(true)}
+          />
+        </div>
+      ) : (
+        <ChatView
+          ownerName={ownerName}
+          bot={currentBotSummary}
+          interactions={interactions}
+          onAnswerInteraction={(id, answer) => void answerInteraction(id, answer)}
+          channelTitle={activeChannel.name}
+          messages={currentMessages}
+          artifacts={artifacts}
+          busy={activeResponding}
+          liveText={activeLiveText}
+          notices={notices[activeChannelId] ?? []}
+          composer={composer}
+          onToggleInfo={() => {
+            if (screenOpen) {
+              if (drawerTab === 'profile') {
+                setDrawerTab('screen');
+              } else {
+                setScreenOpen(false);
               }
-        }
-        onRetry={(text, clientMessageId) => void send(text, clientMessageId)}
-      />
+            } else {
+              setDrawerTab('screen');
+              setScreenOpen(true);
+            }
+          }}
+          isGroup={activeChannel.kind === 'room'}
+          members={liveMembers}
+          channelKey={activeChannelId}
+          roundActive={roundActive}
+          doneFlash={doneFlash}
+          memberLimit={roomMemberLimit}
+          onOpenProfile={
+            activeChannel.kind === 'room'
+              ? undefined
+              : () => {
+                  if (screenOpen && drawerTab === 'profile') {
+                    setScreenOpen(false);
+                  } else {
+                    setDrawerTab('profile');
+                    setScreenOpen(true);
+                    setScreenFull(false);
+                  }
+                }
+          }
+          onRetry={(text, clientMessageId) => void send(text, clientMessageId)}
+        />
+      )}
 
       {/* 3. 右侧抽屉：Bot 的屏幕 / 它的记忆 / 资料 */}
       {drawerPresence.mounted ? (
@@ -703,9 +843,10 @@ export default function App() {
         onClose={() => setNewBotOpen(false)}
       />
 
-      {/* 5. 市场与用户偏好设置弹窗 */}
+      {/* 5. 模型管理与偏好设置弹窗 */}
       <SettingsDialog
         open={settingsOpen}
+        openSection={settingsSection}
         theme={preference}
         model={model}
         models={models}
@@ -713,9 +854,12 @@ export default function App() {
         toolCount={tools.length}
         ownerName={ownerName}
         onTheme={setPreference}
-        onModel={setModel}
+        onModel={(next) => void handleModelChange(next)}
         onOwnerName={setOwnerName}
-        onClose={() => setSettingsOpen(false)}
+        onClose={() => {
+          setSettingsOpen(false);
+          void refreshHealth();
+        }}
       />
 
       {!online ? <div className="offline">后端服务未连接 · 当前展示本地联调视图</div> : null}

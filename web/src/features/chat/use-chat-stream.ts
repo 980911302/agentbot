@@ -66,7 +66,9 @@ export function useChatStream(input: {
       if (artifact && deps.getSession().activeChannelId === channelId) deps.setArtifacts(curr => curr.some(item => item.path === artifact.path) ? curr : [...curr, artifact]);
     } else if (entry.kind === 'room') {
       const event = entry.payload as RoomEvent;
-      if (event.type === 'round_end') {
+      if (event.type === 'flow_updated') {
+        window.dispatchEvent(new CustomEvent('agentbot:flow_updated', { detail: event.flow }));
+      } else if (event.type === 'round_end') {
         if (event.outcome.status !== 'spoke') deps.setSilentNotes(prev => ({ ...prev, [channelId]: [...(prev[channelId] ?? []).slice(-19),
           `${event.outcome.agentName} ${event.outcome.status === 'error' ? '出错' : '看过，没开口'}`] }));
       }

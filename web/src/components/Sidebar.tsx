@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { IconCompose, IconGrid, IconPlus, IconSearch, IconTrash } from '../icons';
+import { IconCompose, IconPlus, IconSearch, IconTrash } from '../icons';
 import { BotAvatar } from './BotAvatar';
 
 export interface ChannelItem {
@@ -12,7 +12,7 @@ export interface ChannelItem {
   isGroup?: boolean;
   /** room = 群（扇出给成员）；agent = 1:1 私聊 */
   kind?: 'room' | 'agent';
-  members?: Array<{ id: string; name: string; color: string }>;
+  members?: Array<{ id: string; name: string; color: string; status?: string }>;
   /** 智能体频道的在场状态（来自后端轮询） */
   status?: 'idle' | 'thinking' | 'working' | 'error';
   /** 群未读数（非当前频道收到新消息） */
@@ -24,7 +24,6 @@ interface SidebarProps {
   activeId: string;
   onSelect: (id: string) => void;
   onNew: () => void;
-  onOpenMarket: () => void;
   onOpenProfile: () => void;
   onDelete: (channel: ChannelItem) => void;
   /** 右键编辑智能体资料 / 右键重命名群 */
@@ -51,7 +50,6 @@ export function Sidebar({
   activeId,
   onSelect,
   onNew,
-  onOpenMarket,
   onOpenProfile,
   onDelete,
   onEdit,
@@ -129,23 +127,23 @@ export function Sidebar({
 
   const keyword = query.trim().toLowerCase();
   const visibleChannels = keyword
-    ? channels.filter((item) => item.name.toLowerCase().includes(keyword) || item.lastMessage.toLowerCase().includes(keyword))
+    ? channels.filter((item) => item.name.toLowerCase().includes(keyword))
     : channels;
 
   return (
     <aside className={`app-sidebar${isMini ? ' mini' : ''}`} style={{ width }}>
-      {/* 1. macOS 系统原生红绿灯占位区域 + Plus Action */}
+      {/* 1. 顶栏区域：macOS 原生红绿灯占位（保持左上角干净不显示标题） + Plus Action */}
       <div className="sidebar-window-header">
         <div className="traffic-lights-spacer" />
 
         <button
           type="button"
           className="sidebar-add-btn"
-          aria-label="新建会话或群"
-          title="新建会话或群聊"
+          aria-label="新建智能体或群"
+          title="新建智能体或群聊"
           onClick={onNew}
         >
-          <IconPlus size={18} />
+          <IconPlus size={16} />
         </button>
       </div>
 
@@ -157,7 +155,7 @@ export function Sidebar({
             type="text"
             className="sidebar-search-input"
             value={query}
-            placeholder="搜索"
+            placeholder="搜索会话..."
             onChange={(e) => setQuery(e.target.value)}
           />
           {query ? (
@@ -169,7 +167,9 @@ export function Sidebar({
             >
               ×
             </button>
-          ) : null}
+          ) : (
+            <span className="search-shortcut-hint">⌘K</span>
+          )}
         </label>
       </div>
 
@@ -177,9 +177,9 @@ export function Sidebar({
       <div className="sidebar-channel-list">
         {visibleChannels.length === 0 ? (
           <div className="sidebar-empty">
-            <span className="sidebar-empty-icon">🔍</span>
-            <span className="sidebar-empty-title">无匹配会话</span>
-            <span className="sidebar-empty-hint">换个关键词试试</span>
+            <span className="sidebar-empty-icon">{keyword ? '🔍' : '🤖'}</span>
+            <span className="sidebar-empty-title">{keyword ? '没有叫这个名字的智能体或群' : '暂无智能体'}</span>
+            <span className="sidebar-empty-hint">{keyword ? '换个名字试试' : '点击上方 + 开始创建'}</span>
           </div>
         ) : (
           visibleChannels.map((channel) => {
@@ -214,8 +214,12 @@ export function Sidebar({
                 >
                   <BotAvatar
                     name={channel.name}
-                    color={channel.color || '#8b5cf6'}
+                    color={channel.color || '#b89b6a'}
                     size={36}
+                    status={channel.status}
+                    agentId={channel.id}
+                    isGroup={channel.isGroup || channel.kind === 'room'}
+                    members={channel.members}
                   />
                 </div>
 
@@ -227,11 +231,8 @@ export function Sidebar({
                         <span className="channel-tag group">群</span>
                       ) : null}
                     </div>
-                    {isActive || channel.unread ? (
-                      <span className="channel-blue-dot" />
-                    ) : (
-                      <span className="channel-time">{channel.time}</span>
-                    )}
+                    <span className="channel-time">{channel.time}</span>
+                    {channel.unread ? <span className="channel-unread-dot" title={`${channel.unread} 条未读`} /> : null}
                   </div>
                   <div className="channel-snippet-row">
                     <span className="channel-snippet">{channel.lastMessage}</span>
@@ -243,17 +244,8 @@ export function Sidebar({
         )}
       </div>
 
-      {/* 4. Bottom Footer: Marketplace + User Profile */}
+      {/* 4. Bottom Footer: User Profile & Settings */}
       <div className="sidebar-footer">
-        <button
-          type="button"
-          className="sidebar-footer-btn"
-          onClick={onOpenMarket}
-          title="模型服务与环境配置"
-        >
-          <IconGrid size={17} />
-          <span>市场</span>
-        </button>
 
         {/* Mini 模式下的居中新建按钮 */}
         <button
@@ -296,7 +288,14 @@ export function Sidebar({
           role="menu"
         >
           <div className="context-menu-head">
-            <BotAvatar name={menu.channel.name} color={menu.channel.color || '#8b5cf6'} size={22} />
+            <BotAvatar
+              name={menu.channel.name}
+              color={menu.channel.color || '#b89b6a'}
+              size={22}
+              agentId={menu.channel.id}
+              isGroup={menu.channel.isGroup || menu.channel.kind === 'room'}
+              members={menu.channel.members}
+            />
             <span className="context-menu-name">{menu.channel.name}</span>
             <span className="context-menu-kind">{menu.channel.isGroup ? '群' : '智能体'}</span>
           </div>

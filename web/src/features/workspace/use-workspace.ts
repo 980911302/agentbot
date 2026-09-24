@@ -102,7 +102,7 @@ export function useWorkspace(deps: {
         name: room.name,
         time: formatClock(room.updatedAt),
         lastMessage: room.lastMessage?.text ?? '还没有人说话',
-        color: room.members[0]?.color ?? '#a855f7',
+        color: room.members[0]?.color ?? '#b89b6a',
         role: `${room.members.length} 位成员`,
         isGroup: true,
         kind: 'room' as const,

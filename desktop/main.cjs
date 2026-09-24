@@ -7,6 +7,15 @@ const rootDir = path.resolve(__dirname, '..');
 let serverHandle = null;
 
 async function startBackend() {
+  const existingUrl = process.env.AGENTBOT_SERVER_URL || 'http://127.0.0.1:8787';
+  try {
+    const res = await fetch(`${existingUrl.replace(/\/$/, '')}/api/health`, { signal: AbortSignal.timeout(800) });
+    if (res.ok) {
+      console.log(`[agentbot-desktop] existing backend detected at ${existingUrl}, reusing it`);
+      return existingUrl;
+    }
+  } catch {}
+
   const httpEntry = path.join(rootDir, 'dist', 'server', 'http.js');
   const indexFile = path.join(rootDir, 'web', 'dist', 'index.html');
 
@@ -43,6 +52,14 @@ async function startBackend() {
     }
     // 同一份数据已经有一个后端在跑（单实例锁，E3.6）
     if (error && error.name === 'InstanceLockError') {
+      try {
+        const check = await fetch('http://127.0.0.1:8787/api/health', { signal: AbortSignal.timeout(1000) });
+        if (check.ok) {
+          console.log('[agentbot-desktop] existing AgentBot instance is running at http://127.0.0.1:8787/, connecting to it');
+          return 'http://127.0.0.1:8787/';
+        }
+      } catch {}
+
       dialog.showErrorBox('AgentBot 已经在运行', String(error.message));
       app.exit(1);
       throw error;
@@ -63,12 +80,12 @@ async function createWindow() {
     minWidth: 920,
     minHeight: 620,
     show: false,
-    backgroundColor: '#000000',
+    backgroundColor: '#f7f3ec',
     title: 'AgentBot',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden',
     trafficLightPosition: { x: 16, y: 18 },
     ...(process.platform === 'win32'
-      ? { titleBarOverlay: { color: '#11141b', symbolColor: '#f3f4f6', height: 52 } }
+      ? { titleBarOverlay: { color: '#f7f3ec', symbolColor: '#1a1a1a', height: 52 } }
       : {}),
     webPreferences: {
       contextIsolation: true,
@@ -86,6 +103,10 @@ async function createWindow() {
     const delay = Number.parseInt(process.env.AGENTBOT_SCREENSHOT_DELAY ?? '', 10) || 2500;
     setTimeout(async () => {
       try {
+        if (process.env.AGENTBOT_SCREENSHOT_SCRIPT) {
+          await win.webContents.executeJavaScript(process.env.AGENTBOT_SCREENSHOT_SCRIPT);
+          await new Promise((r) => setTimeout(r, 800));
+        }
         const image = await win.webContents.capturePage();
         fs.writeFileSync(screenshotPath, image.toPNG());
         console.log(`[agentbot-desktop] screenshot saved to ${screenshotPath}`);

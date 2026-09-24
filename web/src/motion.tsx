@@ -24,7 +24,7 @@ export function Collapsible({
   );
 }
 
-const EXIT_MS = 200;
+const EXIT_MS = 320;
 
 /**
  * 让元素在卸载前先播完退出动画。

@@ -54,6 +54,12 @@ export function InteractionCard({ request, onAnswer }: InteractionCardProps) {
       <p className="interaction-question">{request.question}</p>
       {request.detail ? <p className="interaction-detail">{request.detail}</p> : null}
 
+      {expired ? (
+        <div className="interaction-expired-banner">
+          <span>⚠️ 该确认请求已超时，智能体已按预设逻辑继续或挂起</span>
+        </div>
+      ) : null}
+
       {request.kind === 'choice' ? (
         <>
           <div className="interaction-options">
