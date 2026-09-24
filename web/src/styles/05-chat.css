@@ -144,7 +144,7 @@ z-index: var(--z-header);
   padding: 4px 12px;
   border-radius: var(--r-full);
   border: 1px solid var(--border);
-  background: color-mix(in srgb, var(--bg-raised) 70%, transparent);
+  background: color-mix(in srgb, var(--bg-elevated) 70%, transparent);
   box-shadow: none;
   cursor: pointer;
   transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
@@ -454,6 +454,47 @@ z-index: var(--z-dropdown);
   margin: 0 auto;
 }
 
+/* ── 频道加载骨架（bug_d2xiqthtxdmm）：历史没到时先占位，别让聊天区白着 ─ */
+.chat-loading {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 8px 0;
+}
+
+.chat-loading-row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.chat-loading-row.mine {
+  flex-direction: row-reverse;
+}
+
+.chat-loading-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--r-full);
+  flex-shrink: 0;
+}
+
+.chat-loading-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+}
+
+.chat-loading-row.mine .chat-loading-lines {
+  align-items: flex-end;
+}
+
+.chat-loading-lines .skeleton-line {
+  height: 12px;
+  border-radius: var(--r-xs);
+}
+
 /* ── Message Items (1:1 two-column vs group speaker stream) ─ */
 .msg-row,
 .msg-group-item {
@@ -567,7 +608,7 @@ color: var(--on-accent);
   border-radius: 11px;
   display: grid;
   place-items: center;
-  background: var(--bg-raised);
+  background: var(--bg-elevated);
 }
 
 .composite-face {
@@ -588,7 +629,7 @@ color: var(--on-accent);
   height: 14px;
   padding: 0 3px;
   border-radius: 99px;
-  background: var(--bg-raised);
+  background: var(--bg-elevated);
   border: 1px solid var(--border);
   color: var(--text-secondary);
   font-size: 9px;
@@ -849,7 +890,7 @@ background: var(--veil);
 .tool-card-chev {
   color: var(--text-tertiary);
   display: flex;
-  transition: transform var(--dur-base) var(--ease-spring);
+  transition: transform var(--dur-base) var(--ease);
 }
 
 .tool-card-chev.open {

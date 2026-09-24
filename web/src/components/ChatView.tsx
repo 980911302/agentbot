@@ -38,6 +38,8 @@ interface ChatViewProps {
   memberLimit?: number;
   /** 切换频道时用它触发内容淡入 */
   channelKey?: string;
+  /** 频道历史正在加载：显示骨架而不是空白（bug_d2xiqthtxdmm） */
+  loading?: boolean;
   /** 正在等用户回答的卡片 */
   interactions?: InteractionRequest[];
   onAnswerInteraction?: (
@@ -65,6 +67,7 @@ export function ChatView({
   members = [],
   memberLimit = 6,
   channelKey,
+  loading = false,
   interactions,
   onAnswerInteraction,
 }: ChatViewProps) {
@@ -385,7 +388,19 @@ export function ChatView({
         onWheel={onWheel}
       >
         <div className="chat-message-list swap" key={channelKey}>
-          {messages.length === 0 ? (
+          {loading ? (
+            <div className="chat-loading" aria-busy="true" aria-live="polite">
+              {[0, 1, 2].map((row) => (
+                <div className={`chat-loading-row${row % 2 === 1 ? ' mine' : ''}`} key={row}>
+                  <div className="skeleton chat-loading-avatar" />
+                  <div className="chat-loading-lines">
+                    <div className="skeleton skeleton-line" style={{ width: '32%' }} />
+                    <div className="skeleton skeleton-line" style={{ width: row === 1 ? '58%' : '76%' }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : messages.length === 0 ? (
             <ChatWelcome
               ownerName={ownerName}
               bot={bot}

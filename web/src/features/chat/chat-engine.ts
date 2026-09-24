@@ -8,6 +8,8 @@ interface PendingSend { channelId: string; text: string; uncertain: boolean }
 /** 无框架聊天状态引擎。只有这里拥有运行/消息状态；React 只是订阅与 UI 适配。 */
 export class ChatEngine {
   histories: Record<string, DisplayMessage[]> = {};
+  /** 哪些频道已经拉过快照——切频道时据此决定要不要显示骨架（bug_d2xiqthtxdmm） */
+  loadedChannels: Record<string, true> = {};
   interactions: InteractionRequest[] = [];
   private interactionSeq = 0;
   readonly runs = new Map<string, ChatRun>();
@@ -21,7 +23,13 @@ export class ChatEngine {
   private listeners = new Set<() => void>();
   private snapshotQueue: Promise<unknown> = Promise.resolve();
   load(read: () => Promise<Snapshot>): Promise<Snapshot> {
-    const pending = this.snapshotQueue.catch(() => undefined).then(read).then(snapshot => { this.restore(snapshot); return snapshot; });
+    const pending = this.snapshotQueue.catch(() => undefined).then(read).then(snapshot => {
+      this.restore(snapshot);
+      // 快照回来了就说明这些频道的历史已到手：可能有消息，也可能真空（空频道不该一直转骨架）
+      for (const channelId of Object.keys(snapshot.channels)) this.loadedChannels[channelId] = true;
+      this.changed();
+      return snapshot;
+    });
     this.snapshotQueue = pending;
     return pending;
   }

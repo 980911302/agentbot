@@ -199,6 +199,30 @@ export default function App() {
   );
 
   const currentMessages = channelHistories[activeChannelId] ?? [];
+  /**
+   * 频道历史加载态（bug_d2xiqthtxdmm）：切频道时消息是异步 load 的，期间聊天区
+   * 会白一片。对还没拉到过快照的频道显示骨架，且只在等过 300ms 之后——数据快
+   * 到位时不闪那一下。用两个 state 而不是只在 effect 里翻 ref：ref 会留着上一个
+   * 频道的值，切过去那一刻把上一频道的「加载中」带到新频道，骨架闪一下就没了。
+   */
+  const channelLoaded = activeChannelId ? chatEngine.loadedChannels[activeChannelId] === true : true;
+  const [waitingTooLong, setWaitingTooLong] = useState(false);
+  useEffect(() => {
+    if (!activeChannelId) return undefined;
+    if (channelLoaded) {
+      setWaitingTooLong(false);
+      return undefined;
+    }
+    let live = true;
+    const timer = window.setTimeout(() => {
+      if (live) setWaitingTooLong(true);
+    }, 300);
+    return () => {
+      live = false;
+      window.clearTimeout(timer);
+      setWaitingTooLong(false);
+    };
+  }, [activeChannelId, channelLoaded]);
   /** 当前频道是否还在等一条可见回复；后台记忆收尾不算。 */
   const activeResponding = respondingChannelIds.includes(activeChannelId);
   const activeLiveText = chatEngine.liveFor(activeChannelId);
@@ -700,6 +724,7 @@ export default function App() {
           isGroup={activeChannel.kind === 'room'}
           members={liveMembers}
           channelKey={activeChannelId}
+          loading={!channelLoaded && waitingTooLong && currentMessages.length === 0}
           roundActive={roundActive}
           doneFlash={doneFlash}
           memberLimit={roomMemberLimit}
