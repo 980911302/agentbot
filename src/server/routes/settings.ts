@@ -233,15 +233,29 @@ export async function handleModelSettingsRoute(
       : targetProvider?.models[0]) as any;
 
     const rawKey = readString(body.apiKey)?.trim();
+    // 界面回填的是打码值，不代表用户提供了新 Key
+    const hasNewKey = rawKey !== undefined && rawKey.length > 0 && !rawKey.includes('••••');
     const storedKey = targetProvider?.apiKey || targetModel?.apiKey || stored.apiKey;
-    const apiKey = rawKey && !rawKey.includes('••••') ? rawKey : storedKey;
-    const baseURL = (
-      readString(body.baseURL)?.trim() ||
+    const storedBaseURL = (
       targetProvider?.baseURL ||
       targetModel?.baseURL ||
       stored.baseURL ||
       'https://api.openai.com/v1'
     ).replace(/\/+$/, '');
+    const requestedBaseURL = readString(body.baseURL)?.trim().replace(/\/+$/, '');
+
+    // 已保存的 Key 只属于它自己的地址：请求体换了地址，就必须同时给新 Key，
+    // 否则 { providerId, baseURL: 任意地址 } 就能把 Key 骗到对端去
+    if (requestedBaseURL && requestedBaseURL !== storedBaseURL && !hasNewKey) {
+      json(response, 400, {
+        ok: false,
+        error: '修改接口地址时必须同时提供新的 API Key：已保存的 Key 只会发往它所属的地址',
+      });
+      return;
+    }
+
+    const apiKey = hasNewKey ? rawKey : storedKey;
+    const baseURL = requestedBaseURL || storedBaseURL;
 
     const model = readString(body.model)?.trim() || targetModel?.model || stored.model || 'o3-mini';
     const thinkingEnabled =
