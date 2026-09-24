@@ -97,6 +97,17 @@ npm run dev -- "读一下 package.json"   # 命令行单次对话
 | `/api/interactions`、`/api/interactions/:id` | GET 待答卡；POST 回答或取消 |
 | `/api/secrets`、`/api/secrets/:name` | GET 密钥名字（不含值）；DELETE 删除 |
 
+### 本机请求守卫
+
+服务只监听 127.0.0.1，但仍有跨站调用与 DNS 重绑定的风险，因此在路由分发前统一校验（实现 `src/server/transport/request-guard.ts`）：
+
+- **Host 必须回环**（`127.0.0.0/8`、`localhost` 及其子域、`::1`），否则 403 `FORBIDDEN_HOST`。
+- **写操作（POST/PUT/PATCH/DELETE）带 Origin 时，来源必须是本应用**：同源回环（任意端口，含 Vite 开发端口）或桌面端 `file://`；外站来源与 `Origin: null` 一律 403 `FORBIDDEN_ORIGIN`。
+- **带 Origin 的请求若带 body，Content-Type 必须是 `application/json`**，否则 403 `FORBIDDEN_CONTENT_TYPE`（挡住 text/plain、表单这类不触发 CORS 预检的简单请求）。
+- 不带 Origin 的调用视为本机进程（CLI、`curl`、测试、桌面主进程）放行——浏览器发出的跨站写请求一定会带 Origin，无从伪造。
+
+回归测试见 `test/http-request-guard.test.ts`。
+
 ### 事件订阅（SSE）
 
 - `ready`：`{ latestSeq, resync }`；`resync=true` 表示游标太旧或后端重启过，客户端先取快照再从 `latestSeq` 往后订阅。

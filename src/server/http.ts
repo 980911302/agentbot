@@ -11,7 +11,7 @@ import { AgentRuntime } from './runtime.js';
 import { DataDirLock } from '../storage/instance-lock.js';
 import { SEED_AGENTS, SEED_ROOMS } from './seed.js';
 import { createAgentTools } from './tools.js';
-import { json, serveStatic } from './transport/index.js';
+import { json, serveStatic, checkRequest } from './transport/index.js';
 import type { RouteContext } from './routes/context.js';
 import { handleBotsCollection, handleBotItem } from './routes/bots.js';
 import {
@@ -219,6 +219,14 @@ async function handleRequest(
   const url = new URL(request.url ?? '/', 'http://localhost');
   const path = url.pathname;
   const method = request.method ?? 'GET';
+
+  // 本机请求守卫（bug_yc9t7bf99uf1）：Host 必须回环、写操作来源必须是本应用、浏览器请求必须是 JSON。
+  // 放在路由之前，未命中的路径也一并不被外站驱动
+  const rejection = checkRequest(request);
+  if (rejection) {
+    json(response, rejection.status, { error: rejection.error, code: rejection.code });
+    return;
+  }
 
   if (path === '/api/health') {
     await handleHealthRoute(response, context);
