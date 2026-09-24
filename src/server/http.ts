@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { resolve } from 'node:path';
-import { AVAILABLE_MODELS, resolveConfig } from '../config.js';
+import { resolveConfig } from '../config.js';
+import { pickerOptionsFromProviders } from '../shared/contracts/model-catalog.js';
 import { MemoryStore } from '../memory/store.js';
 import { InteractionBroker } from '../interaction/broker.js';
 import { SecretStore } from '../secret/store.js';
@@ -26,6 +27,8 @@ import { handleSecretsCollection } from './routes/secrets.js';
 import { handleHealthRoute } from './routes/health.js';
 import { handleEventsRoute } from './routes/events.js';
 import { ReplyFinalizer } from './runtime/reply-finalizer.js';
+import { ModelConfigStore } from '../storage/model-config-store.js';
+import { handleModelSettingsRoute } from './routes/settings.js';
 
 export interface AgentServerOptions {
   port?: number;
@@ -50,14 +53,28 @@ export interface AgentServerHandle {
 export async function createAgentServer(options: AgentServerOptions = {}): Promise<AgentServerHandle> {
   const rootDir = resolve(options.rootDir ?? process.cwd());
   const config = resolveConfig({ env: process.env, rootDir, allowMissingKey: options.allowMissingKey });
-  const models = AVAILABLE_MODELS.some((item) => item.id === config.model)
-    ? AVAILABLE_MODELS
-    : [{ id: config.model, label: config.model, hint: '来自环境变量配置' }, ...AVAILABLE_MODELS];
-
   const dataDir = options.dataDir ?? config.dataDir;
   // E3.6：同一份数据只允许一个调度器；崩溃留下的锁会被接管
   const lock = new DataDirLock(dataDir);
   await lock.acquire();
+
+  // 读取已保存的自定义模型配置（优先于环境变量）
+  const modelConfigStore = new ModelConfigStore(dataDir);
+  const storedModel = await modelConfigStore.load({
+    baseURL: config.baseURL,
+    apiKey: config.apiKey,
+    model: config.model,
+    thinkingEnabled: true,
+    thinkingLevel: 'medium',
+  });
+
+  const activeApiKey = storedModel.apiKey || config.apiKey;
+  const activeBaseURL = storedModel.baseURL || config.baseURL;
+  const activeModel = storedModel.model || config.model;
+
+  const models = pickerOptionsFromProviders(storedModel.providers);
+  const knownModels = models.length > 0 ? models.map((item) => item.id) : [activeModel];
+
   const memoryStore = new MemoryStore(dataDir);
   const broker = new InteractionBroker();
   const secrets = new SecretStore(dataDir);
@@ -73,10 +90,18 @@ export async function createAgentServer(options: AgentServerOptions = {}): Promi
     tools,
     createProvider:
       options.createProvider ??
-      ((model) => new OpenAIProvider({ apiKey: config.apiKey, model, baseURL: config.baseURL })),
+      ((model) =>
+        new OpenAIProvider({
+          apiKey: activeApiKey,
+          model,
+          baseURL: activeBaseURL,
+          thinkingEnabled: storedModel.thinkingEnabled !== false,
+          thinkingLevel: storedModel.thinkingLevel || 'medium',
+          temperature: storedModel.temperature,
+        })),
     dataDir,
-    defaultModel: config.model,
-    knownModels: models.map((item) => item.id),
+    defaultModel: activeModel,
+    knownModels,
     budget: config.budget,
     memoryExtraction: config.memoryExtraction,
     memoryStore,
@@ -102,6 +127,7 @@ export async function createAgentServer(options: AgentServerOptions = {}): Promi
         inputId: input.inputId ?? input.actorId,
         content: input.content,
         deliveryRefs: input.deliveryRefs,
+        allowedReceiptIds: input.allowedReceiptIds,
         source: input.source,
       });
     },
@@ -109,7 +135,12 @@ export async function createAgentServer(options: AgentServerOptions = {}): Promi
 
   // 健康检查报全量工具面（常驻 + 平台层），而不是装配前的常驻子集
   const toolDefs = runtime.tools.map((tool) => ({ name: tool.name, description: tool.description }));
-  await runtime.ensureDefaultAgent();
+  await runtime.registry.syncDefaultTools();
+  await runtime.migrateExistingAgents();
+  const fileExisted = await runtime.registry.existed();
+  if (!fileExisted || (runtime.options.seed?.length ?? 0) > 0) {
+    await runtime.ensureDefaultAgent();
+  }
   await runtime.ensureSeedRooms();
 
   // E3.6 启动扫描：核对上次进程留下的中断调用、把没确认的来信重投并接着办
@@ -129,7 +160,7 @@ export async function createAgentServer(options: AgentServerOptions = {}): Promi
   const context: RouteContext = {
     runtime,
     staticDir: options.staticDir ? resolve(options.staticDir) : undefined,
-    model: config.model,
+    model: activeModel,
     models,
     tools: toolDefs,
     budget: config.budget,
@@ -190,7 +221,12 @@ async function handleRequest(
   const method = request.method ?? 'GET';
 
   if (path === '/api/health') {
-    handleHealthRoute(response, context);
+    await handleHealthRoute(response, context);
+    return;
+  }
+
+  if (path.startsWith('/api/settings/model')) {
+    await handleModelSettingsRoute(request, response, context);
     return;
   }
 

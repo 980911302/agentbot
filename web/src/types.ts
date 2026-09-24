@@ -24,6 +24,8 @@ import type {
   InteractionRequest,
 } from '../../src/shared/contracts/sse.js';
 export type { InteractionKind, InteractionOption, InteractionRequest };
+import type { RoomFlowView } from '../../src/shared/contracts/room-flow.js';
+export type { RoomFlowView };
 
 export type AgentEvent = WireAgentEvent;
 
@@ -93,6 +95,10 @@ export interface ModelOption {
   id: string;
   label: string;
   hint: string;
+  providerId?: string;
+  modelConfigId?: string;
+  thinkingEnabled?: boolean;
+  thinkingLevel?: 'low' | 'medium' | 'high';
 }
 
 export interface ToolInfo {
@@ -103,6 +109,8 @@ export interface ToolInfo {
 export interface HealthInfo {
   ok: boolean;
   model: string;
+  thinkingEnabled?: boolean;
+  thinkingLevel?: 'low' | 'medium' | 'high';
   models: ModelOption[];
   tools: ToolInfo[];
 }
@@ -195,7 +203,8 @@ export type RoomEvent =
   | { type: 'room_message'; message: RoomMessage }
   | { type: 'round_start'; roundId: string; agentId: string; agentName: string }
   | { type: 'round_end'; outcome: RoundOutcome }
-  | { type: 'fanout_done'; roundId: string; spoke: number; silent: number };
+  | { type: 'fanout_done'; roundId: string; spoke: number; silent: number }
+  | { type: 'flow_updated'; flow: RoomFlowView };
 
 export interface ContextSectionStat {
   key: string;

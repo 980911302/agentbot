@@ -26,11 +26,22 @@ export async function fetchBots(): Promise<BotSummary[]> {
   return data.bots;
 }
 
-export async function createBot(input: { name: string; role: string }): Promise<BotSummary> {
+export async function createBot(input: {
+  name: string;
+  role: string;
+  color?: string;
+  title?: string;
+}): Promise<BotSummary> {
   const data = await request<{ bot: BotSummary }>('/api/bots', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(input),
+    body: JSON.stringify({
+      name: input.name,
+      instructions: input.role,
+      role: input.role,
+      color: input.color,
+      title: input.title,
+    }),
   });
   return data.bot;
 }
@@ -44,6 +55,7 @@ export async function updateBot(
   id: string,
   input: {
     name?: string;
+    title?: string;
     instructions?: string;
     description?: string;
     section?: string;
@@ -274,5 +286,240 @@ export async function readEvents(
       return;
     }
     if (event === 'entry') handlers.onEntry(data as JournalEntry);
+  });
+}
+
+/** 获取群当前活跃流程 */
+export async function fetchRoomFlow(roomId: string): Promise<import('./types').RoomFlowView | null> {
+  const data = await request<{ ok: boolean; flow: import('./types').RoomFlowView | null }>(
+    `/api/rooms/${encodeURIComponent(roomId)}/flow`,
+  );
+  return data.flow ?? null;
+}
+
+/** 控制群流程：暂停 / 恢复 / 取消 */
+export async function controlRoomFlow(
+  roomId: string,
+  action: 'pause' | 'resume' | 'cancel',
+  reason?: string,
+): Promise<import('./types').RoomFlowView | null> {
+  const data = await request<{ ok: boolean; flow: import('./types').RoomFlowView | null }>(
+    `/api/rooms/${encodeURIComponent(roomId)}/flow/control`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ action, reason }),
+    },
+  );
+  return data.flow ?? null;
+}
+
+export interface ConfiguredModelItem {
+  id: string;
+  name: string;
+  provider: string;
+  baseURL: string;
+  apiKey: string;
+  hasKey?: boolean;
+  model: string;
+  thinkingEnabled: boolean;
+  thinkingLevel: 'low' | 'medium' | 'high';
+  temperature?: number;
+  isDefault?: boolean;
+  createdAt?: number;
+  updatedAt?: number;
+}
+
+export interface ProviderModelConfig {
+  id: string;
+  model: string;
+  name?: string;
+  contextWindow?: string;
+  thinkingEnabled?: boolean;
+  thinkingLevel?: 'low' | 'medium' | 'high';
+  temperature?: number;
+  isActive?: boolean;
+}
+
+export interface ProviderItemConfig {
+  id: string;
+  name: string;
+  group: string;
+  enabled: boolean;
+  baseURL: string;
+  apiFormat: 'openai' | 'responses';
+  apiKey: string;
+  hasKey?: boolean;
+  models: ProviderModelConfig[];
+  createdAt?: number;
+  updatedAt?: number;
+}
+
+export interface ModelSettingsData {
+  config: {
+    activeProviderId?: string;
+    activeModelId?: string;
+    baseURL: string;
+    apiKey: string;
+    hasKey: boolean;
+    model: string;
+    thinkingEnabled: boolean;
+    thinkingLevel: 'low' | 'medium' | 'high';
+    temperature?: number;
+  };
+  providers: ProviderItemConfig[];
+  models: ConfiguredModelItem[];
+  catalog: import('../../src/shared/contracts/model-catalog').ModelThinkingInfo[];
+  presets: import('../../src/shared/contracts/model-catalog').ProviderPreset[];
+  standardLevels: import('../../src/shared/contracts/model-catalog').ThinkingLevelOption[];
+}
+
+export async function fetchModelSettings(): Promise<ModelSettingsData> {
+  return request<ModelSettingsData>('/api/settings/model');
+}
+
+export async function saveModelSettings(patch: {
+  baseURL?: string;
+  apiKey?: string;
+  model?: string;
+  thinkingEnabled?: boolean;
+  thinkingLevel?: 'low' | 'medium' | 'high';
+  temperature?: number;
+}): Promise<{ ok: boolean; config: ModelSettingsData['config']; providers: ProviderItemConfig[]; models: ConfiguredModelItem[] }> {
+  return request('/api/settings/model', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(patch),
+  });
+}
+
+export async function saveProviderConfig(
+  provider: Partial<ProviderItemConfig> & { id: string },
+): Promise<{ ok: boolean; config: ModelSettingsData['config']; providers: ProviderItemConfig[]; models: ConfiguredModelItem[] }> {
+  return request('/api/settings/model', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ action: 'save_provider', provider }),
+  });
+}
+
+export async function deleteProviderConfig(
+  id: string,
+): Promise<{ ok: boolean; config: ModelSettingsData['config']; providers: ProviderItemConfig[]; models: ConfiguredModelItem[] }> {
+  return request('/api/settings/model', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ action: 'delete_provider', id }),
+  });
+}
+
+export async function saveModelToProvider(
+  providerId: string,
+  model: Partial<ProviderModelConfig> & { id: string },
+  setAsActive = false,
+): Promise<{ ok: boolean; config: ModelSettingsData['config']; providers: ProviderItemConfig[]; models: ConfiguredModelItem[] }> {
+  return request('/api/settings/model', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ action: 'save_model', providerId, model, setAsActive }),
+  });
+}
+
+export async function deleteModelFromProvider(
+  providerId: string,
+  modelId: string,
+): Promise<{ ok: boolean; config: ModelSettingsData['config']; providers: ProviderItemConfig[]; models: ConfiguredModelItem[] }> {
+  return request('/api/settings/model', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ action: 'delete_model', providerId, modelId }),
+  });
+}
+
+export async function setActiveProviderModel(
+  providerId: string,
+  modelId: string,
+): Promise<{ ok: boolean; config: ModelSettingsData['config']; providers: ProviderItemConfig[]; models: ConfiguredModelItem[] }> {
+  return request('/api/settings/model', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ action: 'set_active', providerId, modelId }),
+  });
+}
+
+export async function addConfiguredModel(data: {
+  name: string;
+  provider: string;
+  baseURL: string;
+  apiKey?: string;
+  model: string;
+  thinkingEnabled?: boolean;
+  thinkingLevel?: 'low' | 'medium' | 'high';
+  temperature?: number;
+  setAsDefault?: boolean;
+}): Promise<{ ok: boolean; config: ModelSettingsData['config']; providers: ProviderItemConfig[]; models: ConfiguredModelItem[] }> {
+  return request('/api/settings/model', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ action: 'add', ...data }),
+  });
+}
+
+export async function updateConfiguredModel(
+  id: string,
+  data: {
+    name?: string;
+    provider?: string;
+    baseURL?: string;
+    apiKey?: string;
+    model?: string;
+    thinkingEnabled?: boolean;
+    thinkingLevel?: 'low' | 'medium' | 'high';
+    temperature?: number;
+    setAsDefault?: boolean;
+  },
+): Promise<{ ok: boolean; config: ModelSettingsData['config']; providers: ProviderItemConfig[]; models: ConfiguredModelItem[] }> {
+  return request('/api/settings/model', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ action: 'update', id, ...data }),
+  });
+}
+
+export async function deleteConfiguredModel(
+  id: string,
+): Promise<{ ok: boolean; config: ModelSettingsData['config']; providers: ProviderItemConfig[]; models: ConfiguredModelItem[] }> {
+  return request('/api/settings/model', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ action: 'delete', id }),
+  });
+}
+
+export async function setActiveModelConfig(
+  id: string,
+): Promise<{ ok: boolean; config: ModelSettingsData['config']; providers: ProviderItemConfig[]; models: ConfiguredModelItem[] }> {
+  return request('/api/settings/model', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ action: 'set_active', id }),
+  });
+}
+
+export async function testModelSettings(data: {
+  id?: string;
+  providerId?: string;
+  modelId?: string;
+  baseURL?: string;
+  apiKey?: string;
+  model?: string;
+  thinkingEnabled?: boolean;
+  thinkingLevel?: 'low' | 'medium' | 'high';
+  apiFormat?: string;
+}): Promise<{ ok: boolean; message?: string; error?: string; preview?: string; latencyMs?: number }> {
+  return request('/api/settings/model/test', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(data),
   });
 }

@@ -9,6 +9,10 @@ export interface OpenAIProviderConfig {
   timeoutMs?: number;
   /** 流式空闲超时：连续这么久没有字节视为停滞（默认 60s，单测可调短） */
   streamIdleTimeoutMs?: number;
+  /** 是否开启思考模式（默认开启） */
+  thinkingEnabled?: boolean;
+  /** 思考等级 / 推理深度（low | medium | high，默认 medium） */
+  thinkingLevel?: 'low' | 'medium' | 'high';
 }
 
 interface WireToolCall {
@@ -78,6 +82,8 @@ export class OpenAIProvider implements LLMProvider {
   private readonly temperature: number | undefined;
   private readonly timeoutMs: number;
   private readonly streamIdleMs: number;
+  private readonly thinkingEnabled: boolean;
+  private readonly thinkingLevel: 'low' | 'medium' | 'high';
 
   constructor(config: OpenAIProviderConfig) {
     if (!config.apiKey) throw new Error('OpenAIProvider: apiKey is required');
@@ -88,6 +94,8 @@ export class OpenAIProvider implements LLMProvider {
     this.temperature = config.temperature;
     this.timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.streamIdleMs = config.streamIdleTimeoutMs ?? STREAM_IDLE_TIMEOUT_MS;
+    this.thinkingEnabled = config.thinkingEnabled !== false;
+    this.thinkingLevel = config.thinkingLevel ?? 'medium';
   }
 
   async chat(messages: LLMMessage[], options: ChatOptions = {}): Promise<LLMResponse> {
@@ -98,13 +106,20 @@ export class OpenAIProvider implements LLMProvider {
       messages: messages.map(toWireMessage),
     };
 
+    if (this.thinkingEnabled) {
+      body.reasoning_effort = this.thinkingLevel;
+      const budget = this.thinkingLevel === 'low' ? 2048 : this.thinkingLevel === 'high' ? 24576 : 8192;
+      body.thinking = { type: 'enabled', budget_tokens: budget };
+    }
+
     if (options.tools && options.tools.length > 0) {
       body.tools = options.tools.map(toWireTool);
       body.tool_choice = 'auto';
     }
 
+    const isReasoningModel = /^(o1|o3)/i.test(this.model);
     const temperature = options.temperature ?? this.temperature;
-    if (temperature !== undefined) body.temperature = temperature;
+    if (temperature !== undefined && !isReasoningModel) body.temperature = temperature;
 
     const timeout = AbortSignal.timeout(this.timeoutMs);
     const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
@@ -135,8 +150,13 @@ export class OpenAIProvider implements LLMProvider {
     const choice = data.choices?.[0];
     if (!choice) throw new Error('LLM response contained no choices');
 
+    const rawMsg = choice.message as any;
+    // 思维链（reasoning_content）不并进对话正文：聊天里不展示思考过程，
+    // 正文只保留回复本身，避免把推理文本当成助理消息存下来、复制和外发。
+    const messageContent = rawMsg?.content ?? null;
+
     return {
-      content: choice.message?.content ?? null,
+      content: messageContent,
       toolCalls: (choice.message?.tool_calls ?? []).map(toToolCall),
       finishReason: choice.finish_reason ?? null,
       usage: toUsage(data.usage),
@@ -152,12 +172,18 @@ export class OpenAIProvider implements LLMProvider {
       stream: true,
       stream_options: { include_usage: true },
     };
+    if (this.thinkingEnabled) {
+      body.reasoning_effort = this.thinkingLevel;
+      const budget = this.thinkingLevel === 'low' ? 2048 : this.thinkingLevel === 'high' ? 24576 : 8192;
+      body.thinking = { type: 'enabled', budget_tokens: budget };
+    }
     if (options.tools && options.tools.length > 0) {
       body.tools = options.tools.map(toWireTool);
       body.tool_choice = 'auto';
     }
+    const isReasoningModel = /^(o1|o3)/i.test(this.model);
     const temperature = options.temperature ?? this.temperature;
-    if (temperature !== undefined) body.temperature = temperature;
+    if (temperature !== undefined && !isReasoningModel) body.temperature = temperature;
 
     const timeout = AbortSignal.timeout(this.timeoutMs);
     const outer = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
@@ -217,7 +243,11 @@ export class OpenAIProvider implements LLMProvider {
       const choice = chunk.choices?.[0];
       if (!choice) return;
       if (choice.finish_reason) finishReason = choice.finish_reason;
-      if (choice.delta?.content) {
+
+      // 思维链增量只用于模型侧观测，不进正文、不上屏、不入库
+      if ((choice.delta as any)?.reasoning_content) {
+        // 忽略：reasoning_content 与 content 同一 delta 到达时，下面的分支仍会处理正文
+      } else if (choice.delta?.content) {
         content += choice.delta.content;
         if (content.length > 64000) throw new Error('模型正文超过 64000 字符，请拆分任务');
         onDelta(choice.delta.content);

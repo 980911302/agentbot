@@ -13,6 +13,10 @@ export interface ModelOption {
   id: string;
   label: string;
   hint: string;
+  providerId?: string;
+  modelConfigId?: string;
+  thinkingEnabled?: boolean;
+  thinkingLevel?: 'low' | 'medium' | 'high';
 }
 
 export const AVAILABLE_MODELS: ModelOption[] = [
