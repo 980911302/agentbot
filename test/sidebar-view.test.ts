@@ -136,24 +136,24 @@ describe('sidebarWidthByKey：拖拽手柄的键盘调宽', () => {
   it('左右方向键按 16px 步进，Shift 加速', () => {
     assert.equal(sidebarWidthByKey(260, 'ArrowRight'), 276);
     assert.equal(sidebarWidthByKey(260, 'ArrowLeft'), 244);
-    assert.equal(sidebarWidthByKey(260, 'ArrowRight', true), 308);
+    assert.equal(sidebarWidthByKey(260, 'ArrowRight', true), 300);
   });
 
   it('和拖拽同一套吸附：窄到 160 以下收成迷你，迷你再按右键回到 200', () => {
     assert.equal(sidebarWidthByKey(200, 'ArrowLeft', true), 72);
     assert.equal(sidebarWidthByKey(72, 'ArrowRight'), 200);
-    assert.equal(sidebarWidthByKey(450, 'ArrowRight'), 450);
+    assert.equal(sidebarWidthByKey(300, 'ArrowRight'), 300);
   });
 
   it('Home / End 到两端，其它键不处理', () => {
     assert.equal(sidebarWidthByKey(260, 'Home'), 72);
-    assert.equal(sidebarWidthByKey(260, 'End'), 450);
+    assert.equal(sidebarWidthByKey(260, 'End'), 300);
     assert.equal(sidebarWidthByKey(260, 'a'), null);
   });
 
-  it('snapSidebarWidth 夹在 200–450', () => {
+  it('snapSidebarWidth 夹在 200–300', () => {
     assert.equal(snapSidebarWidth(100), 72);
     assert.equal(snapSidebarWidth(180), 200);
-    assert.equal(snapSidebarWidth(999), 450);
+    assert.equal(snapSidebarWidth(999), 300);
   });
 });

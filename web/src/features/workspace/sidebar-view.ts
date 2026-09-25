@@ -95,12 +95,12 @@ export function sidebarWidthByKey(width: number, key: string, shift = false): nu
   if (key === 'ArrowLeft') return snapSidebarWidth(width - step);
   if (key === 'ArrowRight') return snapSidebarWidth(width <= 90 ? 200 : width + step);
   if (key === 'Home') return 72;
-  if (key === 'End') return 450;
+  if (key === 'End') return 300;
   return null;
 }
 
-/** 拖拽 / 键盘共用的吸附：小于 160 收成迷你 72，其余夹在 200–450 */
+/** 拖拽 / 键盘共用的吸附：小于 160 收成迷你 72，其余夹在 200–300 */
 export function snapSidebarWidth(width: number): number {
   if (width < 160) return 72;
-  return Math.min(450, Math.max(200, width));
+  return Math.min(300, Math.max(200, width));
 }

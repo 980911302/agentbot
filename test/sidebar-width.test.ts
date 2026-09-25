@@ -27,15 +27,17 @@ describe('loadSidebarWidth：读本地宽度', () => {
     assert.equal(loadSidebarWidth(store()), 260);
   });
 
-  it('存过且在 64–500 之间就照用（含端点）', () => {
+  it('迷你宽度与 200–300 之间的宽度照用（含端点）', () => {
     assert.equal(loadSidebarWidth(store({ [SIDEBAR_WIDTH_KEY]: '300' })), 300);
-    assert.equal(loadSidebarWidth(store({ [SIDEBAR_WIDTH_KEY]: '64' })), 64);
-    assert.equal(loadSidebarWidth(store({ [SIDEBAR_WIDTH_KEY]: '500' })), 500);
+    assert.equal(loadSidebarWidth(store({ [SIDEBAR_WIDTH_KEY]: '72' })), 72);
+    assert.equal(loadSidebarWidth(store({ [SIDEBAR_WIDTH_KEY]: '200' })), 200);
   });
 
   it('越界 / 损坏 / 空串都回默认值，不抛', () => {
-    assert.equal(loadSidebarWidth(store({ [SIDEBAR_WIDTH_KEY]: '63' })), SIDEBAR_DEFAULT_WIDTH);
-    assert.equal(loadSidebarWidth(store({ [SIDEBAR_WIDTH_KEY]: '501' })), SIDEBAR_DEFAULT_WIDTH);
+    assert.equal(loadSidebarWidth(store({ [SIDEBAR_WIDTH_KEY]: '64' })), SIDEBAR_DEFAULT_WIDTH);
+    assert.equal(loadSidebarWidth(store({ [SIDEBAR_WIDTH_KEY]: '180' })), SIDEBAR_DEFAULT_WIDTH);
+    assert.equal(loadSidebarWidth(store({ [SIDEBAR_WIDTH_KEY]: '320' })), SIDEBAR_DEFAULT_WIDTH);
+    assert.equal(loadSidebarWidth(store({ [SIDEBAR_WIDTH_KEY]: '450' })), SIDEBAR_DEFAULT_WIDTH);
     assert.equal(loadSidebarWidth(store({ [SIDEBAR_WIDTH_KEY]: '宽一点' })), SIDEBAR_DEFAULT_WIDTH);
     assert.equal(loadSidebarWidth(store({ [SIDEBAR_WIDTH_KEY]: '' })), SIDEBAR_DEFAULT_WIDTH);
   });
@@ -54,8 +56,8 @@ describe('loadSidebarWidth：读本地宽度', () => {
 describe('saveSidebarWidth：写本地宽度', () => {
   it('按用户拖出来的值原样存（宽度由档位决定时调用方不会写）', () => {
     const target = store();
-    saveSidebarWidth(target, 321.5);
-    assert.equal(target.written[SIDEBAR_WIDTH_KEY], '321.5');
+    saveSidebarWidth(target, 288.5);
+    assert.equal(target.written[SIDEBAR_WIDTH_KEY], '288.5');
   });
 
   it('存储写不了时静默失败，不打断用户', () => {

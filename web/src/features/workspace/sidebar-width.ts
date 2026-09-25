@@ -6,9 +6,9 @@
  */
 
 export const SIDEBAR_WIDTH_KEY = 'agentbot.sidebarWidth';
-/** 折叠与拖拽的合法区间：小于 64 视为折叠，超过 500 没有意义 */
-export const SIDEBAR_MIN_WIDTH = 64;
-export const SIDEBAR_MAX_WIDTH = 500;
+/** 侧栏约占常见桌面窗口的五分之一；旧版保存的超宽值恢复为默认宽度 */
+export const SIDEBAR_MIN_WIDTH = 72;
+export const SIDEBAR_MAX_WIDTH = 300;
 export const SIDEBAR_DEFAULT_WIDTH = 260;
 /** 窄档自动迷你宽度（UI-09） */
 export const SIDEBAR_MINI_WIDTH = 72;
@@ -27,7 +27,7 @@ export function loadSidebarWidth(store: SidebarWidthStore): number {
     const saved = store.getItem(SIDEBAR_WIDTH_KEY);
     if (saved) {
       const parsed = Number(saved);
-      if (Number.isFinite(parsed) && parsed >= SIDEBAR_MIN_WIDTH && parsed <= SIDEBAR_MAX_WIDTH) {
+      if (Number.isFinite(parsed) && (parsed === SIDEBAR_MIN_WIDTH || (parsed >= 200 && parsed <= SIDEBAR_MAX_WIDTH))) {
         return parsed;
       }
     }

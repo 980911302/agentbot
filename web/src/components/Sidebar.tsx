@@ -112,6 +112,7 @@ export function Sidebar({
   const [menu, setMenu] = useState<MenuState | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
+  const pinDropRef = useRef<HTMLDivElement | null>(null);
   /** ⌘K 在迷你模式下先展开，展开完成后再聚焦（见下方 effect） */
   const expandPendingRef = useRef(false);
 
@@ -303,6 +304,17 @@ export function Sidebar({
     setDraggingChannelId(null);
   };
 
+  // 高度在动画中从 0 展开；快速拖动时用完整目标高度接住放置。
+  const isOverPinDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    if (!draggingChannelId) return false;
+    const target = pinDropRef.current;
+    if (!target) return false;
+    const rect = target.getBoundingClientRect();
+    const openHeight = Number.parseFloat(getComputedStyle(target).getPropertyValue('--pin-drop-height'));
+    return event.clientX >= rect.left && event.clientX <= rect.right
+      && event.clientY >= rect.top && event.clientY <= rect.top + openHeight;
+  };
+
   const renderChannel = (channel: ChannelItem, pinned = false) => {
     const index = flat.indexOf(channel);
     const isActive = channel.id === activeId;
@@ -322,7 +334,7 @@ export function Sidebar({
           event.dataTransfer.effectAllowed = 'move';
           event.dataTransfer.setData('text/plain', channel.id);
           setDraggingChannelId(channel.id);
-          setPinDropActive(true);
+          setPinDropActive(false);
         }}
         onDragEnd={() => {
           setDraggingChannelId(null);
@@ -450,17 +462,41 @@ export function Sidebar({
       </div>
 
       {/* 3. Channels / Bots / Sessions List：同事与群分两段，各段可折叠 */}
-      <div className="sidebar-channel-list" ref={listRef}>
-        {!keyword && !isMini && (pinnedChannels.length === 0 || draggingChannelId) ? (
+      <div
+        className="sidebar-channel-list"
+        ref={listRef}
+        onDragOver={(event) => {
+          if (!draggingChannelId) return;
+          const overTarget = isOverPinDrop(event);
+          setPinDropActive(overTarget);
+          if (overTarget) {
+            event.preventDefault();
+            event.dataTransfer.dropEffect = 'move';
+          }
+        }}
+        onDrop={(event) => {
+          if (isOverPinDrop(event)) dropToPin(event);
+        }}
+      >
+        {!isMini ? (
           <div
-            className={`sidebar-pin-drop${pinDropActive ? ' active' : ''}${draggingChannelId ? ' dragging-target' : ''}`}
+            ref={pinDropRef}
+            className={`sidebar-pin-drop${draggingChannelId ? ' dragging-target' : ''}${pinDropActive ? ' active' : ''}`}
+            aria-hidden={!draggingChannelId}
             onDragOver={(event) => {
               event.preventDefault();
               event.dataTransfer.dropEffect = 'move';
               setPinDropActive(true);
             }}
-            onDragLeave={() => setPinDropActive(false)}
-            onDrop={dropToPin}
+            onDragLeave={(event) => {
+              if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) {
+                setPinDropActive(false);
+              }
+            }}
+            onDrop={(event) => {
+              event.stopPropagation();
+              dropToPin(event);
+            }}
           >
             <span className="sidebar-pin-drop-icon">＋</span>
             <span>拖到此处置顶</span>

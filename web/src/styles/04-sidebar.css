@@ -131,17 +131,39 @@
 .sidebar-pin-drop {
   display: flex;
   align-items: center;
-  min-height: 208px;
-  margin: 4px 8px 12px;
+  justify-content: center;
+  box-sizing: border-box;
+  flex: none;
+  height: 0;
+  min-height: 0;
+  margin: 0 8px;
   flex-direction: column;
-  gap: 12px;
-  border: 1px dashed var(--border-strong);
+  gap: 10px;
+  overflow: hidden;
+  border: 0 dashed var(--border-strong);
   border-radius: var(--r-lg);
   color: var(--text-tertiary);
   font-size: var(--fs-base);
   background: var(--bg-subtle);
-  animation: fade var(--dur-fast) var(--ease);
-  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(-8px) scale(0.98);
+  transition: height var(--dur-base) var(--ease), margin var(--dur-base) var(--ease),
+    opacity var(--dur-fast) var(--ease), transform var(--dur-base) var(--ease),
+    background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease), visibility 0s linear var(--dur-base);
+}
+
+.sidebar-pin-drop.dragging-target {
+  height: var(--pin-drop-height);
+  margin: 4px 8px 12px;
+  border-width: 1px;
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: none;
+  transition-delay: 0s;
 }
 
 .sidebar-pin-drop.active {
@@ -163,8 +185,8 @@
   transition: transform var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
 }
 
-.sidebar-pin-drop.dragging-target .sidebar-pin-drop-icon {
-  transform: scale(1.08);
+.sidebar-pin-drop.active .sidebar-pin-drop-icon {
+  transform: scale(1.06);
   border-color: currentColor;
 }
 
@@ -256,7 +278,8 @@
   border-radius: var(--r-md);
   border: 1px solid transparent;
   cursor: pointer;
-  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease),
+    opacity var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
   position: relative;
   outline: none;
 }
@@ -273,7 +296,8 @@
 }
 
 .channel-item.dragging {
-  opacity: 0.42;
+  opacity: 0.5;
+  transform: scale(0.98);
 }
 
 .channel-item.pinned-channel-item {
@@ -286,7 +310,12 @@
   padding: 16px 12px 14px;
   background: var(--bg-hover);
   border-radius: var(--r-lg);
-  animation: pop var(--dur-base) var(--ease);
+  animation: pinned-arrive var(--dur-base) var(--ease);
+}
+
+@keyframes pinned-arrive {
+  from { opacity: 0; transform: translateY(8px) scale(0.97); }
+  to { opacity: 1; transform: none; }
 }
 
 .channel-item.pinned-channel-item.active {
