@@ -99,10 +99,12 @@ test('响应式回归：1024 右侧面板是覆盖层，<768 侧栏抽屉可开�
 /**
  * OPT-06：控制数据损坏 → 状态条给出修复入口 → 修复后同事置为已暂停。
  * 这条链路要在**写坏控制存储**的环境里跑，不能污染共享的 webServer，
- * 所以自带一个临时预览进程（固定端口，跑完杀掉）。
+ * 所以自带一个临时预览进程（端口从 AGENT_PREVIEW_PORT 派生，跑完杀掉）。
  */
 test('控制数据损坏：状态条给出修复入口，修复后同事变为已暂停', async ({ page }) => {
-  const port = 4711;
+  // 不写死端口：多个代理并行跑 e2e 时，固定端口会互撞（后起的进程 EADDRINUSE，
+  // 或连上别人那个已被写脏的数据目录）。+1 与被测 webServer 的端口错开。
+  const port = Number(process.env.AGENT_PREVIEW_PORT ?? 4599) + 1;
   const child = spawn('node', ['--import', 'tsx', 'test/fixtures/ui-preview.ts'], {
     env: { ...process.env, AGENT_PREVIEW_PORT: String(port), AGENT_PREVIEW_CORRUPT_CONTROL: '1' },
     stdio: 'ignore',
