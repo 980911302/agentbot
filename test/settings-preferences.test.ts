@@ -177,3 +177,53 @@ describe('主人名统一（E5.7 验收标准 1）', () => {
     }
   });
 });
+
+describe('群消息显示名以后端设置为准（E5.7 打回点回归）', () => {
+  it('请求体里的旧 ownerName 不再覆盖设置：改名后带旧名发群消息，时间线仍是新名字', async () => {
+    const env = await tempDataDir('settings-room-owner');
+    try {
+      const server = await startServer(env.dir);
+      try {
+        const base = server.base;
+        const agent = await server.runtime.registry.create({ name: '群里的同事', instructions: '测试' });
+        const room = await server.runtime.rooms.create({ name: '显示名核对群', memberIds: [agent.id] });
+
+        // 改成新名字
+        const saved = await fetch(`${base}/api/settings/preferences`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ ownerName: '新主人名' }),
+        });
+        assert.equal(saved.status, 200);
+
+        const send = (clientMessageId: string, body: Record<string, unknown>) =>
+          fetch(`${base}/api/rooms/${room.id}/messages`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ text: '来自群里的发言', clientMessageId, ...body }),
+          });
+
+        // 正例：不带 ownerName —— 用设置里的新名字
+        assert.equal((await send('k-new', {})).status, 202);
+        // 反例（打回点）：带一个旧窗口的 localStorage 缓存名 —— 仍必须是设置里的新名字
+        assert.equal((await send('k-old', { ownerName: '旧窗口缓存名' })).status, 202);
+
+        const timeline = await server.runtime.rooms.messages(room.id);
+        const userLines = timeline.filter((item) => item.senderKind === 'user');
+        assert.equal(userLines.length, 2);
+        for (const line of userLines) {
+          assert.equal(line.senderName, '新主人名', '群时间线里的主人名只能来自后端设置');
+        }
+        assert.equal(
+          userLines.some((line) => line.senderName === '旧窗口缓存名'),
+          false,
+          '请求体的旧名字绝不能覆盖设置',
+        );
+      } finally {
+        await server.close();
+      }
+    } finally {
+      await env.cleanup();
+    }
+  });
+});

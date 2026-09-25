@@ -124,7 +124,10 @@ export async function handleRoomRoute(
     const accepted = await runtime.acceptRoomMessage(roomId, text, {
       model,
       clientMessageId,
-      ownerName: readString(body.ownerName) ?? context.ownerName(),
+      // 群消息的显示名统一取后端设置（E5.7）：请求体里的 ownerName 已废弃、不再读取。
+      // 之前是「请求体优先」，于是一个改名之前就开着的窗口会持续用自己的 localStorage
+      // 缓存覆盖设置，同一用户在不同入口出现两个名字。
+      ownerName: context.ownerName(),
     });
     json(response, 202, accepted.receipt);
     void accepted.execute().catch(() => undefined);

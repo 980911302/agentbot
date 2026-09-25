@@ -42,12 +42,14 @@ export function useChatStream(input: {
     const { activeAgentId, activeChannel, activeChannelId, model, ownerName } = ref.current.getSession();
     if (!activeChannelId) return;
     const key = retryClientMessageId ?? crypto.randomUUID();
+    // ownerName 只用于本地乐观占位：群消息的**权威显示名**取后端设置（E5.7），
+    // 所以不再随请求体发出去——否则旧窗口的 localStorage 缓存会覆盖服务端设置。
     engine.beginSend(activeChannelId, key, trimmed, ownerName);
     if (activeChannel.kind === 'room') ref.current.setSilentNotes(prev => ({ ...prev, [activeChannelId]: [] }));
     try {
       if (!activeAgentId) throw new Error('后端未连接，找不到智能体');
       const receipt = activeChannel.kind === 'room'
-        ? await api.sendRoomMessage(activeChannelId, { text: trimmed, model: model || undefined, ownerName, clientMessageId: key })
+        ? await api.sendRoomMessage(activeChannelId, { text: trimmed, model: model || undefined, clientMessageId: key })
         : await api.sendChat({ botId: activeAgentId, message: trimmed, model: model || undefined, clientMessageId: key });
       engine.acceptReceipt(receipt);
     } catch (error) { engine.sendFailed(key, error instanceof Error ? error.message : String(error)); }
