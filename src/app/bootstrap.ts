@@ -28,7 +28,7 @@ export function createRuntimeAssembly(
   const store = createRuntimeStorage(options, shared.events);
   const services = createRuntimeServices(options, host, shared, store);
   const execution = createExecutionLayer(options, host, shared, store, services);
-  const facade = createFacadeServices(options, host, shared, store, services);
+  const facade = createFacadeServices(options, host, shared, store, services, execution);
 
   return { ...store, ...services, ...execution, ...facade };
 }
