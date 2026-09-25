@@ -24,7 +24,14 @@ export interface WorkbenchDeps {
   rooms: RoomStore;
   messages: MessageStore;
   /** 由运行时注入：只写群消息并入队（排除调用者自己），不等待扇出执行。 */
-  postToRoom: (roomId: string, text: string, excludeAgentIds: string[], depth?: number, signal?: AbortSignal, callerId?: string) => Promise<PostToRoomResult>;
+  postToRoom: (
+    roomId: string,
+    text: string,
+    excludeAgentIds: string[],
+    depth?: number,
+    signal?: AbortSignal,
+    callerId?: string,
+  ) => Promise<PostToRoomResult>;
   /** 主人在群里的显示名 */
   ownerName: string;
   /** 由运行时注入：给新建智能体登记 enabled 控制条目，避免重启后被当成旧智能体暂停 */
@@ -126,7 +133,10 @@ export class Workbench {
 
   // ── 群 ──────────────────────────────────────────────
 
-  async createRoom(callerId: string, input: { name: string; memberIds: string[] }): Promise<{
+  async createRoom(
+    callerId: string,
+    input: { name: string; memberIds: string[] },
+  ): Promise<{
     room: Room;
     callerIncluded: boolean;
   }> {
@@ -140,7 +150,7 @@ export class Workbench {
     );
     if (duplicate) {
       throw new WorkbenchError(
-        `已经有一个叫「${name}」的群了（id=${duplicate.id}）。要改成员请用 update_room。`,
+        `已经有一个叫「${name}」的群了（id=${duplicate.id}）。要改成员请用 UpdateChannel。`,
       );
     }
 
@@ -180,7 +190,13 @@ export class Workbench {
    * 以自己身份往群里发一条并扇出。
    * 与群回合内 SendToUser 的本轮发言不同：这会把全体成员叫醒开新的一轮。
    */
-  async postToRoom(callerId: string, roomId: string, text: string, depth?: number, signal?: AbortSignal): Promise<PostToRoomResult> {
+  async postToRoom(
+    callerId: string,
+    roomId: string,
+    text: string,
+    depth?: number,
+    signal?: AbortSignal,
+  ): Promise<PostToRoomResult> {
     const body = text?.trim();
     if (!body) throw new WorkbenchError('要发的内容不能为空');
 

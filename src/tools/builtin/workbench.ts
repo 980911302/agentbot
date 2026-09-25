@@ -19,11 +19,22 @@ export function createWorkbenchTools(workbench: Workbench) {
       '分页列出侧边栏分组名称（名称就是当前 section_id），默认 20、最多 50 条。',
       'CreateAgent 可以用返回的 id 把新同事放进某个分组。当前还没有分组功能时返回空表。',
     ].join(' '),
-    parameters: { type: 'object', properties: { offset: { type: 'integer', minimum: 0 }, limit: { type: 'integer', minimum: 1, maximum: 50 } } },
+    parameters: {
+      type: 'object',
+      properties: {
+        offset: { type: 'integer', minimum: 0 },
+        limit: { type: 'integer', minimum: 1, maximum: 50 },
+      },
+    },
     async execute({ offset = 0, limit = 20 }) {
       const sections = await workbench.listSections();
       if (sections.length === 0) return '（还没有任何分组）';
-      return sections.slice(offset, offset + limit).map(section => section.slice(0, 150)).join('\n') + (offset + limit < sections.length ? `\nnext_offset=${offset + limit}` : '');
+      return (
+        sections
+          .slice(offset, offset + limit)
+          .map((section) => section.slice(0, 150))
+          .join('\n') + (offset + limit < sections.length ? `\nnext_offset=${offset + limit}` : '')
+      );
     },
   });
 
@@ -108,7 +119,13 @@ export function createWorkbenchTools(workbench: Workbench) {
       type: 'object',
       properties: {
         name: { type: 'string', description: '群名' },
-        member_ids: { type: 'array', minItems: 1, maxItems: 6, items: { type: 'string', maxLength: 100 }, description: '成员 id 数组，1–6 个' },
+        member_ids: {
+          type: 'array',
+          minItems: 1,
+          maxItems: 6,
+          items: { type: 'string', maxLength: 100 },
+          description: '成员 id 数组，1–6 个',
+        },
       },
       required: ['name', 'member_ids'],
     },
@@ -120,9 +137,7 @@ export function createWorkbenchTools(workbench: Workbench) {
       if (counters && counters.roomsCreated >= 1) {
         throw new Error('这一轮已经建过群了，先跟用户确认要不要再建');
       }
-      const memberIds = Array.isArray(args.member_ids)
-        ? args.member_ids
-        : safeParseIds(args.member_ids);
+      const memberIds = Array.isArray(args.member_ids) ? args.member_ids : safeParseIds(args.member_ids);
       if (!Array.isArray(memberIds) || memberIds.length === 0) {
         throw new Error('member_ids 至少给 1 个成员 id');
       }
@@ -134,7 +149,9 @@ export function createWorkbenchTools(workbench: Workbench) {
       if (counters) counters.roomsCreated += 1;
 
       const names = await workbench.memberNames(room.memberIds);
-      const note = callerIncluded ? '' : '（注意：你自己不在这个群里，要参与请用 UpdateChannel 把自己加进去）';
+      const note = callerIncluded
+        ? ''
+        : '（注意：你自己不在这个群里，要参与请用 UpdateChannel 把自己加进去）';
       return `已建群「${room.name}」（id=${room.id}），成员：${names.join('、')}${note}`;
     },
   });
@@ -167,18 +184,30 @@ export function createWorkbenchTools(workbench: Workbench) {
       if (!room) throw new Error(`找不到 id 为 ${args.channel_id} 的群`);
 
       const next = new Set(room.memberIds);
-      const add = Array.isArray(args.add_member_ids) ? args.add_member_ids : safeParseIds(args.add_member_ids);
+      const add = Array.isArray(args.add_member_ids)
+        ? args.add_member_ids
+        : safeParseIds(args.add_member_ids);
       const remove = Array.isArray(args.remove_member_ids)
         ? args.remove_member_ids
         : safeParseIds(args.remove_member_ids);
+      // 两个数组都不给是空操作：明说「成员未变化」，别回一句「成员现在是…」当成成功变更
+      if (!add?.length && !remove?.length)
+        return `群「${room.name}」成员未变化（没有给 add_member_ids / remove_member_ids）：${(await workbench.memberNames(room.memberIds)).join('、')}`;
       for (const id of add ?? []) next.add(id);
       for (const id of remove ?? []) next.delete(id);
+      // 不在群里的 id 被静默忽略过：显式指出，别让调用方以为删/加成功了
+      const ignoredRemove = (remove ?? []).filter((id) => !room.memberIds.includes(id));
+      const ignoredAdd = (add ?? []).filter((id) => room.memberIds.includes(id));
 
       const updated = await workbench.updateRoom(context.agentId, args.channel_id, {
         memberIds: [...next],
       });
       const names = await workbench.memberNames(updated.memberIds);
-      return `「${updated.name}」成员现在是：${names.join('、')}（共 ${updated.memberIds.length} 人）`;
+      const notes = [
+        ignoredAdd.length ? `已在群里的 ${ignoredAdd.length} 个 id 被忽略` : '',
+        ignoredRemove.length ? `不在群里的 ${ignoredRemove.length} 个 id 被忽略` : '',
+      ].filter(Boolean);
+      return `「${updated.name}」成员现在是：${names.join('、')}（共 ${updated.memberIds.length} 人）${notes.length ? '；' + notes.join('；') : ''}`;
     },
   });
 

@@ -69,7 +69,6 @@ export function createShellTools(rootDir = process.cwd(), paths: SensitivePaths 
     command: string;
     working_directory?: string;
     block_until_ms?: number;
-    description?: string;
     timeout_ms?: number;
   }>({
     name: 'Shell',
@@ -83,7 +82,10 @@ export function createShellTools(rootDir = process.cwd(), paths: SensitivePaths 
       type: 'object',
       properties: {
         command: { type: 'string', description: '要执行的完整命令' },
-        working_directory: { type: 'string', description: '工作目录（绝对路径），默认运行时根目录' },
+        working_directory: {
+          type: 'string',
+          description: '工作目录；相对路径按运行时根目录解析，默认运行时根目录',
+        },
         block_until_ms: {
           type: 'integer',
           minimum: 0,
@@ -91,7 +93,6 @@ export function createShellTools(rootDir = process.cwd(), paths: SensitivePaths 
           description: '同步等待，默认 30000；最多 60000；0 = 立刻转后台',
         },
         timeout_ms: { type: 'integer', minimum: 1000, maximum: 1800000 },
-        description: { type: 'string', description: '5~10 个字，说明这条命令干什么' },
       },
       required: ['command'],
     },

@@ -9,9 +9,11 @@ import { InteractionBroker } from '../src/interaction/broker.js';
 import { MemoryStore } from '../src/memory/store.js';
 import { createSendToUserTool } from '../src/tools/builtin/send-to-user.js';
 import { createShellTools } from '../src/tools/builtin/shell.js';
+import { createFileTools } from '../src/tools/builtin/files.js';
 import { createTaskTools, type TodoItem } from '../src/tools/builtin/task.js';
 import { createUpdateStateTools } from '../src/tools/builtin/update-state.js';
 import { createWorkbenchTools } from '../src/tools/builtin/workbench.js';
+import { until } from './fakes/test-env.js';
 import type { Tool, ToolContext } from '../src/tools/tool.js';
 import type { LLMMessage, LLMProvider } from '../src/llm/provider.js';
 
@@ -60,14 +62,18 @@ describe('SendToUser（见 docs/工具参考.md）', () => {
 
   it('私聊 text → persistOutgoing', async () => {
     const sent: string[] = [];
-    const reply = await runTool(tool, { type: 'text', content: '进展：一半了' }, context({
-      turnState: {
-        workbench: { agentsCreated: 0, roomsCreated: 0 },
-        persistOutgoing: async (text) => {
-          sent.push(text);
+    const reply = await runTool(
+      tool,
+      { type: 'text', content: '进展：一半了' },
+      context({
+        turnState: {
+          workbench: { agentsCreated: 0, roomsCreated: 0 },
+          persistOutgoing: async (text) => {
+            sent.push(text);
+          },
         },
-      },
-    }));
+      }),
+    );
     assert.equal(reply, '已发给主人');
     assert.deepEqual(sent, ['进展：一半了']);
     await assert.rejects(
@@ -89,12 +95,19 @@ describe('SendToUser（见 docs/工具参考.md）', () => {
     await runTool(tool, { type: 'text', content: '群里的发言', to: 'room' }, context({ room }));
     assert.deepEqual(posts, ['群里的发言']);
 
-    await runTool(tool, { type: 'text', content: '私下说一句', to: 'dm' }, context({ room, turnState: {
-      workbench: { agentsCreated: 0, roomsCreated: 0 },
-      persistOutgoing: async (text) => {
-        sent.push(text);
-      },
-    } }));
+    await runTool(
+      tool,
+      { type: 'text', content: '私下说一句', to: 'dm' },
+      context({
+        room,
+        turnState: {
+          workbench: { agentsCreated: 0, roomsCreated: 0 },
+          persistOutgoing: async (text) => {
+            sent.push(text);
+          },
+        },
+      }),
+    );
     assert.deepEqual(sent, ['私下说一句']);
     assert.equal(posts.length, 1, 'dm 不该进群时间线');
   });
@@ -132,14 +145,18 @@ describe('SendToUser（见 docs/工具参考.md）', () => {
   it('attachment：工作区文件交付到用户目录', async () => {
     await writeFile(join(dir, 'result.txt'), '交付内容', 'utf8');
     const sent: string[] = [];
-    const reply = await runTool(tool, { type: 'attachment', url: 'result.txt' }, context({
-      turnState: {
-        workbench: { agentsCreated: 0, roomsCreated: 0 },
-        persistOutgoing: async (text) => {
-          sent.push(text);
+    const reply = await runTool(
+      tool,
+      { type: 'attachment', url: 'result.txt' },
+      context({
+        turnState: {
+          workbench: { agentsCreated: 0, roomsCreated: 0 },
+          persistOutgoing: async (text) => {
+            sent.push(text);
+          },
         },
-      },
-    }));
+      }),
+    );
     assert.match(reply, /已交付到/);
     assert.match(sent[0] ?? '', /📎 已交付文件/);
   });
@@ -177,7 +194,11 @@ describe('update_state（1.5 子集）', () => {
     );
     assert.match(forgotten, /已忘记 1 条/);
     await assert.rejects(() =>
-      runTool(tool, { target: 'memory', action: 'forget', fact: '不存在的一句话', scope: 'agent' }, context()),
+      runTool(
+        tool,
+        { target: 'memory', action: 'forget', fact: '不存在的一句话', scope: 'agent' },
+        context(),
+      ),
     );
   });
 
@@ -198,10 +219,7 @@ describe('update_state（1.5 子集）', () => {
     assert.match(reply, /资料已更新/);
     assert.deepEqual(patches[0], { name: '新名字', instructions: '新职责' });
 
-    await assert.rejects(() =>
-      runTool(tool, { target: 'routine', action: 'create' }, context()),
-      /暂不支持/,
-    );
+    await assert.rejects(() => runTool(tool, { target: 'routine', action: 'create' }, context()), /暂不支持/);
   });
 });
 
@@ -220,7 +238,7 @@ describe('Shell / AwaitShell（1.6 / H）', () => {
   });
 
   it('同步执行并拿回输出', async () => {
-    const reply = await runTool(shell, { command: 'echo hello-agentbot', description: '回声测试' }, context());
+    const reply = await runTool(shell, { command: 'echo hello-agentbot' }, context());
     assert.match(reply, /hello-agentbot/);
     assert.match(reply, /已结束/);
   });
@@ -240,12 +258,16 @@ describe('Shell / AwaitShell（1.6 / H）', () => {
 
   it('停止令能杀掉后台进程（registerJob）', async () => {
     const jobs: Array<{ abort: () => void; label: string }> = [];
-    await runTool(shell, { command: 'sleep 5', block_until_ms: 0 }, context({
-      turnState: {
-        workbench: { agentsCreated: 0, roomsCreated: 0 },
-        registerJob: (abort, label) => jobs.push({ abort, label }),
-      },
-    }));
+    await runTool(
+      shell,
+      { command: 'sleep 5', block_until_ms: 0 },
+      context({
+        turnState: {
+          workbench: { agentsCreated: 0, roomsCreated: 0 },
+          registerJob: (abort, label) => jobs.push({ abort, label }),
+        },
+      }),
+    );
     assert.equal(jobs.length, 1);
     assert.match(jobs[0]!.label, /^shell:/);
     jobs[0]!.abort();
@@ -253,8 +275,8 @@ describe('Shell / AwaitShell（1.6 / H）', () => {
 });
 
 describe('Task 工人族（H 组）', () => {
-  function makeTools() {
-    const provider = new FakeProvider({ auto: () => FakeProvider.text('工人干完了') });
+  function makeTools(injected?: FakeProvider) {
+    const provider = injected ?? new FakeProvider({ auto: () => FakeProvider.text('工人干完了') });
     return createTaskTools({
       provider: provider as never,
       messages: { append: async () => undefined } as never,
@@ -274,7 +296,8 @@ describe('Task 工人族（H 组）', () => {
   });
 
   it('后台 Task：Check 看进度，Stop 杀工人', async () => {
-    const tools = makeTools();
+    // 用不自动应答的 provider，让工人停在 running，才能验证「真的杀掉了」
+    const tools = makeTools(new FakeProvider());
     const [task, check, , stop] = tools;
     const started = await runTool(
       task!,
@@ -290,6 +313,22 @@ describe('Task 工人族（H 组）', () => {
 
     const stopped = await runTool(stop!, { subagent_id: workerId }, context());
     assert.match(stopped, /已停止/);
+  });
+
+  it('Stop 对已结束的工人如实说明，不谎报「已停止」', async () => {
+    const tools = makeTools();
+    const [task, , , stop] = tools;
+    const started = await runTool(
+      task!,
+      { description: '快活', prompt: '干完', subagent_type: 'executor', run_in_background: true },
+      context(),
+    );
+    const workerId = /worker_id: (\S+)/.exec(started)?.[1]!;
+    // 等它自己跑完（假模型立即应答）
+    await until(async () => /\[done\]/.test(await runTool(tools[1]!, {}, context())), '工人完成');
+    const stopped = await runTool(stop!, { subagent_id: workerId }, context());
+    assert.doesNotMatch(stopped, /已停止/);
+    assert.match(stopped, /已经结束/);
   });
 
   it('subagent_type 只支持 executor', async () => {
@@ -334,7 +373,13 @@ describe('TodoWrite（H 组）', () => {
     );
     assert.match(second, /in_progress\] 写报告/);
     assert.match(second, /completed\] 查资料/);
-    await assert.rejects(() => runTool(todoWrite, { todos: [{ id: 'a', content: '一条', status: 'pending' }], merge: false }, context()));
+    await assert.rejects(() =>
+      runTool(
+        todoWrite,
+        { todos: [{ id: 'a', content: '一条', status: 'pending' }], merge: false },
+        context(),
+      ),
+    );
   });
 });
 
@@ -363,23 +408,22 @@ describe('工作台改名（A 组）', () => {
   }
 
   it('ListSections / CreateAgent / UpdateAgent / CreateChannel / UpdateChannel 全链', async () => {
-    const [listSections, createAgent, updateAgent, createChannel, updateChannel] = createWorkbenchTools(
-      fakeWorkbench(),
-    );
+    const [listSections, createAgent, updateAgent, createChannel, updateChannel] =
+      createWorkbenchTools(fakeWorkbench());
 
     assert.match(await runTool(listSections!, {}, context()), /核心组/);
 
     const created = await runTool(createAgent!, { name: '新同事', description: '干活的' }, context());
     assert.match(created, /id=new-1/);
 
-    const updated = await runTool(updateAgent!, { agent_id: 'a2', name: '乙', description: '新职责' }, context());
-    assert.match(updated, /职责已更新/);
-
-    const room = await runTool(
-      createChannel!,
-      { name: '新群', member_ids: ['a1', 'a2'] },
+    const updated = await runTool(
+      updateAgent!,
+      { agent_id: 'a2', name: '乙', description: '新职责' },
       context(),
     );
+    assert.match(updated, /职责已更新/);
+
+    const room = await runTool(createChannel!, { name: '新群', member_ids: ['a1', 'a2'] }, context());
     assert.match(room, /id=room-2/);
 
     const changed = await runTool(
@@ -421,5 +465,118 @@ describe('SendToAgent 记账与名字回退（A 组）', () => {
     assert.equal(dispatched[0]!.kind, 'agent');
     assert.equal(dispatched[0]!.text, '把这事办了');
     assert.equal(children.length, 0);
+  });
+});
+
+describe('E5.8 语义差异修正（描述与行为一致）', () => {
+  let e58Dir: string;
+  let e58Tools: Tool<any>[];
+
+  before(async () => {
+    e58Dir = await mkdtemp(join(tmpdir(), 'e5-8-semantics-'));
+    e58Tools = createFileTools(e58Dir) as Tool<any>[];
+  });
+  after(async () => {
+    await rm(e58Dir, { recursive: true, force: true });
+  });
+
+  it('Shell 不再接受从不读取的 description 参数', async () => {
+    const [shell] = createShellTools(process.cwd());
+    await assert.rejects(
+      () => runTool(shell!, { command: 'echo x', description: '回声' }, context()),
+      /不支持的参数/,
+    );
+  });
+
+  it('完全不给参数时报「没有收到参数」，而不是「参数超过 N 字符」', async () => {
+    const [shell] = createShellTools(process.cwd());
+    await assert.rejects(() => shell!.executeResult(undefined as never, context()), /没有收到参数/);
+  });
+
+  it('WebSearch 不再声明 explanation；WebFetch 的密钥指引指向真实入口', async () => {
+    const { createWebTools } = await import('../src/tools/builtin/web.js');
+    const web = createWebTools({ read: async () => undefined } as never);
+    const search = web.find((tool) => tool.name === 'WebSearch')!;
+    const fetchTool = web.find((tool) => tool.name === 'WebFetch')!;
+    assert.equal(
+      Object.hasOwn((search.parameters as { properties: object }).properties, 'explanation'),
+      false,
+      'WebSearch 不该再声明没被读取的 explanation',
+    );
+    assert.match(search.description, /WebFetch/, '大小写要与真实工具名一致');
+    assert.doesNotMatch(search.description, /web_fetch/);
+    assert.match(fetchTool.description, /SendToUser\(type=secret-request\)/);
+    assert.doesNotMatch(fetchTool.description, /request_secret/);
+  });
+
+  it('update_state 的多项目提示用的是 schema 里真实存在的参数名 project', async () => {
+    const src = await readFile(join(process.cwd(), 'src/tools/builtin/memory.ts'), 'utf8');
+    assert.match(src, /请用 project 参数指定/, '提示要指向真实参数名，否则模型照做会被判「不支持的参数」');
+    assert.doesNotMatch(src, /请用 projectId 指定/);
+  });
+
+  it('TodoWrite 的 status 有 enum；todos 说明写清 merge=true 可只给 1 条', () => {
+    const todos = createTaskTools({
+      provider: new FakeProvider({ auto: () => FakeProvider.text('x') }) as never,
+      messages: { append: async () => undefined } as never,
+      workerTools: () => [],
+      maxIterations: 2,
+    });
+    const todo = todos.find((tool) => tool.name === 'TodoWrite')!;
+    const schema = todo.parameters as {
+      properties: {
+        todos: { description: string; items: { properties: { status: { enum?: string[] } } } };
+      };
+    };
+    assert.deepEqual(schema.properties.todos.items.properties.status.enum, [
+      'pending',
+      'in_progress',
+      'completed',
+      'cancelled',
+    ]);
+    assert.match(schema.properties.todos.description, /merge=true/);
+    assert.match(schema.properties.todos.description, /可只给 1 条/);
+  });
+
+  it('Edit 的 expected_sha256 传了空串就报错，不再静默跳过校验', async () => {
+    const file = join(e58Dir, 'sha-guard.txt');
+    await writeFile(file, '原文');
+    const tool = e58Tools.find((item) => item.name === 'Edit')!;
+    await assert.rejects(
+      () =>
+        runTool(
+          tool,
+          { path: 'sha-guard.txt', old_text: '原文', new_text: '改了', expected_sha256: '' },
+          context(),
+        ),
+      /长度超限|必须/,
+    );
+    assert.equal(await readFile(file, 'utf8'), '原文', '拒绝后文件不能被改动');
+  });
+
+  it('ListFiles 对密钥文件与普通文件给出面向用户的统一错误', async () => {
+    const { mkdir } = await import('node:fs/promises');
+    const { sensitivePaths } = await import('../src/tools/sensitive-paths.js');
+    const scope = join(e58Dir, 'listfiles-scope');
+    await mkdir(join(scope, '.agentbot'), { recursive: true });
+    await writeFile(join(scope, '.agentbot', 'secrets.json'), '{"k":"v"}');
+    await writeFile(join(scope, 'plain.txt'), 'x');
+    const list = createFileTools(scope, sensitivePaths(scope, join(scope, '.agentbot'))).find(
+      (item) => item.name === 'ListFiles',
+    )!;
+    await assert.rejects(
+      () => runTool(list, { path: '.agentbot/secrets.json' }, context()),
+      /拒绝访问密钥文件/,
+    );
+    await assert.rejects(() => runTool(list, { path: 'plain.txt' }, context()), /需要目录/);
+  });
+
+  it('SearchFiles 的预览不会因大小写折叠而错位', async () => {
+    const file = join(e58Dir, 'fold-preview.txt');
+    // İ 的 toLowerCase 会变成 2 个码元，旧实现用它切原文会错位
+    await writeFile(file, 'İ'.repeat(85) + 'NEEDLE 尾巴\n');
+    const search = e58Tools.find((item) => item.name === 'SearchFiles')!;
+    const result = await runTool(search, { query: 'needle', path: 'fold-preview.txt' }, context());
+    assert.match(result, /NEEDLE/, '预览窗口要落回原文，命中文本必须出现');
   });
 });

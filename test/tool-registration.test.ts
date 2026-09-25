@@ -1,5 +1,7 @@
 import { after, before, describe, it } from 'node:test';
 import { strict as assert } from 'node:assert';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { createAgentServer } from '../src/server/http.js';
 import { TOOL_LIMITS, limitsFor } from '../src/tools/limits.js';
 import { declaredReplayPolicyOf, replayPolicyOf } from '../src/tools/policy.js';
@@ -45,6 +47,8 @@ describe('工具面登记（OPT-08）', () => {
   let env: { dir: string; cleanup: () => Promise<void> };
   let names: string[];
 
+  let tools: Array<{ name: string; parameters: unknown }> = [];
+
   before(async () => {
     env = await tempDataDir('tool-registration');
     const server = await createAgentServer({
@@ -54,9 +58,12 @@ describe('工具面登记（OPT-08）', () => {
       createProvider: () => new FakeProvider({ auto: () => FakeProvider.text('收到') }),
       allowMissingKey: true,
     });
-    names = server.runtime.tools.map((tool) => tool.name);
+    tools = server.runtime.tools.map((tool) => ({ name: tool.name, parameters: tool.parameters }));
+    names = tools.map((tool) => tool.name);
     await server.close();
   });
+
+  const serverTools = () => tools;
 
   after(async () => {
     await env.cleanup();
@@ -79,6 +86,48 @@ describe('工具面登记（OPT-08）', () => {
   it('每个工具都有显式恢复分类（不许落到未登记回退）', () => {
     const unclassified = names.filter((name) => declaredReplayPolicyOf(name) === undefined);
     assert.deepEqual(unclassified, [], `未登记恢复分类：${unclassified.join('、')}`);
+  });
+
+  it('每个工具都在两份文档里有条目（工具参考 + 边界审计限额表）', () => {
+    // E5.8：工具的 schema / 描述 / 行为 / 文档必须一起走；新工具不能只写代码不写文档
+    const reference = readFileSync(join(process.cwd(), 'docs/工具参考.md'), 'utf8');
+    const audit = readFileSync(join(process.cwd(), 'docs/工具边界审计.md'), 'utf8');
+    const missingReference = names.filter((name) => !new RegExp(`\\b${name}\\b`).test(reference));
+    const missingAudit = names.filter((name) => !new RegExp(`^\\| ${name} `, 'm').test(audit));
+    assert.deepEqual(missingReference, [], `docs/工具参考.md 缺少：${missingReference.join('、')}`);
+    assert.deepEqual(missingAudit, [], `docs/工具边界审计.md 限额表缺少：${missingAudit.join('、')}`);
+  });
+
+  it('每个工具的 schema 自洽：required 都在 properties 里、enum 非空、object 关掉额外字段', () => {
+    // E5.8：schema 是模型看到的契约，写错等于描述与行为不一致
+    const problems: string[] = [];
+    const walk = (schema: unknown, path: string): void => {
+      if (!schema || typeof schema !== 'object') return;
+      const node = schema as {
+        type?: string;
+        required?: string[];
+        properties?: Record<string, unknown>;
+        enum?: unknown[];
+        items?: unknown;
+        additionalProperties?: boolean;
+      };
+      if (node.type === 'object') {
+        const properties = node.properties ?? {};
+        for (const key of node.required ?? []) {
+          if (!Object.hasOwn(properties, key)) problems.push(`${path}.required 里的 ${key} 不在 properties`);
+        }
+        if (node.additionalProperties !== false) problems.push(`${path} 未关闭 additionalProperties`);
+        for (const [key, child] of Object.entries(properties)) walk(child, `${path}.${key}`);
+      }
+      if (node.type === 'array') walk(node.items, `${path}[]`);
+      if (node.enum && node.enum.length === 0) problems.push(`${path} 的 enum 为空`);
+    };
+    for (const tool of serverTools()) {
+      walk(tool.parameters, tool.name);
+      const required = (tool.parameters as { required?: string[] }).required;
+      if (required && required.length === 0) problems.push(`${tool.name}.required 是空数组（应省略）`);
+    }
+    assert.deepEqual(problems, [], problems.join('；'));
   });
 
   it('ManageRoomFlow 有独立限额且按控制面动作归到 manual', () => {

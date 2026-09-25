@@ -96,7 +96,9 @@ export function boundedSchema(schema: JSONSchema, toolName: string): JSONSchema 
 
 export function validateToolArgs(name: string, args: unknown, schema: JSONSchema): void {
   const serialized = JSON.stringify(args);
-  if (!serialized || serialized.length > limitsFor(name).input) {
+  // JSON.stringify(undefined) === undefined：这不是「太大」，而是根本没给参数
+  if (!serialized) throw new Error(`${name} 没有收到参数；请按 schema 给出必填字段`);
+  if (serialized.length > limitsFor(name).input) {
     throw new Error(
       `${name} 参数超过 ${limitsFor(name).input} 字符，请拆成较小的调用；写文件请分块 Write/Edit`,
     );

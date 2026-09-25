@@ -14,6 +14,8 @@ const SCAN_BYTES = 32 * 1024 * 1024;
 const FILE_BYTES = 2 * 1024 * 1024;
 const READ_CHARS = 12000;
 const LINE_CHARS = 2000;
+/** column 的上限：续读提示必须落在 schema 允许的范围内 */
+const MAX_COLUMN = 1000000;
 const IGNORED = new Set(['node_modules', '.git', 'dist', 'build', '.agentbot', '.next']);
 
 /** 逐块读，不把大文件或单行压缩文件整体装进内存。扫描量也有硬上限。 */
@@ -63,7 +65,7 @@ export function createReadTool(rootDir = process.cwd(), paths: SensitivePaths = 
         path: { type: 'string', minLength: 1 },
         offset: { type: 'integer', minimum: -500, maximum: 10000000 },
         limit: { type: 'integer', minimum: 1, maximum: 500, default: 200 },
-        column: { type: 'integer', minimum: 1, maximum: 1000000, default: 1 },
+        column: { type: 'integer', minimum: 1, maximum: MAX_COLUMN, default: 1 },
       },
       required: ['path'],
     },
@@ -74,11 +76,15 @@ export function createReadTool(rootDir = process.cwd(), paths: SensitivePaths = 
       await assertNotSensitivePath(absolute, paths);
       if (!(await stat(absolute)).isFile()) throw new Error('path 必须是文件');
       const budget = Math.min(READ_CHARS, 14000 - absolute.length - 512);
-      const renderRow = (row: { line: number; text: string; truncated: boolean }) =>
-        row.line +
-        ': ' +
-        row.text +
-        (row.truncated ? ' …[长行截断；column=' + (column + LINE_CHARS) + ' 续读本行]' : '');
+      const renderRow = (row: { line: number; text: string; truncated: boolean }) => {
+        // column 有上限：到顶时明说读不到了，别给出一个 schema 会拒绝的续读值
+        const next = column + LINE_CHARS;
+        const hint =
+          next <= MAX_COLUMN
+            ? ` …[长行截断；column=${next} 续读本行]`
+            : ' …[长行已到 column 上限，本行剩余内容读不到]';
+        return row.line + ': ' + row.text + (row.truncated ? hint : '');
+      };
       let rows: Array<{ line: number; text: string; truncated: boolean }> = [];
       let chars = 0,
         more = false;
@@ -158,6 +164,12 @@ export function createFileTools(rootDir = process.cwd(), paths: SensitivePaths =
     },
     async execute({ path = '.', offset = 0, limit = 50 }, context) {
       const root = resolve(rootDir, path);
+      // 与 SearchFiles 一致：直接指过来的路径也要过密钥名单，并且给出面向用户的错误
+      await assertNotSensitivePath(root, paths);
+      const info = await stat(root).catch(() => null);
+      if (!info) throw new Error(`路径不存在：${root}`);
+      if (!info.isDirectory())
+        throw new Error(`ListFiles 需要目录，收到的是文件：${root}（读文件请用 Read）`);
       const scan = await scanFiles(root, context.signal, paths);
       let next = offset,
         size = 0;
@@ -223,8 +235,17 @@ export function createFileTools(rootDir = process.cwd(), paths: SensitivePaths =
         try {
           for await (const row of textLines(file, context.signal, 1, 1024 * 1024)) {
             if (row.truncated) capped = true;
-            const position = row.text.toLowerCase().indexOf(query.toLowerCase());
-            if (position < 0 || hits++ < offset) continue;
+            const needle = query.toLowerCase();
+            const lowered = row.text.toLowerCase();
+            const loweredAt = lowered.indexOf(needle);
+            if (loweredAt < 0 || hits++ < offset) continue;
+            // toLowerCase 可能改变长度（如 İ→i̇）：把折叠后的下标映射回原文下标，否则预览会错位
+            let position = 0;
+            let loweredSoFar = 0;
+            while (loweredSoFar < loweredAt && position < row.text.length) {
+              loweredSoFar += row.text[position]!.toLowerCase().length;
+              position += 1;
+            }
             const result =
               (info.isFile() ? file : relative(root, file)) +
               ':' +
@@ -302,7 +323,7 @@ export function createFileTools(rootDir = process.cwd(), paths: SensitivePaths =
         path: { type: 'string', minLength: 1 },
         old_text: { type: 'string', minLength: 1 },
         new_text: { type: 'string' },
-        expected_sha256: { type: 'string', maxLength: 64 },
+        expected_sha256: { type: 'string', minLength: 64, maxLength: 64 },
       },
       required: ['path', 'old_text', 'new_text'],
     },

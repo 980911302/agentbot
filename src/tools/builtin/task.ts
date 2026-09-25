@@ -16,7 +16,9 @@ export function createTaskTools(input: {
   provider: import('../../llm/provider.js').LLMProvider;
   messages: import('../../store/messages.js').MessageStore;
   /** 工人可用工具（调用方负责滤掉用户面工具，如 SendToUser） */
-  workerTools: (ownerId?: string) => import('../../tools/tool.js').Tool<any>[] | Promise<import('../../tools/tool.js').Tool<any>[]>;
+  workerTools: (
+    ownerId?: string,
+  ) => import('../../tools/tool.js').Tool<any>[] | Promise<import('../../tools/tool.js').Tool<any>[]>;
   providerFor?: (model: string) => import('../../llm/provider.js').LLMProvider;
   ownerAuthority?: (ownerId: string) => Promise<import('../tool.js').ExecutionAuthority | undefined>;
   maxIterations?: number;
@@ -53,11 +55,26 @@ export function createTaskTools(input: {
     return `${head}${tail}`;
   };
 
-  const outcome = (worker: import('../services/worker-manager.js').Worker, inspecting = false): ToolResult => ({
+  const outcome = (
+    worker: import('../services/worker-manager.js').Worker,
+    inspecting = false,
+  ): ToolResult => ({
     status: inspecting || worker.status === 'done' ? 'ok' : worker.status === 'running' ? 'running' : 'error',
     content: format(worker),
-    task: { workerId: worker.id, taskId: worker.taskId, state: worker.status === 'done' ? 'answered' : worker.status, stopReason: worker.stopReason },
-    ...(!inspecting && !['running', 'done'].includes(worker.status) ? { error: { code: `WORKER_${worker.status.toUpperCase()}`, message: worker.error ?? `工人未完成：${worker.status}` } } : {}),
+    task: {
+      workerId: worker.id,
+      taskId: worker.taskId,
+      state: worker.status === 'done' ? 'answered' : worker.status,
+      stopReason: worker.stopReason,
+    },
+    ...(!inspecting && !['running', 'done'].includes(worker.status)
+      ? {
+          error: {
+            code: `WORKER_${worker.status.toUpperCase()}`,
+            message: worker.error ?? `工人未完成：${worker.status}`,
+          },
+        }
+      : {}),
   });
 
   const task = defineTool<{
@@ -78,7 +95,10 @@ export function createTaskTools(input: {
         description: { type: 'string', description: '短标题，5~10 个字' },
         prompt: { type: 'string', description: '给工人的完整任务说明（自洽）' },
         subagent_type: { type: 'string', description: '只支持 executor' },
-        run_in_background: { type: 'boolean', description: 'true = 立刻返回 worker_id；默认 false = 等它做完' },
+        run_in_background: {
+          type: 'boolean',
+          description: 'true = 立刻返回 worker_id；默认 false = 等它做完',
+        },
       },
       required: ['description', 'prompt', 'subagent_type'],
     },
@@ -99,12 +119,22 @@ export function createTaskTools(input: {
 
       if (args.run_in_background) {
         void driving.catch(() => undefined);
-        return { ...outcome(worker), content: `工人已开工。\nworker_id: ${worker.id}\n用 CheckSubagent 看进度，MessageSubagent 塞话纠偏，StopSubagent 杀掉。` };
+        return {
+          ...outcome(worker),
+          content: `工人已开工。\nworker_id: ${worker.id}\n用 CheckSubagent 看进度，MessageSubagent 塞话纠偏，StopSubagent 杀掉。`,
+        };
       }
       let timer: NodeJS.Timeout | undefined;
       try {
-        await Promise.race([driving, new Promise<void>(resolve => { timer = setTimeout(resolve, 30000); })]);
-      } finally { if (timer) clearTimeout(timer); }
+        await Promise.race([
+          driving,
+          new Promise<void>((resolve) => {
+            timer = setTimeout(resolve, 30000);
+          }),
+        ]);
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
       context.signal?.throwIfAborted();
       return outcome(worker);
     },
@@ -115,14 +145,24 @@ export function createTaskTools(input: {
     description: '只读看自己派出的工人的进度和末尾 3000 字符；不传 id 就分页列出，默认 20 条。',
     parameters: {
       type: 'object',
-      properties: { subagent_id: { type: 'string' }, offset: { type: 'integer', minimum: 0 }, limit: { type: 'integer', minimum: 1, maximum: 20 } },
+      properties: {
+        subagent_id: { type: 'string' },
+        offset: { type: 'integer', minimum: 0 },
+        limit: { type: 'integer', minimum: 1, maximum: 20 },
+      },
     },
     async execute(args, context) {
       if (!args.subagent_id) {
-        const all = manager.list().filter(worker => worker.ownerId === context.agentId);
+        const all = manager.list().filter((worker) => worker.ownerId === context.agentId);
         if (all.length === 0) return '还没有派过工人。';
-        const offset = args.offset ?? 0, limit = args.limit ?? 20;
-        return all.slice(offset, offset + limit).map((worker) => `${worker.id} [${worker.status}] ${worker.description}`).join('\n') + (offset + limit < all.length ? `\nnext_offset=${offset + limit}` : '');
+        const offset = args.offset ?? 0,
+          limit = args.limit ?? 20;
+        return (
+          all
+            .slice(offset, offset + limit)
+            .map((worker) => `${worker.id} [${worker.status}] ${worker.description}`)
+            .join('\n') + (offset + limit < all.length ? `\nnext_offset=${offset + limit}` : '')
+        );
       }
       const worker = manager.get(args.subagent_id);
       if (!worker) throw new Error('找不到这个 worker_id（用 CheckSubagent 不带参数列出全部）');
@@ -143,19 +183,28 @@ export function createTaskTools(input: {
       required: ['subagent_id', 'message'],
     },
     async execute(args, context) {
-      if (manager.get(args.subagent_id)?.ownerId !== context.agentId) throw new Error('找不到自己派出的 worker_id');
-      if (!manager.isRunning(args.subagent_id) && manager.runningCount() >= manager.maxWorkers) throw new Error('工人并发已满，请先等已有工人收尾');
-      const push = manager.pushMessage(args.subagent_id, args.message?.trim() ?? '');
-      if (!manager.isRunning(args.subagent_id)) {
+      if (manager.get(args.subagent_id)?.ownerId !== context.agentId)
+        throw new Error('找不到自己派出的 worker_id');
+      const wasRunning = manager.isRunning(args.subagent_id);
+      if (!wasRunning && manager.runningCount() >= manager.maxWorkers)
+        throw new Error('工人并发已满，请先等已有工人收尾');
+      manager.pushMessage(args.subagent_id, args.message?.trim() ?? '');
+      if (!wasRunning) {
         const worker = manager.get(args.subagent_id);
         if (worker) {
           const stop = () => manager.kill(worker.id);
           context.turnState?.registerJob?.(stop, `worker:${worker.id.slice(0, 8)}`);
           context.signal?.addEventListener('abort', stop, { once: true });
-          void manager.drive(worker).catch(() => undefined).finally(() => context.signal?.removeEventListener('abort', stop));
+          void manager
+            .drive(worker)
+            .catch(() => undefined)
+            .finally(() => context.signal?.removeEventListener('abort', stop));
         }
       }
-      return push.queued ? '已塞给它；它做完手头这步就会看到。' : '没有投递成功。';
+      // 在跑：这段等它当前一步结束才被消费；已收尾/被停：这次是让它续跑一段
+      return wasRunning
+        ? '已塞给它；它做完手头这步就会看到。'
+        : '工人已收尾，已用这条消息让它续跑一段；用 CheckSubagent 看结果。';
     },
   });
 
@@ -168,9 +217,16 @@ export function createTaskTools(input: {
       required: ['subagent_id'],
     },
     async execute(args, context) {
-      if (manager.get(args.subagent_id)?.ownerId !== context.agentId) throw new Error('找不到自己派出的 worker_id');
+      if (manager.get(args.subagent_id)?.ownerId !== context.agentId)
+        throw new Error('找不到自己派出的 worker_id');
+      // 先把状态存成字符串：manager.get 返回的是活对象，stop 会就地改它
+      const beforeStatus = manager.get(args.subagent_id)?.status;
       const worker = manager.stop(args.subagent_id);
       if (!worker) throw new Error('找不到这个 worker_id');
+      // 已结束的工人 stop 是空操作：如实说明，别谎报「已停止」
+      if (beforeStatus && beforeStatus !== 'running' && worker.status === beforeStatus) {
+        return `工人 ${worker.id.slice(0, 8)} 已经结束（当前状态：${worker.status}），无需停止；要接着干就给它发消息续跑。`;
+      }
       return `工人 ${worker.id.slice(0, 8)} 已停止。`;
     },
   });
@@ -187,12 +243,20 @@ export function createTaskTools(input: {
         todos: {
           type: 'array',
           maxItems: 100,
-          description: '至少 2 条',
-          items: { type: 'object', required: ['id', 'content', 'status'], properties: {
-            id: { type: 'string' },
-            content: { type: 'string' },
-            status: { type: 'string', description: 'pending | in_progress | completed | cancelled' },
-          } },
+          description: '重写（merge=false）至少 2 条；merge=true 时按 id 合并、可只给 1 条',
+          items: {
+            type: 'object',
+            required: ['id', 'content', 'status'],
+            properties: {
+              id: { type: 'string' },
+              content: { type: 'string' },
+              status: {
+                type: 'string',
+                enum: ['pending', 'in_progress', 'completed', 'cancelled'],
+                description: '待办状态',
+              },
+            },
+          },
         },
         merge: { type: 'boolean' },
       },
@@ -201,7 +265,8 @@ export function createTaskTools(input: {
     async execute(args, context) {
       const incoming = Array.isArray(args.todos) ? args.todos : [];
       if (incoming.length < (args.merge ? 1 : 2)) throw new Error('重写至少给 2 条待办；合并至少 1 条');
-      if (new Set(incoming.map(item => item.id)).size !== incoming.length) throw new Error('待办 id 不得重复');
+      if (new Set(incoming.map((item) => item.id)).size !== incoming.length)
+        throw new Error('待办 id 不得重复');
       const valid = new Set(['pending', 'in_progress', 'completed', 'cancelled']);
       for (const item of incoming) {
         if (!item.id || !item.content?.trim()) throw new Error('每条待办都要有 id 和 content');

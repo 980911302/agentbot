@@ -21,8 +21,10 @@ export function createManageRoomFlowTool(flowService: RoomFlowService): Tool<Man
   return defineTool<ManageRoomFlowArgs>({
     name: 'ManageRoomFlow',
     description: [
-      '受控群流程协调与控制工具。',
-      '仅群流程协调者可用：创建流程、暂停、恢复、结束、分配行动等。',
+      '受控群流程协调与控制工具：创建（start）、暂停（pause）、恢复（resume）、结束（cancel）、查状态（status）。',
+      'start 需要群内成员身份（创建者即该流程的协调者）；pause/resume/cancel/status 仅该流程的协调者可用。',
+      '没有「分配行动 / 提交候选行动」这类动作——行动权由流程协议自己推进。',
+      'room_id 只在 start 时用来指定群；其余动作按当前群或 flow_id 定位。',
     ].join('\n'),
     parameters: {
       type: 'object',
@@ -32,7 +34,7 @@ export function createManageRoomFlowTool(flowService: RoomFlowService): Tool<Man
           enum: ['start', 'pause', 'resume', 'cancel', 'status'],
           description: '流程控制动作',
         },
-        room_id: { type: 'string', description: '群 ID' },
+        room_id: { type: 'string', description: '群 ID（仅 action=start 使用）' },
         flow_id: { type: 'string', description: '流程 ID（pause/resume/cancel/status 时使用）' },
         protocol: { type: 'string', description: 'action=start 时的协议名称，如 sequential_turn' },
         actors: {
@@ -45,7 +47,7 @@ export function createManageRoomFlowTool(flowService: RoomFlowService): Tool<Man
             },
             required: ['kind', 'id'],
           },
-          description: '参与者列表',
+          description: '参与者列表（仅 action=start 使用）',
         },
         reason: { type: 'string', description: '暂停或取消的原因' },
       },
@@ -97,13 +99,19 @@ export function createManageRoomFlowTool(flowService: RoomFlowService): Tool<Man
       }
 
       if (action === 'pause') {
+        if (flow.status !== 'active') return `流程 ${flow.id} 当前是 ${flow.status}，无需暂停。`;
         const updated = await flowService.pauseFlow(flowId, args.reason);
-        return `流程 ${updated.id} 已暂停`;
+        return updated.status === 'paused'
+          ? `流程 ${updated.id} 已暂停`
+          : `流程 ${updated.id} 当前是 ${updated.status}，无需暂停。`;
       }
 
       if (action === 'resume') {
+        if (flow.status !== 'paused') return `流程 ${flow.id} 当前是 ${flow.status}，无需恢复。`;
         const updated = await flowService.resumeFlow(flowId);
-        return `流程 ${updated.id} 已恢复运行（当前版本：v${updated.version}）`;
+        return updated.status === 'active'
+          ? `流程 ${updated.id} 已恢复运行（当前版本：v${updated.version}）`
+          : `流程 ${updated.id} 当前是 ${updated.status}，没能恢复。`;
       }
 
       if (action === 'cancel') {
