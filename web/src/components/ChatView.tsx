@@ -287,6 +287,14 @@ export function ChatView({
             className={`chat-header-title-box${onOpenProfile ? ' clickable' : ''}`}
             onClick={onOpenProfile}
             role={onOpenProfile ? 'button' : undefined}
+            tabIndex={onOpenProfile ? 0 : undefined}
+            aria-label={onOpenProfile ? `打开${title}的资料` : undefined}
+            onKeyDown={onOpenProfile ? (event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                onOpenProfile();
+              }
+            } : undefined}
             title={onOpenProfile ? '编辑智能体资料' : undefined}
           >
             <div className="chat-header-title-row">
@@ -422,7 +430,9 @@ export function ChatView({
         onScroll={onScroll}
         onWheel={onWheel}
       >
-        <div className="chat-message-list swap" key={channelKey}>
+        {/* aria-live：新消息到达时朗读给屏幕阅读器（UI-10）。
+            polite 不打断当前朗读；role=log 表明这是追加型内容。 */}
+        <div className="chat-message-list swap" key={channelKey} role="log" aria-live="polite" aria-relevant="additions">
           {loading ? (
             <div className="chat-loading" aria-busy="true" aria-live="polite">
               {[0, 1, 2].map((row) => (

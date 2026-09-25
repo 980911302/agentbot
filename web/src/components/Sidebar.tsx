@@ -392,6 +392,7 @@ export function Sidebar({
           type="button"
           className="sidebar-mini-plus-btn"
           onClick={onNew}
+          aria-label="新建智能体或群"
           title="新建会话或智能体"
         >
           <IconPlus size={18} />

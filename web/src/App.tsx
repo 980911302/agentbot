@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { Sidebar, type ChannelItem } from './components/Sidebar';
 import { BotScreen } from './components/BotScreen';
 import { ChatView } from './components/ChatView';
+import { useShortcuts } from './hooks/use-shortcuts';
 import { Composer } from './components/Composer';
 import { SettingsDialog } from './components/SettingsDialog';
 import { ChatWelcome } from './components/ChatWelcome';
@@ -177,31 +178,34 @@ export default function App() {
   const [isResizing, setIsResizing] = useState(false);
   const prevBusyRef = useRef(false);
 
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key === ',') {
-        event.preventDefault();
-        setSettingsOpen(true);
-        return;
-      }
-      if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === 'i') {
-        event.preventDefault();
-        setScreenOpen((open) => {
-          if (open && drawerTab === 'profile') return false;
-          setDrawerTab('profile');
-          setScreenFull(false);
-          return true;
-        });
-      }
-      // ⌘K / Ctrl+K：聚焦侧栏搜索（UI-03）。Shift 版留给浏览器/输入法，不抢。
-      if ((event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === 'k') {
-        event.preventDefault();
-        window.dispatchEvent(new CustomEvent('agentbot:focus-search'));
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [drawerTab]);
+  // 全局快捷键（UI-10）：⌘K 搜索、⌘, 设置、⌘\\ 右侧面板、⌘⇧I 资料页、Esc 关最上层浮层
+  const dismissTopmostOverlay = useCallback(() => {
+    // 从上往下关：确认框 → 改名 → 新建 → 设置 → 右键菜单之外的浮层（抽屉）
+    if (pendingDelete) { setPendingDelete(null); return; }
+    if (renamingChannel) { setRenamingChannel(null); return; }
+    if (editingBot) { setEditingBot(null); return; }
+    if (newBotOpen) { setNewBotOpen(false); return; }
+    if (settingsOpen) { setSettingsOpen(false); return; }
+    if (drawerPresence.mounted && !screenFull) { setScreenOpen(false); return; }
+  }, [pendingDelete, renamingChannel, editingBot, newBotOpen, settingsOpen, drawerPresence.mounted, screenFull]);
+
+  useShortcuts({
+    onFocusSearch: () => window.dispatchEvent(new CustomEvent('agentbot:focus-search')),
+    onOpenSettings: () => setSettingsOpen(true),
+    onTogglePanel: () => {
+      if (screenFull) { setScreenFull(false); return; }
+      setScreenOpen((open) => !open);
+    },
+    onToggleProfile: () => {
+      setScreenOpen((open) => {
+        if (open && drawerTab === 'profile') return false;
+        setDrawerTab('profile');
+        setScreenFull(false);
+        return true;
+      });
+    },
+    onDismissTop: dismissTopmostOverlay,
+  });
 
   const activeChannel = useMemo<ChannelItem>(
     () =>

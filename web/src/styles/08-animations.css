@@ -204,12 +204,30 @@
 
 /* Accessibility */
 @media (prefers-reduced-motion: reduce) {
+  /* UI-10 / 规范 §8：位移动画一律关掉，只保留 ≤80ms 的透明度变化。
+     实现：所有动画与过渡压到近 0，再把纯 opacity 的过渡放回 80ms。 */
   *,
   *::before,
   *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
+    animation-delay: 0ms !important;
     transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
+  }
+
+  /* 进出场容器（遮罩/弹窗/切页）的过渡放回 80ms：仍是淡入淡出，但不跳变。
+     不改 transition-property——颜色/边框类反馈保持瞬时。 */
+  .scrim,
+  .provider-settings-scrim,
+  .ui-modal-scrim,
+  .dialog,
+  .provider-settings-window,
+  .ui-modal,
+  .swap,
+  .drawer-panel,
+  .chat-message-list {
+    transition-duration: var(--dur-instant) !important;
   }
 
   .living-avatar .body,

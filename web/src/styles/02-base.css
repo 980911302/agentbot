@@ -43,6 +43,14 @@ button {
   outline-offset: 2px;
 }
 
+/* UI-10：键盘焦点环兜底。
+   多处组件规则写了 `outline: none`（想让它鼠标态干净），按条链特异性会盖掉
+   上面的伪类规则，键盘用户因此完全看不到焦点。影环走 box-shadow，不受
+   `outline: none` 影响，只在键盘聚焦（:focus-visible）时出现，鼠标点击不显示。 */
+:focus-visible {
+  box-shadow: var(--ring);
+}
+
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
