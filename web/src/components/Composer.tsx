@@ -3,7 +3,7 @@ import { useClickOutside } from '../hooks';
 import { IconArrowUp, IconCheck, IconChevronDown, IconMic, IconPlus, IconTool } from '../icons';
 import { BotAvatar } from './BotAvatar';
 import { mentionCandidateList } from '../features/chat/ui-chrome';
-import { composerAreaSize, composerPlaceholder } from '../features/chat/composer-view';
+import { composerAreaSize, composerPlaceholder, createComposerDrafts } from '../features/chat/composer-view';
 import type { ModelOption, ToolInfo } from '../types';
 
 export interface ChannelMemberItem {
@@ -12,7 +12,12 @@ export interface ChannelMemberItem {
   color: string;
 }
 
+/** 各频道的草稿：模块级，Composer 按频道重新挂载（App 给 key）时从这里取回 */
+const drafts = createComposerDrafts();
+
 interface ComposerProps {
+  /** 当前频道 id：草稿按它分开存取。App 同时把它当 key，切频道即换一个输入条实例 */
+  channelId: string;
   busy: boolean;
   botName: string;
   model: string;
@@ -26,6 +31,7 @@ interface ComposerProps {
 }
 
 export function Composer({
+  channelId,
   busy,
   botName,
   model,
@@ -37,7 +43,15 @@ export function Composer({
   onModelChange,
   onManageModels,
 }: ComposerProps) {
-  const [value, setValue] = useState('');
+  const [value, setValueState] = useState(() => drafts.read(channelId));
+  /** 写输入框的唯一入口：同步把草稿记到当前频道名下 */
+  const setValue = useCallback(
+    (text: string) => {
+      setValueState(text);
+      drafts.save(channelId, text);
+    },
+    [channelId],
+  );
   const [plusOpen, setPlusOpen] = useState(false);
   const [modelOpen, setModelOpen] = useState(false);
   const [voiceToast, setVoiceToast] = useState(false);
@@ -69,6 +83,12 @@ export function Composer({
     area.style.height = `${height}px`;
   };
 
+  // 切回带多行草稿的频道：挂载后按内容撑开高度
+  useEffect(() => {
+    if (value) resize();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 只在挂载时量一次
+  }, []);
+
   useEffect(() => {
     const onUsePrompt = (event: Event) => {
       const customEvent = event as CustomEvent<string>;
@@ -82,7 +102,7 @@ export function Composer({
     };
     window.addEventListener('agentbot:use_prompt', onUsePrompt);
     return () => window.removeEventListener('agentbot:use_prompt', onUsePrompt);
-  }, []);
+  }, [setValue]);
 
   const handleVoiceClick = () => {
     setVoiceToast(true);

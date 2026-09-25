@@ -7,6 +7,7 @@ import {
   COMPOSER_MIN_HEIGHT,
   composerAreaSize,
   composerPlaceholder,
+  createComposerDrafts,
 } from '../web/src/features/chat/composer-view.js';
 
 describe('composerAreaSize：输入框 1~8 行自适应（UI-07）', () => {
@@ -76,5 +77,36 @@ describe('composerPlaceholder：占位文案', () => {
   it('私聊用同事名字，没有名字时回落到 Bot', () => {
     assert.equal(composerPlaceholder({ busy: false, isGroup: false, botName: '小白' }), '给 小白 发消息');
     assert.equal(composerPlaceholder({ busy: false, isGroup: false, botName: '' }), '给 Bot 发消息');
+  });
+});
+
+describe('createComposerDrafts：草稿按频道分开', () => {
+  it('每个频道各存各的，切回来还在', () => {
+    const drafts = createComposerDrafts();
+    drafts.save('agent-a', '给 A 的半句话');
+    drafts.save('room-1', '@白泽 帮我看下');
+    assert.equal(drafts.read('agent-a'), '给 A 的半句话');
+    assert.equal(drafts.read('room-1'), '@白泽 帮我看下');
+  });
+
+  it('没存过的频道读到空串，不串用别的频道', () => {
+    const drafts = createComposerDrafts();
+    drafts.save('agent-a', '只属于 A');
+    assert.equal(drafts.read('agent-b'), '');
+  });
+
+  it('发送后清空（存空串或纯空白）就删掉这一格', () => {
+    const drafts = createComposerDrafts();
+    drafts.save('agent-a', '草稿');
+    drafts.save('agent-a', '');
+    assert.equal(drafts.read('agent-a'), '');
+    drafts.save('agent-a', '   ');
+    assert.equal(drafts.read('agent-a'), '');
+  });
+
+  it('草稿原样保留（含换行与首尾空白），不做 trim', () => {
+    const drafts = createComposerDrafts();
+    drafts.save('agent-a', '第一行\n第二行 ');
+    assert.equal(drafts.read('agent-a'), '第一行\n第二行 ');
   });
 });

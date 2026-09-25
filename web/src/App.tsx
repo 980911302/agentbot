@@ -118,6 +118,9 @@ export default function App() {
   const composer = useMemo(
     () => (
       <Composer
+        // 按频道换实例：草稿、@ 菜单、菜单开合都不串频道；草稿本身按 channelId 存取
+        key={activeChannelId}
+        channelId={activeChannelId}
         busy={live.responding}
         botName={activeChannel.name}
         isGroup={activeChannel.kind === 'room'}
@@ -131,6 +134,7 @@ export default function App() {
       />
     ),
     [
+      activeChannelId,
       activeChannel.kind,
       activeChannel.name,
       dialogs.openSettings,

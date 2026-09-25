@@ -38,3 +38,25 @@ export function composerPlaceholder(input: { busy: boolean; isGroup: boolean; bo
   if (input.isGroup) return '在群聊中发消息，输入 @ 唤醒指定成员…';
   return `给 ${input.botName || 'Bot'} 发消息`;
 }
+
+/** 按频道暂存的输入草稿：切走再切回来还在；发送或清空后删掉这一格 */
+export interface ComposerDrafts {
+  read(channelId: string): string;
+  save(channelId: string, text: string): void;
+}
+
+/**
+ * 草稿只放内存（本次打开的页面内有效），不写 localStorage：
+ * 输入条的半句话不值得跨重启保留，也免得敏感内容落盘。
+ * 空白草稿不占格子，读不到回落为空串。
+ */
+export function createComposerDrafts(): ComposerDrafts {
+  const drafts = new Map<string, string>();
+  return {
+    read: (channelId) => drafts.get(channelId) ?? '',
+    save: (channelId, text) => {
+      if (text.trim()) drafts.set(channelId, text);
+      else drafts.delete(channelId);
+    },
+  };
+}
