@@ -227,96 +227,103 @@ export class InboxProcessor {
         if (letter.grantId) authorization.flowGrantId = letter.grantId;
         if (letter.replyRoute) authorization.replyRoute = letter.replyRoute;
       }
-      const depth = letter.depth;
-      const task: Message = {
-        id: randomUUID(),
-        agentId,
-        role: 'user',
-        content: { type: 'text', text: letter.text },
-        ...(letter.images?.length ? { images: letter.images } : {}),
-        createdAt: Date.now(),
-        speaker: letter.fromName,
-        source: 'agent',
-        sender: letter.fromActor ?? { kind: 'agent', id: letter.fromAgentId, name: letter.fromName },
-        ...(this.deps.archiveLetter ? { correspondenceIds: letters.map(item => item.id) } : {}),
-      };
-
-      // 持久检查点：先记下这批信已经变成哪条消息，再进模型。
-      // 中途强退时租约过期回收，恢复执行能看出「这批输入已经有过一次处理」。
-      // 不盲目重放已经可能产生副作用的旧尝试。
-      const unsafe = await Promise.all(letters.filter(item => item.checkpoint).map(item => this.deps.canRetry?.(agentId, item.checkpoint!.messageId) ?? true));
-      if (unsafe.includes(false)) {
-        await session.nack(ids, '上次执行可能已有副作用，请核对产物后重新派发任务', { ...this.failureInput(), maxAttempts: 1 });
-        return null;
-      }
-      await session.checkpoint(ids, { messageId: task.id });
-
+      // 执行票据一旦拿到，就必须在每条退出路径上结清（settleTicket 幂等，重复结清不写盘）。
+      // 否则中途任何一步抛错（如检查点写入时租约已失效）都会留下一张 running 票据，
+      // 这个同事之后每次领信都被判「忙」，信永远开不了回合，直到进程重启。
       try {
-        // 这封信是一条委派：收件方为它开一件工作并回填 childWorkId（E4.4）。
-        // 失败不能拦住这封信：没有 childWorkId 只是停止时少一个精确靶点。
-        const delegationBrief = await this.deps.acceptDelegation?.(agentId, letter).catch((error) => {
-          console.warn(`委派未记账（不影响本轮）：${messageOf(error)}`);
-          return undefined;
-        });
-        // 等这位同事回信的等待还在：这封信就是它的唤醒事件，把工作身份带进本轮。
-        // 带线程键时按「哪一次请求」精确命中，避免一封回信解决掉等同一同事的别的等待。
-        const workBrief = await this.deps.workBriefForLetter?.(
+        const depth = letter.depth;
+        const task: Message = {
+          id: randomUUID(),
           agentId,
-          letter.fromAgentId,
-          letter.correlationId,
-        );
-        const result = await this.deps.runTurn(
-          agentId,
-          task,
-          {
-            brief: [
-              buildAgentBrief({
-                fromName: letter.fromName,
-                fromId: letter.fromAgentId,
-                depth,
-                maxDepth: this.deps.maxAgentChainDepth,
-              }),
-              delegationBrief,
-              workBrief,
-            ]
-              .filter(Boolean)
-              .join('\n\n'),
-            toolContext: {
-              agentChainDepth: depth,
-              replyRoute: letter.replyRoute,
+          role: 'user',
+          content: { type: 'text', text: letter.text },
+          ...(letter.images?.length ? { images: letter.images } : {}),
+          createdAt: Date.now(),
+          speaker: letter.fromName,
+          source: 'agent',
+          sender: letter.fromActor ?? { kind: 'agent', id: letter.fromAgentId, name: letter.fromName },
+          ...(this.deps.archiveLetter ? { correspondenceIds: letters.map(item => item.id) } : {}),
+        };
+
+        // 持久检查点：先记下这批信已经变成哪条消息，再进模型。
+        // 中途强退时租约过期回收，恢复执行能看出「这批输入已经有过一次处理」。
+        // 不盲目重放已经可能产生副作用的旧尝试。
+        const unsafe = await Promise.all(letters.filter(item => item.checkpoint).map(item => this.deps.canRetry?.(agentId, item.checkpoint!.messageId) ?? true));
+        if (unsafe.includes(false)) {
+          await session.nack(ids, '上次执行可能已有副作用，请核对产物后重新派发任务', { ...this.failureInput(), maxAttempts: 1 });
+          return null;
+        }
+        await session.checkpoint(ids, { messageId: task.id });
+
+        try {
+          // 这封信是一条委派：收件方为它开一件工作并回填 childWorkId（E4.4）。
+          // 失败不能拦住这封信：没有 childWorkId 只是停止时少一个精确靶点。
+          const delegationBrief = await this.deps.acceptDelegation?.(agentId, letter).catch((error) => {
+            console.warn(`委派未记账（不影响本轮）：${messageOf(error)}`);
+            return undefined;
+          });
+          // 等这位同事回信的等待还在：这封信就是它的唤醒事件，把工作身份带进本轮。
+          // 带线程键时按「哪一次请求」精确命中，避免一封回信解决掉等同一同事的别的等待。
+          const workBrief = await this.deps.workBriefForLetter?.(
+            agentId,
+            letter.fromAgentId,
+            letter.correlationId,
+          );
+          const result = await this.deps.runTurn(
+            agentId,
+            task,
+            {
+              brief: [
+                buildAgentBrief({
+                  fromName: letter.fromName,
+                  fromId: letter.fromAgentId,
+                  depth,
+                  maxDepth: this.deps.maxAgentChainDepth,
+                }),
+                delegationBrief,
+                workBrief,
+              ]
+                .filter(Boolean)
+                .join('\n\n'),
+              toolContext: {
+                agentChainDepth: depth,
+                replyRoute: letter.replyRoute,
+              },
+              // E4.4：回信时把这份线程键带回去，发起方才知道是「哪一次请求」的回音
+              ...(letter.correlationId ? { replyCorrelationId: letter.correlationId } : {}),
             },
-            // E4.4：回信时把这份线程键带回去，发起方才知道是「哪一次请求」的回音
-            ...(letter.correlationId ? { replyCorrelationId: letter.correlationId } : {}),
-          },
-          { ...options, ...(authorization ? { authorization } : {}) },
-        );
-        if (result.stopReason === 'cancelled' || result.stopReason === 'parked') {
-          await session.release(ids);
-          await this.deps.inbox.holdIds(agentId, ids, 'cancelled').catch(() => 0);
+            { ...options, ...(authorization ? { authorization } : {}) },
+          );
+          if (result.stopReason === 'cancelled' || result.stopReason === 'parked') {
+            await session.release(ids);
+            await this.deps.inbox.holdIds(agentId, ids, 'cancelled').catch(() => 0);
+            if (ticketId) await this.deps.settleTicket?.(ticketId);
+            return result;
+          }
+          if (result.stopReason === 'max_iterations' || result.stopReason === 'tool_limit') {
+            await session.release(ids);
+            await this.deps.inbox.holdIds(agentId, ids, 'manual_review').catch(() => 0);
+            if (ticketId) await this.deps.settleTicket?.(ticketId);
+            return result;
+          }
+          await session.ack(ids);
           if (ticketId) await this.deps.settleTicket?.(ticketId);
+          // 信已经处理并确认：现在才算「等这位同事回信」这件事满足了（E4.3）
+          await this.deps.onLettersHandled?.(agentId, letters).catch(() => undefined);
           return result;
-        }
-        if (result.stopReason === 'max_iterations' || result.stopReason === 'tool_limit') {
-          await session.release(ids);
-          await this.deps.inbox.holdIds(agentId, ids, 'manual_review').catch(() => 0);
+        } catch (error) {
           if (ticketId) await this.deps.settleTicket?.(ticketId);
-          return result;
+          if (error instanceof AgentBusyError) {
+            // 忙不是失败：归还领取，等它空下来再处理
+            await session.release(ids);
+          } else {
+            const safe = await this.deps.canRetry?.(agentId, task.id) ?? true;
+            await session.nack(ids, messageOf(error) + (safe ? '' : '；可能已有副作用，请核对后重派'), { ...this.failureInput(), ...(!safe ? { maxAttempts: 1 } : {}) });
+          }
+          throw error;
         }
-        await session.ack(ids);
-        if (ticketId) await this.deps.settleTicket?.(ticketId);
-        // 信已经处理并确认：现在才算「等这位同事回信」这件事满足了（E4.3）
-        await this.deps.onLettersHandled?.(agentId, letters).catch(() => undefined);
-        return result;
-      } catch (error) {
-        if (ticketId) await this.deps.settleTicket?.(ticketId);
-        if (error instanceof AgentBusyError) {
-          // 忙不是失败：归还领取，等它空下来再处理
-          await session.release(ids);
-        } else {
-          const safe = await this.deps.canRetry?.(agentId, task.id) ?? true;
-          await session.nack(ids, messageOf(error) + (safe ? '' : '；可能已有副作用，请核对后重派'), { ...this.failureInput(), ...(!safe ? { maxAttempts: 1 } : {}) });
-        }
-        throw error;
+      } finally {
+        if (ticketId) await this.deps.settleTicket?.(ticketId).catch(() => undefined);
       }
     } finally { await session.close(); }
   }

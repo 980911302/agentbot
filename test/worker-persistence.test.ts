@@ -1,6 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { spawn, spawnSync } from 'node:child_process';
-import { readFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
@@ -11,6 +12,8 @@ import { ToolRegistry } from '../src/tools/registry.js';
 import { defineTool } from '../src/tools/tool.js';
 import { createTaskTools } from '../src/tools/builtin/task.js';
 import { WorkerManager, workerResultLetter } from '../src/tools/services/worker-manager.js';
+import { AgentInbox, DeliveryLeaseLostError } from '../src/agent/inbox.js';
+import { InboxProcessor } from '../src/server/runtime/inbox-processor.js';
 import type { LLMMessage } from '../src/llm/provider.js';
 import { FakeProvider } from './fakes/fake-provider.js';
 import { tempDataDir, until, waitFor } from './fakes/test-env.js';
@@ -168,6 +171,121 @@ describe('验收 1：真 SIGKILL 重启后 CheckSubagent 仍看到上次工人�
       // 顺带覆盖验收 2 的跨进程半边：重启扫描把上次没收尾的工人结果补送进投递链
       assert.equal((checked.transfers as unknown[]).length, 1, '重启进程里结果信也投出去了');
       assert.equal(checked.consumed, true, '结果信被派工者领走并确认出队');
+    } finally {
+      await env.cleanup();
+    }
+  });
+});
+
+// ── 重启扫描与本进程投递的时序：CI 上偶发 30 秒超时的根因回归 ──────────────
+
+describe('重启扫描不误伤本进程正在处理的结果信（E4.5）', () => {
+  it('补送的结果信被本进程立刻领走时，启动扫描不把它当上次进程的残留作废：只开一轮', async () => {
+    const env = await tempDataDir('worker-recover-order');
+    try {
+      // 上次进程：建好派工者，盘上留下一个 running 的工人（等价于进程被强杀后的现场）
+      const seed = runtimeAt(env.dir, new FakeProvider({ auto: () => FakeProvider.text('好') }));
+      const owner = await seed.createAgent({ name: '派工者' });
+      await seed.close();
+      const workerId = randomUUID();
+      await mkdir(join(env.dir, 'tasks'), { recursive: true });
+      await writeFile(
+        join(env.dir, 'tasks', 'workers.json'),
+        JSON.stringify({
+          workers: [
+            {
+              id: workerId,
+              ownerId: owner.id,
+              authority: { toolNames: [], projectIds: [] },
+              description: '长活',
+              prompt: '把长活一直干下去',
+              status: 'running',
+              output: '',
+              startedAt: Date.now(),
+              corrections: [],
+            },
+          ],
+          histories: { [workerId]: [] },
+          pending: { [workerId]: [] },
+        }),
+        'utf8',
+      );
+
+      // 新进程：派工者这一轮挂到启动扫描结束，制造「扫描还没走完，本进程已领走结果信开回合」
+      let finishRecover!: () => void;
+      const recovered = new Promise<void>((resolve) => {
+        finishRecover = resolve;
+      });
+      const seen: string[] = [];
+      const provider = new FakeProvider({
+        auto: async (messages) => {
+          seen.push(lastUserText(messages));
+          await recovered;
+          return FakeProvider.text('收到，先核对现场。');
+        },
+      });
+      const runtime = runtimeAt(env.dir, provider);
+      // 复现 CI 上的慢调度：扫描走到「未回填工具调用」这一步时，本进程的调度器已经领信进了回合
+      const ledger = runtime.toolLedger;
+      const unfinished = ledger.unfinished.bind(ledger);
+      ledger.unfinished = async () => {
+        await waitFor(() => provider.calls.length > 0, '本进程领走结果信', 5_000).catch(() => undefined);
+        return unfinished();
+      };
+      try {
+        await runtime.recover();
+        finishRecover();
+        await until(
+          async () => (await runtime.inbox.count(owner.id)) === 0,
+          '结果信被派工者领走并确认出队',
+          10_000,
+        );
+        const letterTurns = seen.filter((text) => text.includes('工人收尾'));
+        assert.equal(letterTurns.length, 1, `一封结果信只开一轮，不被扫描作废后重投：${seen.length} 轮`);
+        assert.match(letterTurns[0]!, /上次进程/, '中断事实进了派工者的回合上下文');
+        assert.equal(await runtime.inbox.failedCount(owner.id), 0, '不存在投递失败');
+      } finally {
+        finishRecover();
+        await runtime.close();
+      }
+    } finally {
+      await env.cleanup();
+    }
+  });
+
+  it('领信后检查点写入时租约已失效：执行票据照样结清，不把同事卡成永远「忙」', async () => {
+    const env = await tempDataDir('inbox-ticket-settle');
+    try {
+      const inbox = new AgentInbox(env.dir);
+      await inbox.enqueue({
+        toAgentId: 'owner',
+        fromAgentId: 'peer',
+        fromName: '同事',
+        text: '结果来了',
+        priority: false,
+        depth: 0,
+      });
+      // 租约在领取之后被别处回收：检查点写入时拒绝旧处理者
+      inbox.checkpoint = async () => {
+        throw new DeliveryLeaseLostError();
+      };
+      const settled: string[] = [];
+      const processor = new InboxProcessor({
+        inbox,
+        registry: { get: async (id: string) => ({ id, name: '派工者' }) } as never,
+        maxAgentChainDepth: 5,
+        stopCoordinator: {} as never,
+        runTurn: async () => {
+          throw new Error('租约已失效，不该开回合');
+        },
+        deliverRoom: async () => undefined,
+        admit: async () => ({ kind: 'admitted', ticket: { ticketId: 'ticket-1' } }) as never,
+        settleTicket: async (ticketId) => {
+          settled.push(ticketId);
+        },
+      });
+      await assert.rejects(processor.process('owner'), DeliveryLeaseLostError);
+      assert.deepEqual(settled, ['ticket-1'], '拿到的执行票据必须结清，否则之后每次领信都被判忙');
     } finally {
       await env.cleanup();
     }
