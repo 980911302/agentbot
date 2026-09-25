@@ -8,6 +8,9 @@ import { BotAvatar, type AvatarMember } from './BotAvatar';
 import { ToolCallCard } from './ToolCallCard';
 import { IconAlert, IconChevronRight, IconTool } from '../icons';
 
+/** 消息头像统一 28（docs/主题与CSS.md §4）；.user-initial-avatar 与加载骨架同尺寸 */
+export const MESSAGE_AVATAR_SIZE = 28;
+
 function getInitials(name: string): string {
   const trimmed = name.trim();
   if (!trimmed) return 'ME';
@@ -210,7 +213,7 @@ export function MessageItem({
       name={senderName}
       color={member?.color || senderColor}
       agentId={member?.id || senderId}
-      size={34}
+      size={MESSAGE_AVATAR_SIZE}
       status={member?.status}
       notice={notice}
     />
@@ -224,14 +227,20 @@ export function MessageItem({
           className={`msg-sender-header assistant-header${isUser && isGroup ? ' group-user-header' : ''}`}
           style={isUser ? undefined : { color: member?.color || senderColor }}
         >
-          <button
-            type="button"
-            className="msg-sender-name"
-            onClick={() => onMention?.(senderName)}
-            title={onMention ? `插入 @${senderName}` : undefined}
-          >
-            {senderName}
-          </button>
+          {/* 只有群里、且能 @ 的发言者名字才是按钮：点一下在输入框插入「@名字 」。
+              私聊和主人自己的名字只是文字，不假装可点。 */}
+          {onMention && isGroup && !isUser ? (
+            <button
+              type="button"
+              className="msg-sender-name"
+              onClick={() => onMention(senderName)}
+              title={`插入 @${senderName}`}
+            >
+              {senderName}
+            </button>
+          ) : (
+            <span className="msg-sender-name">{senderName}</span>
+          )}
           {/* 暂停中的成员标出来，不当成沉默（规范 4 / UI-11） */}
           {pauseTag ? <span className="msg-sender-paused">{pauseTag}</span> : null}
           {origin}

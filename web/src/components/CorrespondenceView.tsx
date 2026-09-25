@@ -99,7 +99,7 @@ export function CorrespondencePanel({ agentId, agentName, peer, live, onClose }:
       {error ? <p role="alert">加载失败：{error} <button type="button" onClick={() => setRefresh(value => value + 1)}>重试</button></p> : null}
       {!loading && !error && !merged.length ? <p>暂无可追溯的往来记录。</p> : null}
       {merged.map(item => <article className="correspondence-entry" key={item.id}>
-        <BotAvatar name={item.from.name} color={item.from.color} size={32} />
+        <BotAvatar name={item.from.name} color={item.from.color} size={28} />
         <div className="correspondence-entry-body">
           <div className="correspondence-entry-heading">
             <strong style={{ color: item.from.color }}>{item.from.name}</strong>

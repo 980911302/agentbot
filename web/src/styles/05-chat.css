@@ -643,8 +643,6 @@ z-index: var(--z-dropdown);
   border-radius: 18px;
   box-shadow: none;
   padding: 10px 16px;
-  font-size: 15px;
-  line-height: 1.55;
 }
 
 .msg-bubble-box.dm-agent,
@@ -654,8 +652,6 @@ z-index: var(--z-dropdown);
   color: var(--text);
   border-radius: var(--r-lg);
   padding: 10px 14px;
-  font-size: 14.5px;
-  line-height: 1.62;
 }
 
 .msg-sender-name {
@@ -664,7 +660,15 @@ z-index: var(--z-dropdown);
   padding: 0;
   color: inherit;
   font: inherit;
+}
+
+/* 只有群里的发言者名字是按钮（点了插入 @），其余是纯文字 */
+button.msg-sender-name {
   cursor: pointer;
+}
+
+button.msg-sender-name:hover {
+  text-decoration: underline;
 }
 
 .msg-origin-tag {
@@ -703,15 +707,16 @@ z-index: var(--z-dropdown);
 }
 
 .user-initial-avatar {
-  width: 34px;
-  height: 34px;
+  /* 与智能体消息头像同为 28（MESSAGE_AVATAR_SIZE，规范 §4），加载骨架也是 28，加载完不跳 */
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   background: var(--accent-gradient);
-color: var(--on-accent);
+  color: var(--on-accent);
   display: grid;
   place-items: center;
-  font-size: 12px;
-  font-weight: 700;
+  font-size: var(--fs-xs);
+  font-weight: 600;
   box-shadow: var(--shadow-card);
 }
 
@@ -736,8 +741,6 @@ color: var(--on-accent);
   border: none;
   color: var(--text);
   padding: 2px 0;
-  font-size: 14.5px;
-  line-height: 1.72;
 }
 
 .bot-avatar.composite-avatar {
@@ -788,10 +791,12 @@ z-index: var(--z-header);
   max-width: 84%;
 }
 
+/* 消息正文只有一套字号与行高：主人气泡、智能体卡片、错误框、往来记录都走这里
+   （规范 §2.1 --fs-md「聊天消息正文」）。各变体只管底色、边框与内边距。 */
 .msg-bubble-box {
   padding: 12px 16px;
-  font-size: 14px;
-  line-height: 1.62;
+  font-size: var(--fs-md);
+  line-height: 1.6;
   word-break: break-word;
 }
 
@@ -804,7 +809,7 @@ z-index: var(--z-header);
 
 .rich-p {
   margin: 0;
-  line-height: 1.65;
+  line-height: inherit;
 }
 
 .rich-h1,
@@ -825,7 +830,7 @@ z-index: var(--z-header);
   display: flex;
   flex-direction: column;
   gap: 4px;
-  line-height: 1.6;
+  line-height: inherit;
 }
 
 .rich-quote {
@@ -855,6 +860,48 @@ z-index: var(--z-header);
   opacity: 0.8;
 }
 
+/* 同源 / data: 图片（CSP 只放行这两类；外链图片在 markdown.tsx 退化为链接） */
+.rich-image {
+  display: block;
+  max-width: 100%;
+  max-height: 360px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+}
+
+/* GFM 表格：窄屏横向滚动，不撑破阅读列 */
+.rich-table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+}
+
+.rich-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-base);
+  line-height: 1.5;
+}
+
+.rich-table th,
+.rich-table td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--divider);
+  text-align: left;
+  vertical-align: top;
+}
+
+.rich-table th {
+  background: var(--bg-subtle);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.rich-table tr:last-child td {
+  border-bottom: 0;
+}
+
 .rich-inline-code {
   font-family: var(--mono);
   font-size: 12.5px;
@@ -879,7 +926,7 @@ z-index: var(--z-header);
   align-items: center;
   justify-content: space-between;
   padding: 6px 12px;
-background: var(--veil);
+  background: var(--bg-code-header);
   border-bottom: 1px solid var(--border);
 }
 
@@ -904,8 +951,9 @@ background: var(--veil);
   color: var(--text);
 }
 
+/* 「已复制」用 --ok-text：深浅两套对底都 ≥4.5:1（--ok 只适合做点和图标） */
 .code-copy-btn.copied {
-  color: var(--ok);
+  color: var(--ok-text);
 }
 
 .code-block-pre {
@@ -915,7 +963,7 @@ background: var(--veil);
   font-family: var(--mono);
   font-size: 12.5px;
   line-height: 1.65;
-  color: var(--text);
+  color: var(--text-code);
 }
 
 .code-block-pre code {
@@ -947,6 +995,7 @@ background: var(--veil);
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: var(--sp-4);
   padding: 8px 12px;
   font-size: 12.5px;
   background: transparent;
@@ -987,14 +1036,19 @@ background: var(--veil);
 }
 
 .tool-card-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-family: var(--mono);
   font-weight: 600;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--text);
 }
 
 .tool-card-right {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   gap: 8px;
 }
@@ -1007,12 +1061,13 @@ background: var(--veil);
   color: var(--text-secondary);
 }
 
+/* 徽标文字用 *-text 令牌：--ok / --danger 是点和图标色，做小字对比度不够 */
 .tool-card-badge.ok {
-  color: var(--ok);
+  color: var(--ok-text);
 }
 
 .tool-card-badge.error {
-  color: var(--danger);
+  color: var(--danger-text);
 }
 
 .tool-card-badge.running {
@@ -1071,7 +1126,7 @@ background: var(--veil);
 }
 
 .tool-copy-btn.copied {
-  color: var(--ok);
+  color: var(--ok-text);
 }
 
 .tool-code-pre {
@@ -1537,16 +1592,16 @@ border-color: var(--danger);
   margin-top: calc(-1 * var(--sp-1));
 }
 
-/* 合并组里的后续行沿用头像列的对齐：留出头像宽度（34）+ 行 gap（12）的占位，
+/* 合并组里的后续行沿用头像列的对齐：留出头像宽度（28）+ 行 gap（12）的占位，
    气泡才不会因为少了头像而错位。私聊对方与群聊（含群里的主人）头像都在左侧，
    保持左缩进；只有私聊里的主人头像在右侧，占位挪到右边。 */
 .msg-row.compact .msg-content-col {
-  margin-left: 46px;
+  margin-left: 40px;
 }
 
 .msg-row.compact.dm-user .msg-content-col {
   margin-left: 0;
-  margin-right: 46px;
+  margin-right: 40px;
 }
 
 .msg-row.compact.group-stream.from-user .msg-content-col {
@@ -1575,7 +1630,7 @@ border-color: var(--danger);
 
 .msg-error-icon {
   flex: none;
-  /* 与首行文字垂直居中：(行高 1.72 × 14.5px − 16px) / 2 ≈ 4px */
+  /* 与首行文字垂直居中：(行高 1.6 × 15px − 16px) / 2 = 4px */
   margin-top: var(--sp-2);
 }
 
@@ -1585,7 +1640,7 @@ border-color: var(--danger);
 
 /* ── UI-05 控制状态条与顶栏状态文字 ─────────────────────────────
    时间线底部、输入条上方，宽度同阅读列。用语义令牌：
-   已暂停=warn、来信失败=danger、存储损坏=danger、其余=info。 */
+   已暂停=warn、消息没处理成功=danger、存储损坏=danger、其余=info。 */
 .control-notice {
   display: flex;
   align-items: center;
@@ -1662,7 +1717,9 @@ border-color: var(--danger);
 
 /* ── 工具过程聚合：默认只露一行摘要，展开后才显示单次调用详情。 ── */
 .tool-call-group {
-  width: min(var(--read-w), 100%);
+  /* 定宽再用 max-width 收：写百分比时消息列会按内容收缩，卡片被挤成一条窄条 */
+  width: 560px;
+  max-width: 100%;
   margin-top: var(--sp-2);
   border: 1px solid var(--border);
   border-radius: var(--r-md);
@@ -1673,7 +1730,7 @@ border-color: var(--danger);
 .tool-call-group-summary {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: var(--sp-3);
   min-height: 38px;
   padding: 7px 11px;
   color: var(--text-secondary);
@@ -1698,6 +1755,7 @@ border-color: var(--danger);
 
 .tool-call-group-meta {
   margin-left: auto;
+  padding-left: var(--sp-4);
   color: var(--text-tertiary);
   font-size: 11.5px;
   white-space: nowrap;

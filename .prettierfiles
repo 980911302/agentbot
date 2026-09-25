@@ -73,3 +73,4 @@ test/export-view.test.ts
 test/thinking.test.ts
 test/desktop-window-chrome.test.ts
 test/format.test.ts
+test/tool-call-view.test.ts
