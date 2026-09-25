@@ -23,10 +23,12 @@
     "desktop": "npm run build && npm run web:build && npm --prefix desktop start",
     "test": "node --test --import tsx \"./test/*.test.ts\"",
     "test:watch": "node --test --watch --import tsx \"./test/*.test.ts\"",
+    "e2e": "playwright test",
     "docs:check": "node scripts/check-docs.mjs",
     "ci": "node scripts/ci.mjs"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@types/node": "^22.20.2",
     "prettier": "^3.9.9",
     "tsx": "^4.23.13",

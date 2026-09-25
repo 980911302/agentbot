@@ -36,11 +36,21 @@ npm run dev -- "读一下 package.json"   # 命令行单次对话
 | `npm run build:all` | 后端 + 前端构建 |
 | `npm run check` | typecheck + test + build:all |
 | `npm run docs:check` | 根 `README.md` 与 `docs/*.md` 的相对链接、代码围栏 |
-| `npm run ci` | 双端类型 → 测试 → 双端构建 → 文档检查 → UI 令牌 → 格式 → 静态检查 → 跨层 import（`scripts/ci.mjs`，8 步） |
+| `npm run ci` | 双端类型 → 测试 → 双端构建 → 文档检查 → UI 令牌 → 格式 → 静态检查 → 跨层 import → 前端冒烟（`scripts/ci.mjs`，9 步） |
+| `npm run e2e` | 前端冒烟（OPT-05）：Playwright 驱动假模型预览，5 条流程（发送→回复、弹窗 Esc+焦点、侧栏选中、控制状态条恢复、响应式回归）；需先 `npm run web:build` |
+| `npx playwright install --only-shell chromium` | 首次/新机器装浏览器（只装 headless shell，约 195MB；CI 可加 `--with-deps`） |
 | `node scripts/check-format.mjs` | 只检查 `.prettierfiles` 受管清单的格式；触碰新文件先 `npx prettier --write <file>` 并把路径追加进清单 |
 | `node scripts/check-lint.mjs` | 受管文件的静态检查：tsc 未使用声明/隐式 any、显式 any、裸 Promise |
 | `node scripts/check-imports.mjs` | 跨层 import 约束（R1 契约纯净 / R2 前端只类型导入 / R3 路由不碰 storage / R4 工具不碰门面），可传 rootDir 指向测试夹具 |
 | `npm run clean` | 只清 `dist`、`web/dist`、`test-results`（白名单，绝不碰 `.agentbot`/`.env`） |
+
+### 前端冒烟（OPT-05）
+
+- 目录：`e2e/*.spec.ts` + 根 `playwright.config.ts`（`testDir: './e2e'`）。**不要放进 `test/`**——`npm test` 的 glob 是 `./test/*.test.ts`，会被 node:test 误收。
+- 夹具：复用 `test/fixtures/ui-preview.ts`（临时数据目录 + 假模型 + `AGENT_PREVIEW_PORT` 固定端口），由 Playwright 的 `webServer` 起停；不联网、不碰 `.agentbot`。
+- 约定（[Best Practices](https://playwright.dev/docs/best-practices)）：选择器优先 role / 文案，不靠 CSS class 定位业务元素；一律用自动等待断言，**不写固定 sleep**；每个用例独立 context；`workers: 1`（官方建议 CI 串行，优先稳定与可复现）。
+- 失败留证据：截图与 trace 落在 `test-results/playwright/`（已 ignore）。
+- 新增依赖：仅 `@playwright/test`（devDependency）。当前 5 条流程约 5 秒；CI 总耗时仍在「+60 秒」预算内。
 
 ### 提交前钩子（ENG-02）
 

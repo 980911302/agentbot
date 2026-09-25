@@ -10,5 +10,6 @@ desktop/release/
 .commandcode/
 *.tmp
 test-results/
+playwright-report/
 .agentbot-backups/
 .superpowers/

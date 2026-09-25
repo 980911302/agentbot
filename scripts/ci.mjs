@@ -16,6 +16,8 @@ const steps = [
   ['格式检查', ['node', 'scripts/check-format.mjs']],
   ['静态检查', ['node', 'scripts/check-lint.mjs']],
   ['跨层 import 检查', ['node', 'scripts/check-imports.mjs']],
+  // OPT-05：复用上一步的 web/dist 起假模型预览，用 Playwright 跑前端冒烟（不联网）
+  ['前端冒烟（Playwright）', ['npm', 'run', 'e2e']],
 ];
 
 for (const [name, command] of steps) {
