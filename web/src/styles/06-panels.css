@@ -69,29 +69,41 @@
   color: var(--text);
 }
 
+.drawer-tablist {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
 .drawer-tabs .screen-btn {
   margin-left: auto;
+  -webkit-app-region: no-drag;
 }
 
-/* ── Bot Screen Panel ─────────────────────────────────────── */
-.screen {
+/* 群里「记忆 / 工作」看哪位成员 */
+.drawer-member-picker {
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-3) 14px;
+  border-bottom: 1px solid var(--divider);
+  color: var(--text-secondary);
+  font-size: var(--fs-sm);
+}
+
+.drawer-member-picker select {
   flex: 1;
-  min-height: 0;
-  height: 100%;
   min-width: 0;
-  background: var(--bg-sidebar);
-  overflow: hidden;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg-input);
+  color: var(--text);
+  font-size: var(--fs-sm);
 }
 
-.screen.fullscreen {
-  position: fixed;
-  inset: 0;
-  z-index: var(--z-modal);
-  background: var(--bg);
-}
-
+/* ── 面板头与文件卡（原「屏幕」页已移除，这里只留仍在用的共用样式） ── */
 .screen-head {
   display: flex;
   align-items: center;
@@ -99,28 +111,6 @@
   padding: 14px 16px;
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
-}
-
-.screen-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--text-tertiary);
-}
-
-.screen-dot[data-busy='true'] {
-  background: var(--accent);
-  animation: pulse 1.2s infinite ease-in-out;
-}
-
-.screen-title {
-  flex: 1;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .screen-btn {
@@ -139,93 +129,6 @@
 .screen-btn:hover {
   background: var(--bg-hover);
   color: var(--text);
-}
-
-.screen-body {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  overflow-x: hidden;
-  padding: 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
-.screen-stage {
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
-  background: var(--bg-subtle);
-  overflow: hidden;
-}
-
-.timeline-label {
-  margin: 10px 0 8px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  color: var(--text-tertiary);
-}
-
-.tool-timeline {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.tool-timeline .tool-card-item.running {
-  border-color: color-mix(in srgb, var(--warn) 55%, transparent);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--warn) 30%, transparent);
-}
-
-.stage-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 36px 16px;
-  gap: 12px;
-  color: var(--text-tertiary);
-  text-align: center;
-}
-
-.screen-files {
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
-  background: var(--bg-subtle);
-  padding: 12px;
-}
-
-.screen-files-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-secondary);
-  margin-bottom: 8px;
-}
-
-.screen-count {
-  margin-left: auto;
-  font-size: 11px;
-  padding: 1px 6px;
-  border-radius: var(--r-full);
-  background: var(--bg-sidebar);
-}
-
-.screen-files-empty {
-  font-size: 12px;
-  color: var(--text-tertiary);
-  text-align: center;
-  padding: 12px 0;
-}
-
-.file-list {
-  list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
 }
 
 .file-chip {

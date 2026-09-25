@@ -75,3 +75,4 @@ test/desktop-window-chrome.test.ts
 test/format.test.ts
 test/tool-call-view.test.ts
 test/interaction-view.test.ts
+test/drawer-view.test.ts

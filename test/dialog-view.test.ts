@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import { strict as assert } from 'node:assert';
 import {
+  DEFAULT_DRAWER_TAB,
   deleteConfirmCopy,
   drawerTabOnChannelChange,
   infoToggleIntent,
@@ -60,40 +61,37 @@ describe('topmostOverlay：Esc 关最上层的顺序', () => {
   });
 });
 
-describe('infoToggleIntent：顶栏「侧边栏与屏幕」', () => {
-  it('关着时打开屏幕页（不动全屏态）', () => {
-    assert.deepEqual(infoToggleIntent(false, 'memory'), { action: 'showTab', tab: 'screen' });
+describe('infoToggleIntent：顶栏「右侧面板」', () => {
+  it('关着时打开，保留上次的页签', () => {
+    assert.deepEqual(infoToggleIntent(false, 'memory'), { action: 'showTab', tab: 'memory' });
+    assert.deepEqual(infoToggleIntent(false, 'work'), { action: 'showTab', tab: 'work' });
   });
 
-  it('开着且在资料页时切回屏幕页，不关闭', () => {
-    assert.deepEqual(infoToggleIntent(true, 'profile'), { action: 'setTab', tab: 'screen' });
+  it('关着且上次在资料页：打开默认的工作页（资料由标题入口负责）', () => {
+    assert.deepEqual(infoToggleIntent(false, 'profile'), { action: 'showTab', tab: DEFAULT_DRAWER_TAB });
+  });
+
+  it('开着且在资料页时切回默认页，不关闭', () => {
+    assert.deepEqual(infoToggleIntent(true, 'profile'), { action: 'setTab', tab: 'work' });
   });
 
   it('开着其它页时直接关闭', () => {
-    assert.deepEqual(infoToggleIntent(true, 'screen'), { action: 'close' });
+    assert.deepEqual(infoToggleIntent(true, 'work'), { action: 'close' });
     assert.deepEqual(infoToggleIntent(true, 'memory'), { action: 'close' });
   });
 });
 
 describe('membersToggleIntent：群成员叠放', () => {
-  it('关着时打开成员页并退出全屏', () => {
-    assert.deepEqual(membersToggleIntent(false, 'screen'), {
-      action: 'showTab',
-      tab: 'members',
-      fullscreen: false,
-    });
+  it('关着时打开成员页', () => {
+    assert.deepEqual(membersToggleIntent(false, 'work'), { action: 'showTab', tab: 'members' });
   });
 
-  it('已开成员页时关闭并回到屏幕页', () => {
-    assert.deepEqual(membersToggleIntent(true, 'members'), { action: 'close', tab: 'screen' });
+  it('已开成员页时关闭并回到默认页', () => {
+    assert.deepEqual(membersToggleIntent(true, 'members'), { action: 'close', tab: 'work' });
   });
 
   it('开着别的页时切到成员页', () => {
-    assert.deepEqual(membersToggleIntent(true, 'screen'), {
-      action: 'showTab',
-      tab: 'members',
-      fullscreen: false,
-    });
+    assert.deepEqual(membersToggleIntent(true, 'memory'), { action: 'showTab', tab: 'members' });
   });
 });
 
@@ -102,28 +100,22 @@ describe('profileToggleIntent：私聊标题与 ⌘⇧I', () => {
     assert.deepEqual(profileToggleIntent(true, 'profile'), { action: 'close' });
   });
 
-  it('否则打开资料页并退出全屏', () => {
-    assert.deepEqual(profileToggleIntent(false, 'screen'), {
-      action: 'showTab',
-      tab: 'profile',
-      fullscreen: false,
-    });
-    assert.deepEqual(profileToggleIntent(true, 'memory'), {
-      action: 'showTab',
-      tab: 'profile',
-      fullscreen: false,
-    });
+  it('否则打开资料页', () => {
+    assert.deepEqual(profileToggleIntent(false, 'work'), { action: 'showTab', tab: 'profile' });
+    assert.deepEqual(profileToggleIntent(true, 'memory'), { action: 'showTab', tab: 'profile' });
   });
 });
 
 describe('panelToggleIntent：⌘\\', () => {
-  it('全屏时先退全屏', () => {
-    assert.deepEqual(panelToggleIntent(true, true), { action: 'setFullscreen', fullscreen: false });
+  it('开合抽屉且不换页签', () => {
+    assert.deepEqual(panelToggleIntent(false), { action: 'setOpen', open: true });
+    assert.deepEqual(panelToggleIntent(true), { action: 'setOpen', open: false });
   });
+});
 
-  it('非全屏时开合抽屉且不换页签', () => {
-    assert.deepEqual(panelToggleIntent(false, false), { action: 'setOpen', open: true });
-    assert.deepEqual(panelToggleIntent(false, true), { action: 'setOpen', open: false });
+describe('默认页签：不再有「屏幕」页', () => {
+  it('默认落在工作页', () => {
+    assert.equal(DEFAULT_DRAWER_TAB, 'work');
   });
 });
 
@@ -153,8 +145,8 @@ describe('deleteConfirmCopy：删除确认文案', () => {
 });
 
 describe('drawerTabOnChannelChange：切频道时的页签', () => {
-  it('从群切到私聊时成员页回到屏幕页', () => {
-    assert.equal(drawerTabOnChannelChange('agent', 'members'), 'screen');
+  it('从群切到私聊时成员页回到默认页', () => {
+    assert.equal(drawerTabOnChannelChange('agent', 'members'), 'work');
   });
 
   it('其它情况不动页签', () => {

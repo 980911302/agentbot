@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { answeredLabel, formatCountdown } from '../web/src/features/chat/interaction-view.ts';
+import { answeredLabel, formatCountdown } from '../web/src/features/chat/interaction-view.js';
 
 describe('formatCountdown：交互卡倒计时', () => {
   it('分:秒，秒补两位', () => {

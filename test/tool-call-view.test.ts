@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { formatToolDuration } from '../web/src/features/chat/tool-call-view.ts';
+import { formatToolDuration } from '../web/src/features/chat/tool-call-view.js';
 
 describe('formatToolDuration：工具耗时', () => {
   it('不到 1 秒写毫秒', () => {

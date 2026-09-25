@@ -10,14 +10,13 @@ interface MemberPanelProps {
   memberLimit: number;
   busy: boolean;
   onSave: (memberIds: string[]) => void;
-  onClose: () => void;
 }
 
 /**
  * 群的成员表。
  * 文档：成员最多 6 个、至少留 1 个；改完从下一回合生效。
  */
-export function MemberPanel({ room, agents, memberLimit, busy, onSave, onClose }: MemberPanelProps) {
+export function MemberPanel({ room, agents, memberLimit, busy, onSave }: MemberPanelProps) {
   const [picked, setPicked] = useState<string[]>(room.memberIds);
   const [adding, setAdding] = useState(false);
 
@@ -54,9 +53,6 @@ export function MemberPanel({ room, agents, memberLimit, busy, onSave, onClose }
           onClick={() => setAdding((value) => !value)}
         >
           <IconPlus size={15} />
-        </button>
-        <button type="button" className="screen-btn" aria-label="关闭" onClick={onClose}>
-          <IconClose size={15} />
         </button>
       </header>
 
