@@ -57,10 +57,16 @@ export class RunExecutor {
       agentService: AgentService;
       stopCoordinator: StopCoordinator;
       activation?: {
-        ticketOf(id: string): import('../../shared/contracts/execution-control.js').ActivationTicket | undefined;
+        ticketOf(
+          id: string,
+        ): import('../../shared/contracts/execution-control.js').ActivationTicket | undefined;
         settleTicket?(id: string): Promise<void>;
-        tryActivate?(input: import('../../shared/contracts/execution-control.js').ActivationRequest): Promise<import('../../shared/contracts/execution-control.js').ActivationDecision>;
-        markRunning?(ticket: import('../../shared/contracts/execution-control.js').ActivationTicket): Promise<void>;
+        tryActivate?(
+          input: import('../../shared/contracts/execution-control.js').ActivationRequest,
+        ): Promise<import('../../shared/contracts/execution-control.js').ActivationDecision>;
+        markRunning?(
+          ticket: import('../../shared/contracts/execution-control.js').ActivationTicket,
+        ): Promise<void>;
       };
       effectRunner?: import('./effect-runner.js').EffectRunner;
       flowService?: import('./room-flow-service.js').RoomFlowService;
@@ -76,7 +82,12 @@ export class RunExecutor {
       maxIterations?: number;
       chatRuns: ChatRunCoordinator;
       canResumeRoom: (agentId: string, roomId: string) => Promise<boolean>;
-      publishResumedPosts: (agentId: string, continuation: RunContinuation, posts: string[], options: SendOptions) => Promise<void>;
+      publishResumedPosts: (
+        agentId: string,
+        continuation: RunContinuation,
+        posts: string[],
+        options: SendOptions,
+      ) => Promise<void>;
       onMemory: (agentId: string, runId: string, added: MemoryRef[], merged: number) => void;
     },
   ) {
@@ -85,9 +96,12 @@ export class RunExecutor {
     this.maintenance = new MemoryMaintenance(deps.extractor);
   }
 
-  cancelMaintenance(agentId: string): void { this.maintenance.cancel(agentId); }
+  cancelMaintenance(agentId: string): void {
+    this.maintenance.cancel(agentId);
+  }
   async close(): Promise<void> {
-    this.closed = true; this.maintenance.close();
+    this.closed = true;
+    this.maintenance.close();
     for (const tree of this.ledger.listTrees()) for (const job of this.ledger.jobsOf(tree.id)) job.abort();
     await Promise.allSettled(this.active);
   }
@@ -103,33 +117,63 @@ export class RunExecutor {
     const continuation = turn.resumeTaskId ? this.ledger.getTurn(turn.resumeTaskId)?.continuation : undefined;
     if (turn.resume && continuation) {
       const posts: string[] = [];
-      task = { ...task, source: continuation.source, speaker: continuation.speaker, sender: continuation.sender, images: continuation.images,
-        ...(continuation.room ? { roomId: continuation.room.roomId, roomName: continuation.room.roomName } : {}) };
-      turn = { ...turn, model: continuation.model, continuation,
+      task = {
+        ...task,
+        source: continuation.source,
+        speaker: continuation.speaker,
+        sender: continuation.sender,
+        images: continuation.images,
+        ...(continuation.room
+          ? { roomId: continuation.room.roomId, roomName: continuation.room.roomName }
+          : {}),
+      };
+      turn = {
+        ...turn,
+        model: continuation.model,
+        continuation,
         brief: [continuation.brief, turn.brief].filter(Boolean).join('\n\n'),
-        persistAssistantText: continuation.persistAssistantText, posts,
-        toolContext: { agentChainDepth: continuation.agentChainDepth,
-          ...(continuation.room ? { room: { ...continuation.room, posts } } : {}) } };
+        persistAssistantText: continuation.persistAssistantText,
+        posts,
+        toolContext: {
+          agentChainDepth: continuation.agentChainDepth,
+          ...(continuation.room ? { room: { ...continuation.room, posts } } : {}),
+        },
+      };
     }
     const parent = options.runId ? this.deps.chatRuns.get(options.runId) : undefined;
-    const source = turn.resume ? 'resume' : task.source ?? 'user';
-    const run = parent?.kind === 'agent' && parent.agentId === agentId && parent.messageId === task.id
-      ? parent
-      : (await this.deps.chatRuns.prepare({
-        channelId: task.roomId ?? agentId, agentId, roomId: task.roomId, kind: 'agent', source,
-        input: task.content.type === 'text' ? task.content.text : '',
-        parentRunId: turn.resumeTaskId ?? parent?.runId,
-        messageId: task.id,
-      })).run;
+    const source = turn.resume ? 'resume' : (task.source ?? 'user');
+    const run =
+      parent?.kind === 'agent' && parent.agentId === agentId && parent.messageId === task.id
+        ? parent
+        : (
+            await this.deps.chatRuns.prepare({
+              channelId: task.roomId ?? agentId,
+              agentId,
+              roomId: task.roomId,
+              kind: 'agent',
+              source,
+              input: task.content.type === 'text' ? task.content.text : '',
+              parentRunId: turn.resumeTaskId ?? parent?.runId,
+              messageId: task.id,
+            })
+          ).run;
     const scoped = this.deps.chatRuns.bind(run, options);
     if (turn.resume && turn.continuation?.room?.live && turn.toolContext?.room) {
       const continuation = turn.continuation;
-      turn.toolContext.room.publish = text => this.deps.publishResumedPosts(agentId, continuation, [text], scoped);
+      turn.toolContext.room.publish = (text) =>
+        this.deps.publishResumedPosts(agentId, continuation, [text], scoped);
     }
-    const execution = this.deps.chatRuns.execute(run.runId,
-      () => this.executeTurn(agentId, { ...task, runId: run.runId }, turn, scoped), result => result);
+    const execution = this.deps.chatRuns.execute(
+      run.runId,
+      () => this.executeTurn(agentId, { ...task, runId: run.runId }, turn, scoped),
+      (result) => result,
+    );
     this.active.add(execution);
-    try { return await execution; } finally { this.active.delete(execution); }
+    try {
+      return await execution;
+    } finally {
+      this.active.delete(execution);
+    }
   }
 
   private async executeTurn(
@@ -182,11 +226,23 @@ export class RunExecutor {
     const turnId = options.runId!;
     this.maintenance.cancel(agentId);
     const treeId = randomUUID();
-    const progressScope = turn.resume && turn.resumeTaskId
-      ? this.deps.progress.get(turn.resumeTaskId, agentId)?.scope ?? 'dm'
-      : task.roomId ? `room:${task.roomId}` : task.source === 'agent' ? 'agent' : 'dm';
-    const parentProgress = turn.resumeTaskId && this.deps.progress.get(turn.resumeTaskId, agentId) ? turn.resumeTaskId : undefined;
-    this.deps.progress.begin(turnId, agentId, task.content.type === 'text' ? task.content.text : '', progressScope, parentProgress);
+    const progressScope =
+      turn.resume && turn.resumeTaskId
+        ? (this.deps.progress.get(turn.resumeTaskId, agentId)?.scope ?? 'dm')
+        : task.roomId
+          ? `room:${task.roomId}`
+          : task.source === 'agent'
+            ? 'agent'
+            : 'dm';
+    const parentProgress =
+      turn.resumeTaskId && this.deps.progress.get(turn.resumeTaskId, agentId) ? turn.resumeTaskId : undefined;
+    this.deps.progress.begin(
+      turnId,
+      agentId,
+      task.content.type === 'text' ? task.content.text : '',
+      progressScope,
+      parentProgress,
+    );
     const runtimeTurn: RuntimeTurn = {
       id: turnId,
       agentId,
@@ -217,17 +273,29 @@ export class RunExecutor {
     const controller = new AbortController();
     this.ledger.jobsOf(treeId).push({ abort: () => controller.abort(), label: 'turn' });
     const externalSignal = turn.signal ?? options.signal;
-    const signal = externalSignal
-      ? AbortSignal.any([controller.signal, externalSignal])
-      : controller.signal;
+    const signal = externalSignal ? AbortSignal.any([controller.signal, externalSignal]) : controller.signal;
     const guard = { signal, isCurrent: () => this.ledger.runningTurnOf(agentId) === turnId };
-    let builtContext: BuiltContext = { agentId, system: '', messages: [], surfaced: [], droppedRecent: 0, droppedGroups: 0,
-      stats: { sections: [], totalTokens: 0, budgetTokens: 0, generatedAt: Date.now() } };
+    let builtContext: BuiltContext = {
+      agentId,
+      system: '',
+      messages: [],
+      surfaced: [],
+      droppedRecent: 0,
+      droppedGroups: 0,
+      stats: { sections: [], totalTokens: 0, budgetTokens: 0, generatedAt: Date.now() },
+    };
 
     try {
       const savedRecord = await this.deps.registry.get(agentId);
-      const record = savedRecord && turn.continuation ? { ...savedRecord,
-        projectIds: savedRecord.projectIds.filter(id => turn.continuation!.authority.projectIds.includes(id)) } : savedRecord;
+      const record =
+        savedRecord && turn.continuation
+          ? {
+              ...savedRecord,
+              projectIds: savedRecord.projectIds.filter((id) =>
+                turn.continuation!.authority.projectIds.includes(id),
+              ),
+            }
+          : savedRecord;
       if (!record) throw new Error(`Unknown agent: ${agentId}`);
 
       const model = this.deps.agentService.resolveModel(turn.model ?? options.model);
@@ -242,23 +310,50 @@ export class RunExecutor {
 
       // 从当前注册表装配可执行工具；续跑快照只收紧授权上限，不能恢复已撤销的权限。
       const available = [...agent.tools, ...(turn.extraTools ?? [])];
-      const registry = ToolRegistry.from(turn.continuation
-        ? available.filter(tool => turn.continuation!.authority.toolNames.includes(tool.name)) : available);
-      const authority = { toolNames: registry.list().map(tool => tool.name), projectIds: agent.memory.projectIds, model };
-      runtimeTurn.continuation = { version: 1, source: task.source ?? 'user', model, authority,
+      const registry = ToolRegistry.from(
+        turn.continuation
+          ? available.filter((tool) => turn.continuation!.authority.toolNames.includes(tool.name))
+          : available,
+      );
+      const authority = {
+        toolNames: registry.list().map((tool) => tool.name),
+        projectIds: agent.memory.projectIds,
+        model,
+      };
+      runtimeTurn.continuation = {
+        version: 1,
+        source: task.source ?? 'user',
+        model,
+        authority,
         inputId: options.authorization?.inputId,
         chainId: options.authorization?.chainId,
         grantId: options.authorization?.grantId,
         flowId: options.authorization?.flowId,
         flowGrantId: options.authorization?.flowGrantId,
         replyRoute: options.authorization?.replyRoute,
-        brief: turn.continuation?.brief ?? turn.brief, speaker: task.speaker, sender: task.sender, images: task.images,
-        agentChainDepth: turn.toolContext?.agentChainDepth ?? 0, persistAssistantText: turn.persistAssistantText !== false,
-        ...(turn.toolContext?.room ? { room: { roomId: turn.toolContext.room.roomId, roomName: turn.toolContext.room.roomName,
-          roundId: turn.toolContext.room.roundId ?? options.runId!, limit: turn.toolContext.room.limit,
-          live: turn.toolContext.room.live } } : {}) };
+        brief: turn.continuation?.brief ?? turn.brief,
+        speaker: task.speaker,
+        sender: task.sender,
+        images: task.images,
+        agentChainDepth: turn.toolContext?.agentChainDepth ?? 0,
+        persistAssistantText: turn.persistAssistantText !== false,
+        ...(turn.toolContext?.room
+          ? {
+              room: {
+                roomId: turn.toolContext.room.roomId,
+                roomName: turn.toolContext.room.roomName,
+                roundId: turn.toolContext.room.roundId ?? options.runId!,
+                limit: turn.toolContext.room.limit,
+                live: turn.toolContext.room.live,
+              },
+            }
+          : {}),
+      };
       this.ledger.putTurn(runtimeTurn);
-      const compaction = await this.deps.compactor.maybeCompact(agent, provider, guard).catch(() => { assertExecution(guard); return null; });
+      const compaction = await this.deps.compactor.maybeCompact(agent, provider, guard).catch(() => {
+        assertExecution(guard);
+        return null;
+      });
       assertExecution(guard);
       if (compaction) {
         options.onEvent?.({
@@ -270,8 +365,13 @@ export class RunExecutor {
       }
 
       const built = await this.deps.builder.build(agent, task, {
-        turnBrief: turn.brief, model, scope: progressScope, tools: registry.getSchemas(),
-        systemSnapshot: turn.resumeTaskId ? this.deps.progress.getSystemSnapshot(turn.resumeTaskId, agentId) : undefined,
+        turnBrief: turn.brief,
+        model,
+        scope: progressScope,
+        tools: registry.getSchemas(),
+        systemSnapshot: turn.resumeTaskId
+          ? this.deps.progress.getSystemSnapshot(turn.resumeTaskId, agentId)
+          : undefined,
         latestUserMessage: turn.resume ? await this.deps.messages.latestUser(agentId) : undefined,
       });
       builtContext = built;
@@ -279,7 +379,10 @@ export class RunExecutor {
       if (built.systemSnapshot) this.deps.progress.saveSystemSnapshot(turnId, built.systemSnapshot);
       if (turn.resumeTaskId) {
         // 历史数据不提升成 system；置于当前任务前，用户最新要求优先。
-        built.messages.splice(Math.max(0, built.messages.length - 1), 0, { role: 'user', content: this.deps.progress.brief(turnId, agentId) });
+        built.messages.splice(Math.max(0, built.messages.length - 1), 0, {
+          role: 'user',
+          content: this.deps.progress.brief(turnId, agentId),
+        });
       }
       options.onEvent?.({ type: 'context', stats: built.stats });
       await this.touchSurfaced(built.surfaced);
@@ -308,7 +411,8 @@ export class RunExecutor {
         registerJob: (abort, label) => this.ledger.jobsOf(treeId).push({ abort, label }),
         persistOutgoing: async (text) => {
           signal.throwIfAborted();
-          if (this.ledger.runningTurnOf(agentId) !== turnId) throw new DOMException('旧回合不再允许发送消息', 'AbortError');
+          if (this.ledger.runningTurnOf(agentId) !== turnId)
+            throw new DOMException('旧回合不再允许发送消息', 'AbortError');
           const message: Message = {
             id: randomUUID(),
             runId: turnId,
@@ -317,7 +421,13 @@ export class RunExecutor {
             content: { type: 'text', text },
             createdAt: Date.now(),
             source: 'agent',
-            sender: { kind: 'agent', id: record.id, name: record.name, color: record.color, avatar: record.avatar },
+            sender: {
+              kind: 'agent',
+              id: record.id,
+              name: record.name,
+              color: record.color,
+              avatar: record.avatar,
+            },
           };
           await this.deps.messages.append(message);
           options.onEvent?.({ type: 'message', message });
@@ -356,8 +466,31 @@ export class RunExecutor {
         progress: { store: this.deps.progress, id: turnId },
         persistAssistantText: turn.persistAssistantText,
         stamp: task.roomId
-          ? { runId: turnId, roomId: task.roomId, roomName: task.roomName, speaker: record.name, source: 'room', sender: { kind: 'agent', id: record.id, name: record.name, color: record.color, avatar: record.avatar } }
-          : { runId: turnId, source: task.source, sender: { kind: 'agent', id: record.id, name: record.name, color: record.color, avatar: record.avatar } },
+          ? {
+              runId: turnId,
+              roomId: task.roomId,
+              roomName: task.roomName,
+              speaker: record.name,
+              source: 'room',
+              sender: {
+                kind: 'agent',
+                id: record.id,
+                name: record.name,
+                color: record.color,
+                avatar: record.avatar,
+              },
+            }
+          : {
+              runId: turnId,
+              source: task.source,
+              sender: {
+                kind: 'agent',
+                id: record.id,
+                name: record.name,
+                color: record.color,
+                avatar: record.avatar,
+              },
+            },
         // E3.5：工具执行账本——先记意图，执行后回填结果，中断的留着给恢复核对
         invocations: this.deps.toolLedger,
         runId: turnId,
@@ -370,7 +503,11 @@ export class RunExecutor {
       try {
         result = await loop.run(agent, built);
       } catch (error) {
-        if (runtimeTurn.status === 'parked' || this.ledger.getTurn(turnId)?.status === 'parked' || (this.ledger.runningTurnOf(agentId) !== turnId && tree.status === 'open')) {
+        if (
+          runtimeTurn.status === 'parked' ||
+          this.ledger.getTurn(turnId)?.status === 'parked' ||
+          (this.ledger.runningTurnOf(agentId) !== turnId && tree.status === 'open')
+        ) {
           // 被新句插队：这不是故障，安静挂起，让位给新回合
           result = { content: '', iterations: 0, stopReason: 'parked' };
         } else if (signal.aborted) {
@@ -392,13 +529,24 @@ export class RunExecutor {
       if (result.stopReason === 'final_answer') {
         await this.deps.registry.update(agentId, {});
         // 只取这一回合写下的消息：不再全量 list 后再过滤
-        memoryExchange = [task, ...(await this.deps.messages.byRun(agentId, turnId)).filter(message => message.id !== task.id)];
+        memoryExchange = [
+          task,
+          ...(await this.deps.messages.byRun(agentId, turnId)).filter((message) => message.id !== task.id),
+        ];
         assertExecution(guard);
       }
 
-      if (turn.resume && runtimeTurn.continuation?.room && !runtimeTurn.continuation.room.live && (turn.posts?.length ?? 0) > 0) {
+      if (
+        turn.resume &&
+        runtimeTurn.continuation?.room &&
+        !runtimeTurn.continuation.room.live &&
+        (turn.posts?.length ?? 0) > 0
+      ) {
         assertExecution(guard);
-        await this.deps.publishResumedPosts(agentId, runtimeTurn.continuation, turn.posts!, { ...options, signal });
+        await this.deps.publishResumedPosts(agentId, runtimeTurn.continuation, turn.posts!, {
+          ...options,
+          signal,
+        });
       }
 
       if (result.stopReason === 'final_answer') {
@@ -420,8 +568,13 @@ export class RunExecutor {
       this.ledger.putTurn(runtimeTurn);
 
       if (memoryExchange && result.stopReason === 'final_answer') {
-        this.maintenance.start(agent, provider, memoryExchange, () => !signal.aborted && this.ledger.epochOf(agentId) === runtimeTurn.leaseEpoch,
-          result => this.deps.onMemory(agentId, turnId, result.refs, result.merged));
+        this.maintenance.start(
+          agent,
+          provider,
+          memoryExchange,
+          () => !signal.aborted && this.ledger.epochOf(agentId) === runtimeTurn.leaseEpoch,
+          (result) => this.deps.onMemory(agentId, turnId, result.refs, result.merged),
+        );
       }
 
       return {
@@ -439,15 +592,29 @@ export class RunExecutor {
         const reason = parked ? 'parked' : 'cancelled';
         runtimeTurn.status = reason;
         if (!parked) tree.status = 'cancelled';
-        this.ledger.putTurn(runtimeTurn); this.ledger.putTree(tree);
+        this.ledger.putTurn(runtimeTurn);
+        this.ledger.putTree(tree);
         this.deps.progress.finish(turnId, reason, reason);
-        return { agentId, agentName: agentId, content: '', iterations: 0, stopReason: reason,
-          context: builtContext, posts: [], status: 'silent' };
+        return {
+          agentId,
+          agentName: agentId,
+          content: '',
+          iterations: 0,
+          stopReason: reason,
+          context: builtContext,
+          posts: [],
+          status: 'silent',
+        };
       }
       if (runtimeTurn.status === 'running') {
         runtimeTurn.status = signal.aborted ? 'cancelled' : 'failed';
         tree.status = signal.aborted ? 'cancelled' : 'failed';
-        this.deps.progress.finish(turnId, signal.aborted ? 'cancelled' : 'failed', signal.aborted ? 'cancelled' : 'failed', error instanceof Error ? error.message : String(error));
+        this.deps.progress.finish(
+          turnId,
+          signal.aborted ? 'cancelled' : 'failed',
+          signal.aborted ? 'cancelled' : 'failed',
+          error instanceof Error ? error.message : String(error),
+        );
         this.ledger.putTurn(runtimeTurn);
         this.ledger.putTree(tree);
       }
@@ -518,11 +685,17 @@ export class RunExecutor {
     tree.resumeCount += 1;
     this.ledger.putTree(tree);
     const root = this.ledger.getTurn(tree.rootTurnId);
-    if (root && ((root.source !== 'user' && !root.continuation) ||
-      (root.continuation?.room && !await this.deps.canResumeRoom(agentId, root.continuation.room.roomId)))) {
+    if (
+      root &&
+      ((root.source !== 'user' && !root.continuation) ||
+        (root.continuation?.room && !(await this.deps.canResumeRoom(agentId, root.continuation.room.roomId))))
+    ) {
       // 旧记录无法恢复来源，或已离群/解散：不能降级成私聊执行。
-      root.status = 'cancelled'; tree.status = 'cancelled';
-      this.ledger.putTurn(root); this.ledger.putTree(tree); return;
+      root.status = 'cancelled';
+      tree.status = 'cancelled';
+      this.ledger.putTurn(root);
+      this.ledger.putTree(tree);
+      return;
     }
     // 先了结再跑：续跑回合自己的 finally 会再触发 resumeOwed，不改状态会立即再续一轮
     if (root && root.status === 'parked') {
@@ -584,15 +757,24 @@ export class RunExecutor {
         root.status = 'parked';
         this.ledger.putTurn(root);
       } else if (result.stopReason === 'final_answer') {
-        if (root) { root.status = 'done'; this.ledger.putTurn(root); }
+        if (root) {
+          root.status = 'done';
+          this.ledger.putTurn(root);
+        }
         tree.rootFinished = true;
         this.finishTreeIfSettled(tree);
       } else if (result.stopReason === 'max_iterations' || result.stopReason === 'tool_limit') {
-        if (root) { root.status = 'incomplete'; this.ledger.putTurn(root); }
+        if (root) {
+          root.status = 'incomplete';
+          this.ledger.putTurn(root);
+        }
         tree.status = 'incomplete';
         this.ledger.putTree(tree);
       } else if (result.stopReason === 'cancelled') {
-        if (root) { root.status = 'cancelled'; this.ledger.putTurn(root); }
+        if (root) {
+          root.status = 'cancelled';
+          this.ledger.putTurn(root);
+        }
         tree.status = 'cancelled';
         this.ledger.putTree(tree);
       }
@@ -635,13 +817,23 @@ export class RunExecutor {
         createdAt: Date.now(),
         source: 'agent',
       };
-      const { run } = await this.deps.chatRuns.prepare({ channelId: agentId, agentId, kind: 'stop', source: 'resume',
-        input: root?.text ?? '', parentRunId: root?.id });
-      await this.deps.chatRuns.execute(run.runId, async () => {
-        const notice = { ...message, runId: run.runId };
-        await this.deps.messages.append(notice);
-        this.deps.chatRuns.bind(run).onEvent?.({ type: 'message', message: notice });
-      }, () => ({ stopReason: 'stopped' }));
+      const { run } = await this.deps.chatRuns.prepare({
+        channelId: agentId,
+        agentId,
+        kind: 'stop',
+        source: 'resume',
+        input: root?.text ?? '',
+        parentRunId: root?.id,
+      });
+      await this.deps.chatRuns.execute(
+        run.runId,
+        async () => {
+          const notice = { ...message, runId: run.runId };
+          await this.deps.messages.append(notice);
+          this.deps.chatRuns.bind(run).onEvent?.({ type: 'message', message: notice });
+        },
+        () => ({ stopReason: 'stopped' }),
+      );
     }
   }
 

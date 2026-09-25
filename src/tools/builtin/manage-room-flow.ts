@@ -57,7 +57,10 @@ export function createManageRoomFlowTool(flowService: RoomFlowService): Tool<Man
 
       if (action === 'start') {
         let roomId = String(args.room_id || context.room?.roomId || '').trim();
-        if (context.room && (!roomId || roomId === context.room.roomName || roomId === 'current' || roomId === '本群')) {
+        if (
+          context.room &&
+          (!roomId || roomId === context.room.roomName || roomId === 'current' || roomId === '本群')
+        ) {
           roomId = context.room.roomId;
         }
         if (!roomId) throw new ControlError('缺少 room_id', 'INVALID_ARGUMENT');
@@ -109,14 +112,18 @@ export function createManageRoomFlowTool(flowService: RoomFlowService): Tool<Man
       }
 
       if (action === 'status') {
-        return JSON.stringify({
-          id: flow.id,
-          roomId: flow.roomId,
-          status: flow.status,
-          phase: flow.phase,
-          version: flow.version,
-          currentActors: flow.currentActors,
-        }, null, 2);
+        return JSON.stringify(
+          {
+            id: flow.id,
+            roomId: flow.roomId,
+            status: flow.status,
+            phase: flow.phase,
+            version: flow.version,
+            currentActors: flow.currentActors,
+          },
+          null,
+          2,
+        );
       }
 
       throw new ControlError(`不支持的动作：${action}`, 'INVALID_ACTION');

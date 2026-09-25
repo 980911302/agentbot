@@ -10,7 +10,13 @@ export function ProviderList({ settings }: { settings: ModelSettingsController }
   const { newProvider, setNewProvider, newProviderErrors } = settings;
 
   const openAdd = () => {
-    setNewProvider({ name: '', group: '自定义供应商', baseURL: 'https://api.openai.com/v1', apiFormat: 'openai', apiKey: '' });
+    setNewProvider({
+      name: '',
+      group: '自定义供应商',
+      baseURL: 'https://api.openai.com/v1',
+      apiFormat: 'openai',
+      apiKey: '',
+    });
     settings.setAddProviderOpen(true);
   };
 
@@ -95,7 +101,13 @@ export function ProviderList({ settings }: { settings: ModelSettingsController }
 
       {settings.addProviderOpen ? (
         <div className="submodal-overlay" onClick={() => settings.setAddProviderOpen(false)}>
-          <div className="submodal-box" role="dialog" aria-modal="true" aria-label="添加供应商" onClick={(e) => e.stopPropagation()}>
+          <div
+            className="submodal-box"
+            role="dialog"
+            aria-modal="true"
+            aria-label="添加供应商"
+            onClick={(e) => e.stopPropagation()}
+          >
             <h3 className="submodal-title">添加供应商</h3>
             <form onSubmit={(e) => void settings.submitNewProvider(e)}>
               <Field label="供应商名称" htmlFor="new-provider-name" required error={newProviderErrors.name}>
@@ -120,7 +132,12 @@ export function ProviderList({ settings }: { settings: ModelSettingsController }
                 />
               </Field>
 
-              <Field label="Base URL" htmlFor="new-provider-base-url" required error={newProviderErrors.baseURL}>
+              <Field
+                label="Base URL"
+                htmlFor="new-provider-base-url"
+                required
+                error={newProviderErrors.baseURL}
+              >
                 <input
                   id="new-provider-base-url"
                   type="text"
@@ -156,10 +173,16 @@ export function ProviderList({ settings }: { settings: ModelSettingsController }
               </Field>
 
               <div className="submodal-actions">
-                <button type="button" className="provider-add-model-btn" onClick={() => settings.setAddProviderOpen(false)}>
+                <button
+                  type="button"
+                  className="provider-add-model-btn"
+                  onClick={() => settings.setAddProviderOpen(false)}
+                >
                   取消
                 </button>
-                <button type="submit" className="provider-save-btn">确定添加</button>
+                <button type="submit" className="provider-save-btn">
+                  确定添加
+                </button>
               </div>
             </form>
           </div>

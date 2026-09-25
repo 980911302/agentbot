@@ -133,9 +133,15 @@ describe('mentionCandidateList', () => {
       { id: 'b', name: '白泽', color: '#222' },
     ];
     const everyoneHits = mentionCandidateList(members, 'every');
-    assert.deepEqual(everyoneHits.map((item) => item.name), ['everyone']);
+    assert.deepEqual(
+      everyoneHits.map((item) => item.name),
+      ['everyone'],
+    );
     const nameHits = mentionCandidateList(members, '白');
-    assert.deepEqual(nameHits.map((item) => item.name), ['白泽']);
+    assert.deepEqual(
+      nameHits.map((item) => item.name),
+      ['白泽'],
+    );
   });
 });
 
@@ -156,7 +162,10 @@ describe('groupCompositeFaces', () => {
     ]);
     assert.equal(four.faces.length, 3);
     assert.equal(four.remainder, 1);
-    assert.deepEqual(four.faces.map((face) => face.id), ['1', '2', '3']);
+    assert.deepEqual(
+      four.faces.map((face) => face.id),
+      ['1', '2', '3'],
+    );
   });
 });
 
@@ -281,4 +290,3 @@ describe('presence motion chrome', () => {
     assert.match(anim, /provider-settings-scrim\.(enter|enter-active)/);
   });
 });
-

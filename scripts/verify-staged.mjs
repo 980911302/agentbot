@@ -21,10 +21,16 @@ const BLOCKED_EXT = ['.key', '.pem', '.p12'];
 const ALLOWED = new Set(['.env.example']);
 
 function stagedPaths() {
-  const out = execFileSync('git', ['diff', '--cached', '--name-only', '--diff-filter=ACMR'], { encoding: 'utf8' });
-  return out.split('\n').map((line) => line.trim()).filter(Boolean);
+  const out = execFileSync('git', ['diff', '--cached', '--name-only', '--diff-filter=ACMR'], {
+    encoding: 'utf8',
+  });
+  return out
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
 }
 
+/** @param {string} path @returns {number} */
 function stagedSize(path) {
   try {
     return statSync(path).size;
@@ -33,11 +39,13 @@ function stagedSize(path) {
   }
 }
 
+/** @param {string} path @returns {string | null} */
 function violationOf(path) {
   const name = path.split('/').pop() ?? path;
   if (ALLOWED.has(name)) return null;
   if (name === '.env' || name.startsWith('.env.')) return '环境变量文件（可能含密钥）';
-  if (BLOCKED_DIRS.some((dir) => path.startsWith(dir) || path.includes(`/${dir}`))) return '用户数据 / 构建产物目录';
+  if (BLOCKED_DIRS.some((dir) => path.startsWith(dir) || path.includes(`/${dir}`)))
+    return '用户数据 / 构建产物目录';
   if (BLOCKED_EXT.some((ext) => name.endsWith(ext))) return '密钥或证书文件';
   const size = stagedSize(path);
   if (size > MAX_BYTES) return `文件 ${(size / 1024 / 1024).toFixed(1)}MB 超过 1MB`;
@@ -54,5 +62,7 @@ if (violations.length === 0) {
 
 console.error('[verify-staged] 暂存区里有不该提交的内容，已阻止本次提交：');
 for (const item of violations) console.error(`  - ${item.path}（${item.why}）`);
-console.error('处理办法：git restore --staged <文件>；真要提交请先确认内容，再临时用 git commit --no-verify（不推荐）。');
+console.error(
+  '处理办法：git restore --staged <文件>；真要提交请先确认内容，再临时用 git commit --no-verify（不推荐）。',
+);
 process.exit(1);

@@ -10,7 +10,7 @@
  */
 
 import { realpath } from 'node:fs/promises';
-import { basename, dirname, join, relative, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 
 /** 默认数据目录名（与 src/config.ts 的 DEFAULT_DATA_DIR 一致；这里不反向依赖 config） */
 export const DEFAULT_DATA_DIR_NAME = '.agentbot';
@@ -57,7 +57,10 @@ function isEnvSecret(candidate: string, rootDir: string): boolean {
  * 命中的敏感文件路径，没命中返回 undefined。
  * 两侧都做 realpath：数据目录自己可能是软链，只比一边会漏。
  */
-export async function sensitivePathHit(candidate: string, paths: SensitivePaths): Promise<string | undefined> {
+export async function sensitivePathHit(
+  candidate: string,
+  paths: SensitivePaths,
+): Promise<string | undefined> {
   const probes = [resolve(candidate)];
   const real = await realOrSelf(probes[0]!);
   if (real !== probes[0]) probes.push(real);

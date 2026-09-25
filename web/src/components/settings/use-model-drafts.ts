@@ -107,7 +107,8 @@ export function useModelDrafts(input: {
     const priorModel = editingModelId ? provider.models?.find((m) => m.id === editingModelId) : undefined;
     const nameNeverCustomized =
       !modelDraft.name.trim() || (priorModel ? modelDraft.name.trim() === (priorModel.model ?? '') : false);
-    const displayName = modelDraft.name.trim() || (nameNeverCustomized ? trimmedModel : priorModel?.name) || undefined;
+    const displayName =
+      modelDraft.name.trim() || (nameNeverCustomized ? trimmedModel : priorModel?.name) || undefined;
     try {
       const res = await saveModelToProvider(
         provider.id,
@@ -125,7 +126,10 @@ export function useModelDrafts(input: {
         input.setProviders(res.providers || []);
         if (modelDraft.setActive) input.onModel(trimmedModel);
         setModelFormOpen(false);
-        toast(modelFormMode === 'edit' ? `已保存模型「${trimmedModel}」` : `已添加模型「${trimmedModel}」`, 'ok');
+        toast(
+          modelFormMode === 'edit' ? `已保存模型「${trimmedModel}」` : `已添加模型「${trimmedModel}」`,
+          'ok',
+        );
       }
     } catch (err) {
       const message = messageOf(err, '未知错误');
@@ -142,20 +146,27 @@ export function useModelDrafts(input: {
         ...prev,
         model: value,
         ...(info
-          ? { thinkingEnabled: info.supportsThinking, ...(info.defaultLevel ? { thinkingLevel: info.defaultLevel as ThinkingLevel } : {}) }
+          ? {
+              thinkingEnabled: info.supportsThinking,
+              ...(info.defaultLevel ? { thinkingLevel: info.defaultLevel as ThinkingLevel } : {}),
+            }
           : {}),
       };
     });
   };
 
   return {
-    addProviderOpen, setAddProviderOpen,
-    newProvider, setNewProvider,
+    addProviderOpen,
+    setAddProviderOpen,
+    newProvider,
+    setNewProvider,
     newProviderErrors,
     submitNewProvider,
-    modelFormOpen, setModelFormOpen,
+    modelFormOpen,
+    setModelFormOpen,
     modelFormMode,
-    modelDraft, setModelDraft,
+    modelDraft,
+    setModelDraft,
     modelFormErrors,
     openAddModel,
     openEditModel,

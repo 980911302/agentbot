@@ -57,7 +57,8 @@ export function providerDraftErrors(draft: ProviderDraft): ProviderFormErrors {
   const errors: ProviderFormErrors = {};
   if (!draft.name.trim()) errors.name = '请填供应商名称';
   if (!draft.baseURL.trim()) errors.baseURL = '请填 Base URL';
-  else if (!/^https?:\/\//.test(draft.baseURL.trim())) errors.baseURL = 'Base URL 要以 http:// 或 https:// 开头';
+  else if (!/^https?:\/\//.test(draft.baseURL.trim()))
+    errors.baseURL = 'Base URL 要以 http:// 或 https:// 开头';
   return errors;
 }
 

@@ -69,7 +69,9 @@ export function useModelSettings(input: {
         setSelectedProviderId(actProv || fallbackProvider);
       } else {
         setActiveTab('general');
-        setSelectedProviderId((prev) => (prev && provList.some((p) => p.id === prev) ? prev : fallbackProvider));
+        setSelectedProviderId((prev) =>
+          prev && provList.some((p) => p.id === prev) ? prev : fallbackProvider,
+        );
       }
     } catch (err) {
       toast(messageOf(err, '读取模型设置失败'), 'error');
@@ -106,7 +108,10 @@ export function useModelSettings(input: {
     selectedProvider,
     activeModelId,
     setProviders,
-    selectProvider: (id) => { setSelectedProviderId(id); setActiveTab(id); },
+    selectProvider: (id) => {
+      setSelectedProviderId(id);
+      setActiveTab(id);
+    },
     onModel: input.onModel,
   });
 
@@ -237,13 +242,20 @@ export function useModelSettings(input: {
     setSelectedProviderId,
     loadSettings,
     // 表单
-    formName, setFormName,
-    isEditingName, setIsEditingName,
-    formBaseURL, setFormBaseURL,
-    formApiFormat, setFormApiFormat,
-    formApiKey, setFormApiKey,
-    formEnabled, setFormEnabled,
-    showApiKey, setShowApiKey,
+    formName,
+    setFormName,
+    isEditingName,
+    setIsEditingName,
+    formBaseURL,
+    setFormBaseURL,
+    formApiFormat,
+    setFormApiFormat,
+    formApiKey,
+    setFormApiKey,
+    formEnabled,
+    setFormEnabled,
+    showApiKey,
+    setShowApiKey,
     isSaving,
     formErrors,
     testResults,

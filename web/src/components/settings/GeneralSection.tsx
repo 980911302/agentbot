@@ -9,7 +9,14 @@ const THEME_OPTIONS: Array<{ value: ThemePreference; label: string }> = [
 ];
 
 /** 通用偏好（UI-08）：主题分段控件、主人显示名、本地服务与工具数。 */
-export function GeneralSection({ theme, ownerName, endpoint, toolCount, onTheme, onOwnerName }: {
+export function GeneralSection({
+  theme,
+  ownerName,
+  endpoint,
+  toolCount,
+  onTheme,
+  onOwnerName,
+}: {
   theme: ThemePreference;
   ownerName: string;
   endpoint: string;
@@ -43,12 +50,7 @@ export function GeneralSection({ theme, ownerName, endpoint, toolCount, onTheme,
               <span className="settings-row-name">主题模式</span>
               <span className="settings-row-desc">选择契合当前光照与视觉习惯的显示风格</span>
             </div>
-            <SegmentedControl
-              options={THEME_OPTIONS}
-              value={theme}
-              onChange={onTheme}
-              ariaLabel="主题模式"
-            />
+            <SegmentedControl options={THEME_OPTIONS} value={theme} onChange={onTheme} ariaLabel="主题模式" />
           </div>
         </div>
       </div>

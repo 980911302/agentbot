@@ -11,7 +11,12 @@ import { tempDataDir } from './fakes/test-env.js';
 const LONG = '长输入'.repeat(500); // 1500 字，超过保留上限 500
 
 const userRun = (input: string, clientMessageId: string) => ({
-  channelId: 'a', agentId: 'a', kind: 'agent' as const, source: 'user' as const, input, clientMessageId,
+  channelId: 'a',
+  agentId: 'a',
+  kind: 'agent' as const,
+  source: 'user' as const,
+  input,
+  clientMessageId,
 });
 
 describe('聊天运行账本（OPT-01）', () => {
@@ -34,20 +39,47 @@ describe('聊天运行账本（OPT-01）', () => {
       // 不同频道的同一个键互不影响
       const other = await second.prepare({ ...userRun('任务', 'k1'), channelId: 'b', agentId: 'b' });
       assert.equal(other.duplicate, false);
-    } finally { await env.cleanup(); }
+    } finally {
+      await env.cleanup();
+    }
   });
 
   it('旧格式账本能读：活动运行标中断、历史与中断记录当场精简', async () => {
     const env = await tempDataDir('chat-ledger-old');
     try {
       await mkdir(join(env.dir, 'chat'), { recursive: true });
-      await writeFile(join(env.dir, 'chat', 'runs.json'), JSON.stringify({
-        version: 1,
-        runs: [
-          { runId: 'old-active', taskId: 'old-active', channelId: 'a', agentId: 'a', kind: 'agent', source: 'user', input: LONG, status: 'running', createdAt: 1, updatedAt: 2 },
-          { runId: 'old-done', taskId: 'old-done', channelId: 'a', agentId: 'a', kind: 'agent', source: 'user', input: LONG, status: 'succeeded', createdAt: 1, updatedAt: 2 },
-        ],
-      }));
+      await writeFile(
+        join(env.dir, 'chat', 'runs.json'),
+        JSON.stringify({
+          version: 1,
+          runs: [
+            {
+              runId: 'old-active',
+              taskId: 'old-active',
+              channelId: 'a',
+              agentId: 'a',
+              kind: 'agent',
+              source: 'user',
+              input: LONG,
+              status: 'running',
+              createdAt: 1,
+              updatedAt: 2,
+            },
+            {
+              runId: 'old-done',
+              taskId: 'old-done',
+              channelId: 'a',
+              agentId: 'a',
+              kind: 'agent',
+              source: 'user',
+              input: LONG,
+              status: 'succeeded',
+              createdAt: 1,
+              updatedAt: 2,
+            },
+          ],
+        }),
+      );
       const coordinator = new ChatRunCoordinator(env.dir, new EventJournal());
       const active = coordinator.get('old-active')!;
       assert.equal(active.status, 'interrupted');
@@ -59,11 +91,15 @@ describe('聊天运行账本（OPT-01）', () => {
       assert.equal(done.inputLength, LONG.length);
       // 回写也精简了（旧文件里的长正文不会一直躺着）
       await coordinator.prepare(userRun('写一次触发落盘', 'k-old'));
-      const saved = JSON.parse(readFileSync(join(env.dir, 'chat', 'runs.json'), 'utf8')) as { runs: Array<{ runId: string; input: string; inputLength?: number }> };
+      const saved = JSON.parse(readFileSync(join(env.dir, 'chat', 'runs.json'), 'utf8')) as {
+        runs: Array<{ runId: string; input: string; inputLength?: number }>;
+      };
       const persisted = saved.runs.find((run) => run.runId === 'old-done')!;
       assert.equal(persisted.input.length, 500);
       assert.equal(persisted.inputLength, LONG.length);
-    } finally { await env.cleanup(); }
+    } finally {
+      await env.cleanup();
+    }
   });
 
   it('运行结束后只留前 500 字 + 原始长度，落盘与读取都正常', async () => {
@@ -73,18 +109,26 @@ describe('聊天运行账本（OPT-01）', () => {
       const { run } = await coordinator.prepare(userRun(LONG, 'k2'));
       assert.equal(coordinator.get(run.runId)!.input, LONG, '运行中保留完整输入');
 
-      await coordinator.execute(run.runId, async () => ({ ok: true }), () => ({}));
+      await coordinator.execute(
+        run.runId,
+        async () => ({ ok: true }),
+        () => ({}),
+      );
       const done = coordinator.get(run.runId)!;
       assert.equal(done.status, 'succeeded');
       assert.equal(done.input.length, 500);
       assert.equal(done.inputLength, LONG.length);
 
-      const file = JSON.parse(await readFile(join(env.dir, 'chat', 'runs.json'), 'utf8')) as { runs: Array<{ runId: string; input: string; inputLength?: number }> };
+      const file = JSON.parse(await readFile(join(env.dir, 'chat', 'runs.json'), 'utf8')) as {
+        runs: Array<{ runId: string; input: string; inputLength?: number }>;
+      };
       const saved = file.runs.find((item) => item.runId === run.runId)!;
       assert.equal(saved.input.length, 500);
       assert.equal(saved.inputLength, LONG.length);
       assert.equal(coordinator.list().length, 1);
-    } finally { await env.cleanup(); }
+    } finally {
+      await env.cleanup();
+    }
   });
 
   it('失败与中断同样只留前 500 字（重试文案从对话消息取，不靠账本）', async () => {
@@ -106,7 +150,9 @@ describe('聊天运行账本（OPT-01）', () => {
       assert.equal(afterRestart.get(pending.runId)?.inputLength, LONG.length);
       // 幂等指纹仍然完整：同键不同请求照样报错
       await assert.rejects(() => afterRestart.prepare(userRun('换个说法', 'k5')), /同一个 clientMessageId/);
-    } finally { await env.cleanup(); }
+    } finally {
+      await env.cleanup();
+    }
   });
 
   it('挂起的运行保留完整输入（要继续跑，不能只留摘要）', async () => {
@@ -114,12 +160,18 @@ describe('聊天运行账本（OPT-01）', () => {
     try {
       const coordinator = new ChatRunCoordinator(env.dir, new EventJournal());
       const { run } = await coordinator.prepare(userRun(LONG, 'k6'));
-      await coordinator.execute(run.runId, async () => ({}), () => ({ stopReason: 'parked' }));
+      await coordinator.execute(
+        run.runId,
+        async () => ({}),
+        () => ({ stopReason: 'parked' }),
+      );
       const parked = coordinator.get(run.runId)!;
       assert.equal(parked.status, 'parked');
       assert.equal(parked.input, LONG);
       assert.equal(parked.inputLength, undefined);
-    } finally { await env.cleanup(); }
+    } finally {
+      await env.cleanup();
+    }
   });
 
   it('发布前已落盘：queued 事件发出时账本里已经有这条运行', async () => {
@@ -129,11 +181,15 @@ describe('聊天运行账本（OPT-01）', () => {
       const coordinator = new ChatRunCoordinator(env.dir, journal);
       let persistedAtPublish: boolean | null = null;
       journal.subscribe(() => {
-        const doc = JSON.parse(readFileSync(join(env.dir, 'chat', 'runs.json'), 'utf8')) as { runs: Array<{ status: string }> };
+        const doc = JSON.parse(readFileSync(join(env.dir, 'chat', 'runs.json'), 'utf8')) as {
+          runs: Array<{ status: string }>;
+        };
         persistedAtPublish = doc.runs.some((item) => item.status === 'queued');
       });
       await coordinator.prepare(userRun('任务', 'k3'));
       assert.equal(persistedAtPublish, true, 'queued 事件发布时运行必须已经落盘');
-    } finally { await env.cleanup(); }
+    } finally {
+      await env.cleanup();
+    }
   });
 });

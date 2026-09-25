@@ -17,12 +17,15 @@ export class JsonlLog<T> {
   private readonly cacheMaxKeys: number;
   private clock = 0;
 
-  constructor(private readonly dir: string, options: JsonlLogOptions = {}) {
+  constructor(
+    private readonly dir: string,
+    options: JsonlLogOptions = {},
+  ) {
     this.cacheMaxKeys = Math.max(1, Math.floor(options.cacheMaxKeys ?? 64));
   }
 
   list(key: string): Promise<T[]> {
-    return this.serial(key, async () => [...await this.load(key)]);
+    return this.serial(key, async () => [...(await this.load(key))]);
   }
 
   /**
@@ -47,7 +50,9 @@ export class JsonlLog<T> {
   }
 
   /** 当前缓存着哪些 key（排查与测试用） */
-  cachedKeys(): string[] { return [...this.cache.keys()]; }
+  cachedKeys(): string[] {
+    return [...this.cache.keys()];
+  }
 
   /** 主动丢弃某个 key 的缓存，下次读取重新加载 */
   drop(key: string): void {
@@ -78,15 +83,18 @@ export class JsonlLog<T> {
     });
   }
 
-  private file(key: string): string { return join(this.dir, `${key}.jsonl`); }
+  private file(key: string): string {
+    return join(this.dir, `${key}.jsonl`);
+  }
 
   private async load(key: string): Promise<T[]> {
     const cached = this.cache.get(key);
     if (cached) return cached;
     const file = this.file(key);
     let raw: Buffer;
-    try { raw = await readFile(file); }
-    catch (error) {
+    try {
+      raw = await readFile(file);
+    } catch (error) {
       if (!isMissingFile(error)) throw error;
       const empty: T[] = [];
       this.cache.set(key, empty);
@@ -99,12 +107,16 @@ export class JsonlLog<T> {
       const end = newline < 0 ? raw.length : newline;
       const line = raw.subarray(start, end).toString('utf8').trim();
       if (line) {
-        try { entries.push(JSON.parse(line) as T); }
-        catch (error) {
+        try {
+          entries.push(JSON.parse(line) as T);
+        } catch (error) {
           // 只修复最后一条非空记录；中间损坏绝不静默删除。
           if (raw.subarray(end).toString('utf8').trim()) throw error;
           // 先保存原始字节再截断；备份失败则拒绝追加，保留现场。
-          await writeFile(`${file}.corrupt-${randomUUID()}`, raw.subarray(start), { flag: 'wx', mode: 0o600 });
+          await writeFile(`${file}.corrupt-${randomUUID()}`, raw.subarray(start), {
+            flag: 'wx',
+            mode: 0o600,
+          });
           await truncate(file, start);
           raw = raw.subarray(0, start);
           break;
@@ -123,7 +135,9 @@ export class JsonlLog<T> {
   private touch(key: string): void {
     this.touched.set(key, ++this.clock);
     if (this.cache.size <= this.cacheMaxKeys) return;
-    const victims = [...this.touched.entries()].sort((a, b) => a[1] - b[1]).slice(0, this.cache.size - this.cacheMaxKeys);
+    const victims = [...this.touched.entries()]
+      .sort((a, b) => a[1] - b[1])
+      .slice(0, this.cache.size - this.cacheMaxKeys);
     for (const [stale] of victims) this.drop(stale);
   }
 
@@ -131,7 +145,10 @@ export class JsonlLog<T> {
     const previous = this.mutations.get(key)?.catch(() => undefined) ?? Promise.resolve();
     const pending = previous.then(operation);
     this.mutations.set(key, pending);
-    try { return await pending; }
-    finally { if (this.mutations.get(key) === pending) this.mutations.delete(key); }
+    try {
+      return await pending;
+    } finally {
+      if (this.mutations.get(key) === pending) this.mutations.delete(key);
+    }
   }
 }

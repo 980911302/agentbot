@@ -3,7 +3,12 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { resolve } from 'node:path';
 import { defineTool } from '../tool.js';
 import { ShellSessionManager } from '../services/shell-session-manager.js';
-import { sensitivePaths, shellCommandSensitiveHit, shellRefusalMessage, type SensitivePaths } from '../sensitive-paths.js';
+import {
+  sensitivePaths,
+  shellCommandSensitiveHit,
+  shellRefusalMessage,
+  type SensitivePaths,
+} from '../sensitive-paths.js';
 import type { ToolResult } from '../result.js';
 
 /**
@@ -20,18 +25,44 @@ export function createShellTools(rootDir = process.cwd(), paths: SensitivePaths 
   const manager = new ShellSessionManager();
 
   const summarize = (shell: ReturnType<ShellSessionManager['start']>, offset?: number): ToolResult => {
-    const status = shell.done ? `已结束：${shell.state}（exit ${shell.code ?? '?'}）` : `${shell.state}（等待进程退出/仍在后台运行）`;
+    const status = shell.done
+      ? `已结束：${shell.state}（exit ${shell.code ?? '?'}）`
+      : `${shell.state}（等待进程退出/仍在后台运行）`;
     let record: ReturnType<ReturnType<ShellSessionManager['outputStore']>['get']> | undefined;
-    try { record = manager.outputStore().get(shell.id, shell.ownerId ?? ''); }
-    catch { /* 旧日志可按保留策略清理；不能因此把已执行的命令说成执行失败。 */ }
+    try {
+      record = manager.outputStore().get(shell.id, shell.ownerId ?? '');
+    } catch {
+      /* 旧日志可按保留策略清理；不能因此把已执行的命令说成执行失败。 */
+    }
     const failed = shell.state !== 'running' && (shell.state !== 'exited' || shell.code !== 0);
-    return { status: failed ? 'error' : shell.done ? 'ok' : 'running',
-      execution: { id: shell.id, state: shell.state, exitCode: shell.code, ...(shell.signal ? { signal: shell.signal } : {}) },
-      ...(failed ? { error: { code: shell.state === 'exited' ? 'SHELL_EXIT_NONZERO' : `SHELL_${shell.state.toUpperCase()}`, message: shell.logError ?? `命令 ${shell.state}，exit=${shell.code ?? 'unknown'}` } } : {}),
-      output: { truncated: !record || record.totalBytes > 8000, ...(record ? { handle: shell.id, totalBytes: record.totalBytes, retainedBytes: record.retainedBytes } : {}), storageTruncated: !record || record.storageTruncated },
-      content: `shell_id: ${shell.id}\n${record ? `output_id: ${shell.id}（ReadToolOutput 可分页/搜索原文；其 offset 为 UTF-8 字节）` : '[持久日志已清理或不可读；命令执行状态不变，勿因此重跑]'}\n${record?.storageTruncated ? '[存储配额已满，原文未完整保存]\n' : ''}${shell.logError ? shell.logError + '\n' : ''}命令摘要：${shell.command.slice(0, 240)}${shell.command.length > 240 ? '…[已省略完整命令]' : ''}\n状态：${status}\n输出：\n${
-      manager.read(shell, offset)
-    }${shell.done ? '' : '\n用 AwaitShell 继续等结果，后台运行不代表验证通过。'}` };
+    return {
+      status: failed ? 'error' : shell.done ? 'ok' : 'running',
+      execution: {
+        id: shell.id,
+        state: shell.state,
+        exitCode: shell.code,
+        ...(shell.signal ? { signal: shell.signal } : {}),
+      },
+      ...(failed
+        ? {
+            error: {
+              code: shell.state === 'exited' ? 'SHELL_EXIT_NONZERO' : `SHELL_${shell.state.toUpperCase()}`,
+              message: shell.logError ?? `命令 ${shell.state}，exit=${shell.code ?? 'unknown'}`,
+            },
+          }
+        : {}),
+      output: {
+        truncated: !record || record.totalBytes > 8000,
+        ...(record
+          ? { handle: shell.id, totalBytes: record.totalBytes, retainedBytes: record.retainedBytes }
+          : {}),
+        storageTruncated: !record || record.storageTruncated,
+      },
+      content: `shell_id: ${shell.id}\n${record ? `output_id: ${shell.id}（ReadToolOutput 可分页/搜索原文；其 offset 为 UTF-8 字节）` : '[持久日志已清理或不可读；命令执行状态不变，勿因此重跑]'}\n${record?.storageTruncated ? '[存储配额已满，原文未完整保存]\n' : ''}${shell.logError ? shell.logError + '\n' : ''}命令摘要：${shell.command.slice(0, 240)}${shell.command.length > 240 ? '…[已省略完整命令]' : ''}\n状态：${status}\n输出：\n${manager.read(
+        shell,
+        offset,
+      )}${shell.done ? '' : '\n用 AwaitShell 继续等结果，后台运行不代表验证通过。'}`,
+    };
   };
 
   const shell = defineTool<{
@@ -53,7 +84,12 @@ export function createShellTools(rootDir = process.cwd(), paths: SensitivePaths 
       properties: {
         command: { type: 'string', description: '要执行的完整命令' },
         working_directory: { type: 'string', description: '工作目录（绝对路径），默认运行时根目录' },
-        block_until_ms: { type: 'integer', minimum: 0, maximum: 60000, description: '同步等待，默认 30000；最多 60000；0 = 立刻转后台' },
+        block_until_ms: {
+          type: 'integer',
+          minimum: 0,
+          maximum: 60000,
+          description: '同步等待，默认 30000；最多 60000；0 = 立刻转后台',
+        },
         timeout_ms: { type: 'integer', minimum: 1000, maximum: 1800000 },
         description: { type: 'string', description: '5~10 个字，说明这条命令干什么' },
       },
@@ -68,9 +104,16 @@ export function createShellTools(rootDir = process.cwd(), paths: SensitivePaths 
       const hit = shellCommandSensitiveHit(command, paths);
       if (hit) throw new Error(shellRefusalMessage(command, hit));
 
-      const started = manager.start(command, cwd, (abort, label) =>
-        context.turnState?.registerJob?.(abort, label),
-        { signal: context.signal, timeoutMs: args.timeout_ms, ownerId: context.agentId, outputs: context.outputs },
+      const started = manager.start(
+        command,
+        cwd,
+        (abort, label) => context.turnState?.registerJob?.(abort, label),
+        {
+          signal: context.signal,
+          timeoutMs: args.timeout_ms,
+          ownerId: context.agentId,
+          outputs: context.outputs,
+        },
       );
       const requested = Math.max(0, args.block_until_ms ?? 30_000);
       const deadline = Date.now() + Math.min(requested, SYNC_WAIT_CAP_MS);
@@ -98,14 +141,21 @@ export function createShellTools(rootDir = process.cwd(), paths: SensitivePaths 
       type: 'object',
       properties: {
         shell_id: { type: 'string', description: 'Shell 返回的 id' },
-        block_until_ms: { type: 'integer', minimum: 0, maximum: 60000, description: '默认 30000，最多 60000' },
+        block_until_ms: {
+          type: 'integer',
+          minimum: 0,
+          maximum: 60000,
+          description: '默认 30000，最多 60000',
+        },
         pattern: { type: 'string', description: '字面文本，不是正则，出现即返回' },
         offset: { type: 'integer', minimum: 0 },
         stop: { type: 'boolean' },
       },
     },
     async execute(args, context) {
-      const target = args.shell_id ? manager.get(args.shell_id, context.agentId, context.outputs) : manager.latestRunning(context.agentId);
+      const target = args.shell_id
+        ? manager.get(args.shell_id, context.agentId, context.outputs)
+        : manager.latestRunning(context.agentId);
       if (!target) {
         throw new Error('找不到这个 shell_id，请使用 Shell 返回的完整 id');
       }

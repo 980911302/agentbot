@@ -24,7 +24,9 @@ export function Field({ label, htmlFor, required, hint, error, children }: Field
       </label>
       {children}
       {error ? (
-        <div className="provider-field-error" role="alert">{error}</div>
+        <div className="provider-field-error" role="alert">
+          {error}
+        </div>
       ) : hint ? (
         <div className="provider-field-hint">{hint}</div>
       ) : null}

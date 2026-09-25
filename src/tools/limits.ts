@@ -45,10 +45,24 @@ export function clipOutput(text: string, max: number): string {
 }
 
 const STRING_LIMITS: Record<string, number> = {
-  path: 4096, working_directory: 4096, url: 4096, query: 1000, pattern: 500,
-  command: 24000, content: 32000, old_text: 16000, new_text: 16000,
-  name: 100, title: 200, description: 8000, prompt: 12000, message: 12000,
-  text: 20000, fact: 2000, project: 80, helpText: 1000,
+  path: 4096,
+  working_directory: 4096,
+  url: 4096,
+  query: 1000,
+  pattern: 500,
+  command: 24000,
+  content: 32000,
+  old_text: 16000,
+  new_text: 16000,
+  name: 100,
+  title: 200,
+  description: 8000,
+  prompt: 12000,
+  message: 12000,
+  text: 20000,
+  fact: 2000,
+  project: 80,
+  helpText: 1000,
 };
 
 /** 同一套边界同时给模型 schema 和执行器使用，不能只靠提示词自觉。 */
@@ -57,9 +71,12 @@ export function boundedSchema(schema: JSONSchema, toolName: string): JSONSchema 
     if (!raw || typeof raw !== 'object' || depth > 8) return raw;
     const node = { ...raw };
     if (node.type === 'string') {
-      const cap = (toolName === 'TodoWrite' && key === 'content') ? 500
-        : (toolName === 'Task' && key === 'description') ? 200
-        : STRING_LIMITS[key] ?? 1000;
+      const cap =
+        toolName === 'TodoWrite' && key === 'content'
+          ? 500
+          : toolName === 'Task' && key === 'description'
+            ? 200
+            : (STRING_LIMITS[key] ?? 1000);
       node.maxLength = Math.min(node.maxLength ?? cap, cap);
     }
     if (node.type === 'array') {
@@ -68,7 +85,9 @@ export function boundedSchema(schema: JSONSchema, toolName: string): JSONSchema 
     }
     if (node.type === 'object') {
       node.additionalProperties = false;
-      node.properties = Object.fromEntries(Object.entries(node.properties ?? {}).map(([k, v]) => [k, visit(v, k, depth + 1)]));
+      node.properties = Object.fromEntries(
+        Object.entries(node.properties ?? {}).map(([k, v]) => [k, visit(v, k, depth + 1)]),
+      );
     }
     return node;
   };
@@ -78,12 +97,15 @@ export function boundedSchema(schema: JSONSchema, toolName: string): JSONSchema 
 export function validateToolArgs(name: string, args: unknown, schema: JSONSchema): void {
   const serialized = JSON.stringify(args);
   if (!serialized || serialized.length > limitsFor(name).input) {
-    throw new Error(`${name} 参数超过 ${limitsFor(name).input} 字符，请拆成较小的调用；写文件请分块 Write/Edit`);
+    throw new Error(
+      `${name} 参数超过 ${limitsFor(name).input} 字符，请拆成较小的调用；写文件请分块 Write/Edit`,
+    );
   }
   const visit = (value: any, rule: any, path: string, depth: number): void => {
     if (depth > 8) throw new Error(`${path} 嵌套超过 8 层`);
     if (rule.type === 'object') {
-      if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${path} 必须是 object`);
+      if (!value || typeof value !== 'object' || Array.isArray(value))
+        throw new Error(`${path} 必须是 object`);
       for (const key of rule.required ?? []) {
         if (value[key] === undefined) throw new Error(`missing required argument: ${path}.${key}`);
       }
@@ -95,19 +117,36 @@ export function validateToolArgs(name: string, args: unknown, schema: JSONSchema
     } else if (rule.type === 'array') {
       // 兼容旧工作台模型发来的 JSON 数组字符串；仍用同一元素/数量边界校验。
       if (typeof value === 'string' && /\.(?:add_|remove_)?member_ids$/.test(path)) {
-        try { value = JSON.parse(value); } catch { throw new Error(`${path} 必须是数组或合法 JSON 数组`); }
+        try {
+          value = JSON.parse(value);
+        } catch {
+          throw new Error(`${path} 必须是数组或合法 JSON 数组`);
+        }
       }
       if (!Array.isArray(value)) throw new Error(`${path} 必须是 array`);
-      if (value.length < (rule.minItems ?? 0) || value.length > (rule.maxItems ?? 50)) throw new Error(`${path} 数量超限（${rule.minItems ?? 0}–${rule.maxItems ?? 50}）`);
+      if (value.length < (rule.minItems ?? 0) || value.length > (rule.maxItems ?? 50))
+        throw new Error(`${path} 数量超限（${rule.minItems ?? 0}–${rule.maxItems ?? 50}）`);
       for (const item of value) visit(item, rule.items, `${path}[]`, depth + 1);
     } else if (rule.type === 'string') {
       if (typeof value !== 'string') throw new Error(`${path} 必须是 string`);
-      if (value.length > rule.maxLength || value.length < (rule.minLength ?? 0)) throw new Error(`${path} 长度超限（最大 ${rule.maxLength} 字符）`);
+      if (value.length > rule.maxLength || value.length < (rule.minLength ?? 0))
+        throw new Error(`${path} 长度超限（最大 ${rule.maxLength} 字符）`);
     } else if (rule.type === 'number' || rule.type === 'integer') {
-      if (typeof value !== 'number' || !Number.isFinite(value) || (rule.type === 'integer' && !Number.isSafeInteger(value))) throw new Error(`${path} 必须是有限${rule.type === 'integer' ? '整数' : '数字'}`);
-      if (value < (rule.minimum ?? -Number.MAX_SAFE_INTEGER) || value > (rule.maximum ?? Number.MAX_SAFE_INTEGER)) throw new Error(`${path} 超出允许范围`);
-    } else if (rule.type === 'boolean' && typeof value !== 'boolean') throw new Error(`${path} 必须是 boolean`);
-    if (rule.enum && !rule.enum.includes(value)) throw new Error(`${path} 不合法；允许：${rule.enum.join(', ')}`);
+      if (
+        typeof value !== 'number' ||
+        !Number.isFinite(value) ||
+        (rule.type === 'integer' && !Number.isSafeInteger(value))
+      )
+        throw new Error(`${path} 必须是有限${rule.type === 'integer' ? '整数' : '数字'}`);
+      if (
+        value < (rule.minimum ?? -Number.MAX_SAFE_INTEGER) ||
+        value > (rule.maximum ?? Number.MAX_SAFE_INTEGER)
+      )
+        throw new Error(`${path} 超出允许范围`);
+    } else if (rule.type === 'boolean' && typeof value !== 'boolean')
+      throw new Error(`${path} 必须是 boolean`);
+    if (rule.enum && !rule.enum.includes(value))
+      throw new Error(`${path} 不合法；允许：${rule.enum.join(', ')}`);
   };
   visit(args, schema, name, 0);
 }

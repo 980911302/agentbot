@@ -50,11 +50,17 @@ describe('密钥文件默认拒绝（OPT-07）', () => {
     tools = createFileTools(root, paths) as Tool<never>[];
   });
 
-  after(async () => { await env.cleanup(); });
+  after(async () => {
+    await env.cleanup();
+  });
 
   it('Read 拒绝数据目录里的三个密钥文件', async () => {
     const read = find(tools, 'Read');
-    for (const rel of ['.agentbot/secrets.json', '.agentbot/model-config.json', '.agentbot/room-flows/secret.key']) {
+    for (const rel of [
+      '.agentbot/secrets.json',
+      '.agentbot/model-config.json',
+      '.agentbot/room-flows/secret.key',
+    ]) {
       await assert.rejects(() => read.execute({ path: rel }, context()), /拒绝访问密钥文件/, rel);
     }
   });
@@ -70,10 +76,19 @@ describe('密钥文件默认拒绝（OPT-07）', () => {
   it('符号链接绕不过去（文件软链、目录软链都不行）', async () => {
     const read = find(tools, 'Read');
     await assert.rejects(() => read.execute({ path: 'link-to-secrets.txt' }, context()), /拒绝访问密钥文件/);
-    await assert.rejects(() => read.execute({ path: 'data-link/secrets.json' }, context()), /拒绝访问密钥文件/);
-    await assert.rejects(() => read.execute({ path: 'data-link/room-flows/secret.key' }, context()), /拒绝访问密钥文件/);
+    await assert.rejects(
+      () => read.execute({ path: 'data-link/secrets.json' }, context()),
+      /拒绝访问密钥文件/,
+    );
+    await assert.rejects(
+      () => read.execute({ path: 'data-link/room-flows/secret.key' }, context()),
+      /拒绝访问密钥文件/,
+    );
     // 绝对路径与 ../ 绕行同样按真实路径判断
-    await assert.rejects(() => read.execute({ path: join(root, '.agentbot', 'secrets.json') }, context()), /拒绝访问密钥文件/);
+    await assert.rejects(
+      () => read.execute({ path: join(root, '.agentbot', 'secrets.json') }, context()),
+      /拒绝访问密钥文件/,
+    );
     await assert.rejects(() => read.execute({ path: 'notes.txt/../.env' }, context()), /拒绝访问密钥文件/);
   });
 
@@ -84,8 +99,14 @@ describe('密钥文件默认拒绝（OPT-07）', () => {
     await symlink(real, join(root, 'data-through-link'));
     const linked = sensitivePaths(root, join(root, 'data-through-link'));
     const read = createReadTool(root, linked);
-    await assert.rejects(() => read.execute({ path: 'data-through-link/secrets.json' }, context()), /拒绝访问密钥文件/);
-    await assert.rejects(() => read.execute({ path: 'real-data/secrets.json' }, context()), /拒绝访问密钥文件/);
+    await assert.rejects(
+      () => read.execute({ path: 'data-through-link/secrets.json' }, context()),
+      /拒绝访问密钥文件/,
+    );
+    await assert.rejects(
+      () => read.execute({ path: 'real-data/secrets.json' }, context()),
+      /拒绝访问密钥文件/,
+    );
   });
 
   it('普通文件不受影响', async () => {
@@ -102,23 +123,44 @@ describe('密钥文件默认拒绝（OPT-07）', () => {
     const plain = sensitivePaths(root, plainData);
     const plainTools = createFileTools(root, plain) as Tool<never>[];
 
-    await assert.rejects(() => find(plainTools, 'Read').execute({ path: 'plain-data/secrets.json' }, context()), /拒绝访问密钥文件/);
-    await assert.rejects(() => find(plainTools, 'SearchFiles').execute({ query: 'sk-live', path: 'plain-data/secrets.json' }, context()), /拒绝访问密钥文件/);
+    await assert.rejects(
+      () => find(plainTools, 'Read').execute({ path: 'plain-data/secrets.json' }, context()),
+      /拒绝访问密钥文件/,
+    );
+    await assert.rejects(
+      () =>
+        find(plainTools, 'SearchFiles').execute(
+          { query: 'sk-live', path: 'plain-data/secrets.json' },
+          context(),
+        ),
+      /拒绝访问密钥文件/,
+    );
     const listed = await find(plainTools, 'ListFiles').execute({ path: '.' }, context());
     assert.ok(!listed.includes('plain-data/secrets.json'), '列表里不该出现密钥文件：' + listed);
-    const searched = await find(plainTools, 'SearchFiles').execute({ query: 'sk-live', path: '.' }, context());
+    const searched = await find(plainTools, 'SearchFiles').execute(
+      { query: 'sk-live', path: '.' },
+      context(),
+    );
     assert.ok(!searched.includes('plain-data/secrets.json'), '搜索结果里不该出现密钥文件：' + searched);
     // 同一份数据目录按自己的策略看是密钥，按别的策略看就是普通文件——这是刻意的：名单只保护配置里的数据目录
-    assert.equal(await sensitivePathHit(join(plainData, 'secrets.json'), plain), join(plainData, 'secrets.json'));
+    assert.equal(
+      await sensitivePathHit(join(plainData, 'secrets.json'), plain),
+      join(plainData, 'secrets.json'),
+    );
   });
 
   it('Write / Edit 不允许工具改写密钥文件', async () => {
     await assert.rejects(
-      () => find(tools, 'Write').execute({ path: '.agentbot/secrets.json', content: '{}', overwrite: true }, context()),
+      () =>
+        find(tools, 'Write').execute(
+          { path: '.agentbot/secrets.json', content: '{}', overwrite: true },
+          context(),
+        ),
       /拒绝访问密钥文件/,
     );
     await assert.rejects(
-      () => find(tools, 'Edit').execute({ path: '.env', old_text: 'API_KEY=', new_text: 'API_KEY=x' }, context()),
+      () =>
+        find(tools, 'Edit').execute({ path: '.env', old_text: 'API_KEY=', new_text: 'API_KEY=x' }, context()),
       /拒绝访问密钥文件/,
     );
   });

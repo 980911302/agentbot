@@ -14,8 +14,10 @@ interface StoredRun extends ChatRun {
 }
 const OBSERVER = Symbol('chat.originalObservers');
 type ScopedOptions = SendOptions & { [OBSERVER]?: SendOptions };
-type NewRun = Pick<ChatRun, 'channelId' | 'kind' | 'source' | 'input'> & Partial<Pick<ChatRun,
-  'runId' | 'taskId' | 'parentRunId' | 'agentId' | 'roomId' | 'clientMessageId' | 'messageId'>>;
+type NewRun = Pick<ChatRun, 'channelId' | 'kind' | 'source' | 'input'> &
+  Partial<
+    Pick<ChatRun, 'runId' | 'taskId' | 'parentRunId' | 'agentId' | 'roomId' | 'clientMessageId' | 'messageId'>
+  >;
 
 /** 已完成运行保留的条数（幂等记录跟随运行保留） */
 const FINISHED_LIMIT = 1000;
@@ -56,19 +58,32 @@ export class ChatRunCoordinator {
     const previous = this.acceptances.get(key);
     const pending = (previous ?? Promise.resolve()).catch(() => undefined).then(work);
     this.acceptances.set(key, pending);
-    try { return await pending; }
-    finally { if (this.acceptances.get(key) === pending) this.acceptances.delete(key); }
+    try {
+      return await pending;
+    } finally {
+      if (this.acceptances.get(key) === pending) this.acceptances.delete(key);
+    }
   }
 
-  constructor(dataDir: string, private readonly events: EventJournal) {
+  constructor(
+    dataDir: string,
+    private readonly events: EventJournal,
+  ) {
     this.file = join(dataDir, 'chat', 'runs.json');
     if (existsSync(this.file)) {
       const doc = JSON.parse(readFileSync(this.file, 'utf8')) as { version: number; runs: StoredRun[] };
       if (doc.version !== 1 || !Array.isArray(doc.runs)) throw new Error('聊天运行账本格式无效');
       for (const saved of doc.runs) {
-        const run = trimmed(isActiveChatRun(saved)
-          ? { ...saved, status: 'interrupted' as const, error: '进程退出，本次执行已中断；请核对结果后继续任务。', updatedAt: Date.now() }
-          : saved);
+        const run = trimmed(
+          isActiveChatRun(saved)
+            ? {
+                ...saved,
+                status: 'interrupted' as const,
+                error: '进程退出，本次执行已中断；请核对结果后继续任务。',
+                updatedAt: Date.now(),
+              }
+            : saved,
+        );
         this.records.set(run.runId, run);
         this.index(run);
       }
@@ -84,12 +99,20 @@ export class ChatRunCoordinator {
     return { ...view };
   }
 
-  list(): ChatRun[] { return [...this.records.keys()].map(id => this.get(id)!); }
+  list(): ChatRun[] {
+    return [...this.records.keys()].map((id) => this.get(id)!);
+  }
 
-  async prepare(input: NewRun, commandOptions: unknown = null): Promise<{ run: ChatRun; duplicate: boolean }> {
+  async prepare(
+    input: NewRun,
+    commandOptions: unknown = null,
+  ): Promise<{ run: ChatRun; duplicate: boolean }> {
     if (input.input.length > 200_000) throw new Error('消息过长，请拆分发送');
-    if (input.clientMessageId && !/^[A-Za-z0-9_-]{1,128}$/.test(input.clientMessageId)) throw new Error('无效的 clientMessageId');
-    const hash = createHash('sha256').update(JSON.stringify([input.input, commandOptions])).digest('hex');
+    if (input.clientMessageId && !/^[A-Za-z0-9_-]{1,128}$/.test(input.clientMessageId))
+      throw new Error('无效的 clientMessageId');
+    const hash = createHash('sha256')
+      .update(JSON.stringify([input.input, commandOptions]))
+      .digest('hex');
     if (input.clientMessageId) {
       const existingId = this.clientIndex.get(clientKey(input.channelId, input.clientMessageId));
       const existing = existingId ? this.records.get(existingId) : undefined;
@@ -101,8 +124,13 @@ export class ChatRunCoordinator {
     const runId = input.runId ?? randomUUID();
     const parent = input.parentRunId ? this.get(input.parentRunId) : undefined;
     const run: StoredRun = {
-      ...input, runId, taskId: input.taskId ?? parent?.taskId ?? runId,
-      status: 'queued', createdAt: Date.now(), updatedAt: Date.now(), commandHash: hash,
+      ...input,
+      runId,
+      taskId: input.taskId ?? parent?.taskId ?? runId,
+      status: 'queued',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      commandHash: hash,
     };
     await this.commit(run);
     this.publishState(run, 'queued');
@@ -114,28 +142,52 @@ export class ChatRunCoordinator {
     const observer = (options as ScopedOptions)[OBSERVER] ?? options;
     const publish = (kind: 'agent' | 'room', payload: unknown): void => {
       if (!isActiveChatRun(this.get(run.runId) ?? run)) return;
-      const event = kind === 'agent' ? payload as AgentEvent : undefined;
+      const event = kind === 'agent' ? (payload as AgentEvent) : undefined;
       // 群成员可以显式私发主人；持久消息目的地优先于执行所在房间。
       const privateMessage = run.roomId && event?.type === 'message' && !event.message.roomId;
-      this.events.publish({ kind, agentId: privateMessage ? event.message.agentId : run.agentId, roomId: privateMessage ? undefined : run.roomId,
-        runId: run.runId, taskId: run.taskId, clientMessageId: run.clientMessageId, payload });
+      this.events.publish({
+        kind,
+        agentId: privateMessage ? event.message.agentId : run.agentId,
+        roomId: privateMessage ? undefined : run.roomId,
+        runId: run.runId,
+        taskId: run.taskId,
+        clientMessageId: run.clientMessageId,
+        payload,
+      });
     };
-    const notify = (action: () => void): void => { try { action(); } catch { /* 观察者不能打断执行 */ } };
+    const notify = (action: () => void): void => {
+      try {
+        action();
+      } catch {
+        /* 观察者不能打断执行 */
+      }
+    };
     const bound: ScopedOptions = {
-      ...options, runId: run.runId,
+      ...options,
+      runId: run.runId,
       [OBSERVER]: observer,
-      onEvent: event => {
+      onEvent: (event) => {
         publish('agent', event);
         if (event.type === 'final') this.finalizing(run.runId);
         notify(() => observer.onEvent?.(event));
       },
-      onDelta: text => { publish('agent', { type: 'delta', text }); notify(() => observer.onDelta?.(text)); },
-      onRoomEvent: event => { publish('room', event); notify(() => observer.onRoomEvent?.(event)); },
+      onDelta: (text) => {
+        publish('agent', { type: 'delta', text });
+        notify(() => observer.onDelta?.(text));
+      },
+      onRoomEvent: (event) => {
+        publish('room', event);
+        notify(() => observer.onRoomEvent?.(event));
+      },
     };
     return bound;
   }
 
-  execute<T>(runId: string, work: () => Promise<T>, done: (result: T) => { stopReason?: string }): Promise<T> {
+  execute<T>(
+    runId: string,
+    work: () => Promise<T>,
+    done: (result: T) => { stopReason?: string },
+  ): Promise<T> {
     const existing = this.executions.get(runId);
     if (existing) return existing as Promise<T>;
     const run = this.get(runId);
@@ -146,12 +198,20 @@ export class ChatRunCoordinator {
       try {
         const result = await work();
         const reason = done(result).stopReason ?? 'final_answer';
-        const status: ChatRunStatus = reason === 'parked' ? 'parked' : reason === 'cancelled' || reason === 'stopped' ? 'cancelled'
-          : reason === 'max_iterations' || reason === 'tool_limit' ? 'incomplete' : 'succeeded';
+        const status: ChatRunStatus =
+          reason === 'parked'
+            ? 'parked'
+            : reason === 'cancelled' || reason === 'stopped'
+              ? 'cancelled'
+              : reason === 'max_iterations' || reason === 'tool_limit'
+                ? 'incomplete'
+                : 'succeeded';
         await this.transition(runId, status, 'done', { stopReason: reason });
         return result;
       } catch (error) {
-        await this.transition(runId, 'failed', 'error', { error: error instanceof Error ? error.message : String(error) });
+        await this.transition(runId, 'failed', 'error', {
+          error: error instanceof Error ? error.message : String(error),
+        });
         throw error;
       }
     })().finally(() => this.executions.delete(runId));
@@ -160,7 +220,9 @@ export class ChatRunCoordinator {
   }
 
   async fail(runId: string, error: unknown): Promise<void> {
-    await this.transition(runId, 'failed', 'error', { error: error instanceof Error ? error.message : String(error) });
+    await this.transition(runId, 'failed', 'error', {
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
 
   private finalizing(runId: string): void {
@@ -171,10 +233,17 @@ export class ChatRunCoordinator {
 
   /** 同步回调里没法 await 的落盘：写失败只记一笔，不能让观察者抛出去打断执行 */
   private persistInBackground(work: Promise<void>, what: string): void {
-    void work.catch((error) => { console.error(`[chat-runs] ${what} 落盘失败：`, error); });
+    void work.catch((error) => {
+      console.error(`[chat-runs] ${what} 落盘失败：`, error);
+    });
   }
 
-  private async transition(runId: string, status: ChatRunStatus, phase: string, patch: Partial<ChatRun> = {}): Promise<void> {
+  private async transition(
+    runId: string,
+    status: ChatRunStatus,
+    phase: string,
+    patch: Partial<ChatRun> = {},
+  ): Promise<void> {
     const current = this.records.get(runId);
     if (!current || !isActiveChatRun(current)) return;
     const run = { ...current, ...patch, status, updatedAt: Date.now() };
@@ -183,16 +252,23 @@ export class ChatRunCoordinator {
   }
 
   private publishState(run: ChatRun, phase: string): void {
-    this.events.publish({ kind: 'run', runId: run.runId, taskId: run.taskId,
-      clientMessageId: run.clientMessageId, agentId: run.agentId, roomId: run.roomId,
-      payload: { phase, stopReason: run.stopReason, message: run.error, run: this.get(run.runId) } });
+    this.events.publish({
+      kind: 'run',
+      runId: run.runId,
+      taskId: run.taskId,
+      clientMessageId: run.clientMessageId,
+      agentId: run.agentId,
+      roomId: run.roomId,
+      payload: { phase, stopReason: run.stopReason, message: run.error, run: this.get(run.runId) },
+    });
   }
 
   /** 内存先改，再精简 + 裁剪 + 落盘；调用方 await 完成后再对外发布 */
   private async commit(run: StoredRun): Promise<void> {
     const next = new Map(this.records).set(run.runId, trimmed(run));
     // 幂等记录跟随运行保留；不裁正在运行/挂起的任务。
-    const finished = [...next.values()].filter(item => !isActiveChatRun(item) && item.status !== 'parked')
+    const finished = [...next.values()]
+      .filter((item) => !isActiveChatRun(item) && item.status !== 'parked')
       .sort((a, b) => b.updatedAt - a.updatedAt);
     for (const old of finished.slice(FINISHED_LIMIT)) {
       next.delete(old.runId);

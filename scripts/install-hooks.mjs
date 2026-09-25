@@ -9,7 +9,9 @@ import { execFileSync } from 'node:child_process';
 try {
   execFileSync('git', ['rev-parse', '--git-dir'], { stdio: 'ignore' });
   execFileSync('git', ['config', 'core.hooksPath', '.githooks'], { stdio: 'inherit' });
-  console.log('[install-hooks] 已启用 .githooks（提交前会跑 scripts/verify-staged.mjs + npm run typecheck + npm test）');
+  console.log(
+    '[install-hooks] 已启用 .githooks（提交前会跑 scripts/verify-staged.mjs + npm run typecheck + npm test）',
+  );
 } catch {
   console.log('[install-hooks] 不在 Git 仓库里，跳过（需要时手动执行：git config core.hooksPath .githooks）');
 }

@@ -9,11 +9,15 @@ export function ProviderForm({ settings }: { settings: ModelSettingsController }
   if (!provider) return null;
 
   /** Key 来源（范围第 4 项）：设置页存了就用设置页的，没存则用环境变量兜底 */
-  const keyHint = provider.hasKey
-    ? <>已配置：<code className="provider-key-mask">{provider.apiKey || '••••••••'}</code> · 来源：设置页</>
-    : settings.modelSettings?.config.hasKey
-      ? <>未在本页保存 Key · 来源：环境变量（设置页留空时用环境值兜底）</>
-      : <>未配置：填一个 Key，或设置环境变量 AGENT_API_KEY</>;
+  const keyHint = provider.hasKey ? (
+    <>
+      已配置：<code className="provider-key-mask">{provider.apiKey || '••••••••'}</code> · 来源：设置页
+    </>
+  ) : settings.modelSettings?.config.hasKey ? (
+    <>未在本页保存 Key · 来源：环境变量（设置页留空时用环境值兜底）</>
+  ) : (
+    <>未配置：填一个 Key，或设置环境变量 AGENT_API_KEY</>
+  );
 
   return (
     <div className="provider-detail-scroll">
@@ -101,7 +105,11 @@ export function ProviderForm({ settings }: { settings: ModelSettingsController }
         />
       </Field>
 
-      <Field label="API 格式" htmlFor="provider-api-format" hint="按服务商文档选：Responses 走 /responses，OpenAI 兼容走 /chat/completions">
+      <Field
+        label="API 格式"
+        htmlFor="provider-api-format"
+        hint="按服务商文档选：Responses 走 /responses，OpenAI 兼容走 /chat/completions"
+      >
         <select
           id="provider-api-format"
           className="provider-select"

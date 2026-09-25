@@ -19,9 +19,7 @@ export interface AgentControlFlags {
  * useWorkspace（E2.5d）：侧边栏工作台状态。
  * 拥有 channels/backendAgents/rooms/未读 与 15s 轮询；App 只消费。
  */
-export function useWorkspace(deps: {
-  activeChannelId: string;
-}) {
+export function useWorkspace(deps: { activeChannelId: string }) {
   const [backendAgents, setBackendAgents] = useState<BotSummary[]>([]);
   const [rooms, setRooms] = useState<RoomView[]>([]);
   const [roomMemberLimit, setRoomMemberLimit] = useState(6);

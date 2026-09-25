@@ -58,7 +58,9 @@ describe('工具面登记（OPT-08）', () => {
     await server.close();
   });
 
-  after(async () => { await env.cleanup(); });
+  after(async () => {
+    await env.cleanup();
+  });
 
   it('运行时装配出的每个工具都在 TOOL_LIMITS 里登记（没有回退上限）', () => {
     const missing = names.filter((name) => !TOOL_LIMITS[name]);
@@ -67,7 +69,11 @@ describe('工具面登记（OPT-08）', () => {
 
   it('没有重名工具，且工具面与快照一致', () => {
     assert.equal(new Set(names).size, names.length, '工具名重复：' + names.join('、'));
-    assert.deepEqual([...names].sort(), EXPECTED_TOOLS, '工具面变了：新增/删除工具后要同步限额、恢复分类与本快照');
+    assert.deepEqual(
+      [...names].sort(),
+      EXPECTED_TOOLS,
+      '工具面变了：新增/删除工具后要同步限额、恢复分类与本快照',
+    );
   });
 
   it('每个工具都有显式恢复分类（不许落到未登记回退）', () => {

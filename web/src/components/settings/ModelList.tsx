@@ -30,7 +30,9 @@ export function ModelList({ settings }: { settings: ModelSettingsController }) {
                 </div>
 
                 <div className="provider-model-actions">
-                  {mod.contextWindow ? <span className="provider-model-badge">{mod.contextWindow}</span> : null}
+                  {mod.contextWindow ? (
+                    <span className="provider-model-badge">{mod.contextWindow}</span>
+                  ) : null}
                   {mod.thinkingEnabled ? (
                     <span className="provider-model-badge" title="已开启思考/推理模式">
                       思考: {mod.thinkingLevel === 'high' ? '高' : mod.thinkingLevel === 'low' ? '低' : '中'}

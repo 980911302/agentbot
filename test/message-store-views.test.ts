@@ -9,7 +9,11 @@ import type { Message } from '../src/agent/types.js';
 
 /** OPT-02：只读视图 / 尾部读取 / byRun 过滤 / 缓存淘汰后重新加载 */
 const message = (id: number, runId: string, role: Message['role'] = 'assistant'): Message => ({
-  id: `m-${id}`, agentId: 'a', role, createdAt: id, runId,
+  id: `m-${id}`,
+  agentId: 'a',
+  role,
+  createdAt: id,
+  runId,
   content: { type: 'text', text: `第 ${id} 条` },
   ...(role === 'user' ? { source: 'user' as const } : {}),
 });
@@ -27,11 +31,22 @@ describe('JsonlLog 只读视图与尾部读取（OPT-02）', () => {
       assert.notEqual(copied, view, 'list 仍然是拷贝，view 是同一份');
       assert.equal(await log.view('k'), view, 'view 每次给同一份数组');
 
-      assert.deepEqual((await log.tail('k', 2)).map((item) => item.id), [4, 5]);
-      assert.deepEqual((await log.tail('k', 0)), []);
-      assert.deepEqual((await log.tail('k', 99)).map((item) => item.id), [1, 2, 3, 4, 5]);
-      assert.deepEqual((await log.filter('k', (item) => item.tag === 'odd')).map((item) => item.id), [1, 3, 5]);
-    } finally { await env.cleanup(); }
+      assert.deepEqual(
+        (await log.tail('k', 2)).map((item) => item.id),
+        [4, 5],
+      );
+      assert.deepEqual(await log.tail('k', 0), []);
+      assert.deepEqual(
+        (await log.tail('k', 99)).map((item) => item.id),
+        [1, 2, 3, 4, 5],
+      );
+      assert.deepEqual(
+        (await log.filter('k', (item) => item.tag === 'odd')).map((item) => item.id),
+        [1, 3, 5],
+      );
+    } finally {
+      await env.cleanup();
+    }
   });
 
   it('缓存淘汰后重新加载仍是同一份数据（LRU 上限可配）', async () => {
@@ -40,14 +55,24 @@ describe('JsonlLog 只读视图与尾部读取（OPT-02）', () => {
       const log = new JsonlLog<{ id: number }>(env.dir, { cacheMaxKeys: 2 });
       for (const key of ['a', 'b', 'c']) await log.append(key, { id: 1 });
       assert.deepEqual(log.cachedKeys().sort(), ['b', 'c'], '最久未访问的 a 被淘汰');
-      assert.deepEqual((await log.view('a')).map((item) => item.id), [1], '淘汰后重新读盘，数据不丢');
+      assert.deepEqual(
+        (await log.view('a')).map((item) => item.id),
+        [1],
+        '淘汰后重新读盘，数据不丢',
+      );
 
       // 主动丢弃缓存 → 下次读盘
       log.drop('c');
       assert.ok(!log.cachedKeys().includes('c'));
       await appendFile(join(env.dir, 'c.jsonl'), `${JSON.stringify({ id: 2 })}\n`);
-      assert.deepEqual((await log.view('c')).map((item) => item.id), [1, 2], '重新加载能读到外部追加的内容');
-    } finally { await env.cleanup(); }
+      assert.deepEqual(
+        (await log.view('c')).map((item) => item.id),
+        [1, 2],
+        '重新加载能读到外部追加的内容',
+      );
+    } finally {
+      await env.cleanup();
+    }
   });
 });
 
@@ -61,24 +86,51 @@ describe('MessageStore 按需读取（OPT-02）', () => {
       await store.append(message(3, 'run-b', 'user'));
       await store.append(message(4, 'run-b'));
 
-      assert.deepEqual((await store.list('a')).map((m) => m.id), ['m-1', 'm-2', 'm-3', 'm-4']);
-      assert.deepEqual((await store.list('a', 2)).map((m) => m.id), ['m-3', 'm-4']);
-      assert.deepEqual((await store.recent('a', 2)).map((m) => m.id), ['m-3', 'm-4']);
-      assert.deepEqual((await store.recent('a', 2, 'm-4')).map((m) => m.id), ['m-2', 'm-3']);
-      assert.deepEqual((await store.byRun('a', 'run-b')).map((m) => m.id), ['m-3', 'm-4']);
-      assert.deepEqual((await store.byRun('a', 'run-a')).map((m) => m.id), ['m-1', 'm-2']);
-      assert.deepEqual((await store.byRun('a', 'run-none')), []);
+      assert.deepEqual(
+        (await store.list('a')).map((m) => m.id),
+        ['m-1', 'm-2', 'm-3', 'm-4'],
+      );
+      assert.deepEqual(
+        (await store.list('a', 2)).map((m) => m.id),
+        ['m-3', 'm-4'],
+      );
+      assert.deepEqual(
+        (await store.recent('a', 2)).map((m) => m.id),
+        ['m-3', 'm-4'],
+      );
+      assert.deepEqual(
+        (await store.recent('a', 2, 'm-4')).map((m) => m.id),
+        ['m-2', 'm-3'],
+      );
+      assert.deepEqual(
+        (await store.byRun('a', 'run-b')).map((m) => m.id),
+        ['m-3', 'm-4'],
+      );
+      assert.deepEqual(
+        (await store.byRun('a', 'run-a')).map((m) => m.id),
+        ['m-1', 'm-2'],
+      );
+      assert.deepEqual(await store.byRun('a', 'run-none'), []);
       assert.equal((await store.latestUser('a'))?.id, 'm-3');
       assert.equal(await store.count('a'), 4);
-      assert.deepEqual((await store.olderThan('a', 2, 0)).map((m) => m.id), ['m-1', 'm-2']);
+      assert.deepEqual(
+        (await store.olderThan('a', 2, 0)).map((m) => m.id),
+        ['m-1', 'm-2'],
+      );
 
       // appendIfAbsent 仍然幂等，且冲突时报错
       assert.equal(await store.appendIfAbsent(message(1, 'run-a', 'user')), false);
-      await assert.rejects(() => store.appendIfAbsent({ ...message(1, 'run-a', 'user'), content: { type: 'text', text: '改了' } }), /MESSAGE_ID_CONFLICT/);
+      await assert.rejects(
+        () =>
+          store.appendIfAbsent({ ...message(1, 'run-a', 'user'), content: { type: 'text', text: '改了' } }),
+        /MESSAGE_ID_CONFLICT/,
+      );
 
       await store.clear('a');
       assert.equal(await store.count('a'), 0);
-    } finally { await env.cleanup(); }
+    } finally {
+      await env.cleanup();
+    }
   });
 
   it('尾部读取不受行数影响：只看末尾，不整条线拷贝', async () => {
@@ -86,14 +138,21 @@ describe('MessageStore 按需读取（OPT-02）', () => {
     try {
       const dir = join(env.dir, 'messages');
       await mkdir(dir, { recursive: true });
-      const lines = Array.from({ length: 5000 }, (_, i) => JSON.stringify(message(i + 1, 'run-x'))).join('\n');
+      const lines = Array.from({ length: 5000 }, (_, i) => JSON.stringify(message(i + 1, 'run-x'))).join(
+        '\n',
+      );
       await writeFile(join(dir, 'a.jsonl'), `${lines}\n`);
 
       const store = new MessageStore(env.dir);
       const tail = await store.list('a', 3);
-      assert.deepEqual(tail.map((m) => m.id), ['m-4998', 'm-4999', 'm-5000']);
+      assert.deepEqual(
+        tail.map((m) => m.id),
+        ['m-4998', 'm-4999', 'm-5000'],
+      );
       assert.equal(await store.count('a'), 5000);
       assert.deepEqual((await store.byRun('a', 'run-x')).length, 5000);
-    } finally { await env.cleanup(); }
+    } finally {
+      await env.cleanup();
+    }
   });
 });

@@ -69,7 +69,9 @@ export function ModelForm({ settings }: { settings: ModelSettingsController }) {
                 id="model-form-thinking-level"
                 className="provider-select"
                 value={modelDraft.thinkingLevel}
-                onChange={(e) => setModelDraft({ ...modelDraft, thinkingLevel: e.target.value as ThinkingLevel })}
+                onChange={(e) =>
+                  setModelDraft({ ...modelDraft, thinkingLevel: e.target.value as ThinkingLevel })
+                }
               >
                 {STANDARD_THINKING_LEVELS.map((level) => (
                   <option key={level.id} value={level.id}>
@@ -93,10 +95,16 @@ export function ModelForm({ settings }: { settings: ModelSettingsController }) {
           </div>
 
           <div className="submodal-actions">
-            <button type="button" className="provider-add-model-btn" onClick={() => settings.setModelFormOpen(false)}>
+            <button
+              type="button"
+              className="provider-add-model-btn"
+              onClick={() => settings.setModelFormOpen(false)}
+            >
               取消
             </button>
-            <button type="submit" className="provider-save-btn">保存模型</button>
+            <button type="submit" className="provider-save-btn">
+              保存模型
+            </button>
           </div>
         </form>
       </div>
