@@ -32,9 +32,9 @@ export function composerAreaSize(contentHeight: number): ComposerAreaSize {
   return { height: Math.max(COMPOSER_MIN_HEIGHT, wanted), scrolls: false };
 }
 
-/** 占位文案：忙碌时说明「还能发，但会插话」（规范 §5.9） */
+/** 占位文案：忙碌时说明「还能发，但会插话」，并告诉用户怎么停（规范 §5.9；界面不设停止按钮） */
 export function composerPlaceholder(input: { busy: boolean; isGroup: boolean; botName: string }): string {
-  if (input.busy) return '它正在工作，发送会插话';
+  if (input.busy) return '它正在工作，发送会插话；打「停」可中止';
   if (input.isGroup) return '在群聊中发消息，输入 @ 唤醒指定成员…';
   return `给 ${input.botName || 'Bot'} 发消息`;
 }
@@ -59,4 +59,36 @@ export function createComposerDrafts(): ComposerDrafts {
       else drafts.delete(channelId);
     },
   };
+}
+
+/** 群里点消息上的名字时派发的事件，detail 是名字；输入条在光标处插入「@名字 」 */
+export const INSERT_MENTION_EVENT = 'agentbot:insert_mention';
+
+/**
+ * 在选区处插入「@名字 」，返回新文本和插入后的光标位置。
+ * 前面紧挨着非空白字符时先补一个空格，免得 @ 粘在上一个词后面不被识别。
+ */
+export function insertMentionText(
+  text: string,
+  selectionStart: number,
+  selectionEnd: number,
+  name: string,
+): { text: string; cursor: number } {
+  const start = Math.max(0, Math.min(selectionStart, text.length));
+  const end = Math.max(start, Math.min(selectionEnd, text.length));
+  const before = text.slice(0, start);
+  const after = text.slice(end);
+  const gap = before && !/\s$/.test(before) ? ' ' : '';
+  const token = `${gap}@${name} `;
+  return { text: `${before}${token}${after}`, cursor: before.length + token.length };
+}
+
+/** 下拉菜单的方向键移动：上下循环，Home/End 到两端；当前没有焦点项时从两端进入 */
+export function nextMenuIndex(current: number, count: number, key: string): number {
+  if (count <= 0) return -1;
+  if (key === 'Home') return 0;
+  if (key === 'End') return count - 1;
+  if (key === 'ArrowDown') return current < 0 ? 0 : (current + 1) % count;
+  if (key === 'ArrowUp') return current < 0 ? count - 1 : (current - 1 + count) % count;
+  return current;
 }

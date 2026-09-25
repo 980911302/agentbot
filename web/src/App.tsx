@@ -127,7 +127,6 @@ export default function App() {
         members={live.liveMembers}
         model={session.model}
         models={session.models}
-        tools={session.tools}
         onSend={stream.send}
         onModelChange={(next, option) => void session.handleModelChange(next, option)}
         onManageModels={() => dialogs.openSettings('models')}
@@ -143,7 +142,6 @@ export default function App() {
       session.handleModelChange,
       session.model,
       session.models,
-      session.tools,
       stream.send,
     ],
   );

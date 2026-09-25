@@ -1086,19 +1086,6 @@ z-index: var(--z-header);
   position: relative;
 }
 
-.composer-voice-toast {
-  position: absolute;
-  top: -32px;
-  padding: 5px 12px;
-  border-radius: var(--r-full);
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-strong);
-  color: var(--text);
-  font-size: 12px;
-  box-shadow: var(--shadow-md);
-  animation: pop var(--dur-fast) var(--ease);
-}
-
 .composer-mention-popover {
   position: absolute;
   bottom: calc(100% - 2px);
@@ -1190,30 +1177,6 @@ z-index: var(--z-dropdown);
   width: 100%;
 }
 
-.capsule-slot {
-  position: relative;
-  align-self: center;
-}
-
-.capsule-plus-btn {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  background: var(--bg-hover);
-  color: var(--text-secondary);
-  display: grid;
-  place-items: center;
-  border: 1px solid transparent;
-  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
-}
-
-.capsule-plus-btn:hover,
-.capsule-plus-btn.active {
-  background: var(--bg-active);
-  color: var(--text);
-  border-color: var(--border-strong);
-}
-
 .capsule-group-tag {
   display: inline-flex;
   align-items: center;
@@ -1262,7 +1225,6 @@ z-index: var(--z-dropdown);
 
 .capsule-input::placeholder {
   color: var(--text-tertiary);
-  font-size: var(--fs-base);
 }
 
 .capsule-action-btn {
@@ -1291,38 +1253,22 @@ color: var(--on-accent);
   box-shadow: none;
 }
 
-.capsule-action-btn.mic {
-  background: var(--bg-hover);
-  color: var(--text-secondary);
-}
-
-.capsule-action-btn.mic:hover {
-  background: var(--bg-active);
-  color: var(--text);
-}
-
 .capsule-action-btn.stop {
   background: var(--danger-strong);
 color: var(--on-danger);
 box-shadow: var(--danger-glow);
 }
 
-.capsule-action-btn:active {
+.capsule-action-btn:active:not(:disabled) {
   transform: scale(0.95);
 }
 
-/* Plus Menu Popup：面板质感与定位统一来自 .menu 基类，这里只给宽度 */
-.capsule-menu {
-  min-width: 250px;
-}
-
-.menu-label {
-  font-size: 11px;
-  font-weight: 600;
+/* 没内容时发送键置灰（不隐藏，避免位置跳动） */
+.capsule-action-btn.send:disabled {
+  background: var(--bg-active);
   color: var(--text-tertiary);
-  padding: 4px 8px 6px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  cursor: default;
+  filter: none;
 }
 
 .menu-row {
@@ -1337,7 +1283,8 @@ box-shadow: var(--danger-glow);
   color: var(--text);
 }
 
-.menu-row:hover:not(.read-only) {
+.menu-row:hover:not(.read-only),
+.menu-row:focus-visible {
   background: var(--bg-hover);
 }
 
@@ -1350,10 +1297,6 @@ box-shadow: var(--danger-glow);
   display: flex;
   align-items: center;
   color: var(--accent-text);
-}
-
-.menu-row-icon.dim {
-  color: var(--text-tertiary);
 }
 
 .menu-row-text {
@@ -1376,11 +1319,6 @@ box-shadow: var(--danger-glow);
   height: 1px;
   background: var(--border);
   margin: 6px 0;
-}
-
-.capsule-tools-list {
-  max-height: 180px;
-  overflow-y: auto;
 }
 
 /* 底部行：模型与思考强度并排紧挨在卡片内左下，上缘一条细分隔线 */
@@ -1416,7 +1354,7 @@ box-shadow: var(--danger-glow);
 z-index: var(--z-dropdown);
   min-width: 220px;
   padding: 6px;
-  background: var(--bg-sidebar);
+  background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--r-md);
   box-shadow: var(--shadow-lg);

@@ -8,6 +8,8 @@ import {
   composerAreaSize,
   composerPlaceholder,
   createComposerDrafts,
+  insertMentionText,
+  nextMenuIndex,
 } from '../web/src/features/chat/composer-view.js';
 
 describe('composerAreaSize：输入框 1~8 行自适应（UI-07）', () => {
@@ -59,11 +61,11 @@ describe('composerPlaceholder：占位文案', () => {
   it('忙碌时说明发送会插话（优先于群聊提示）', () => {
     assert.equal(
       composerPlaceholder({ busy: true, isGroup: false, botName: '小白' }),
-      '它正在工作，发送会插话',
+      '它正在工作，发送会插话；打「停」可中止',
     );
     assert.equal(
       composerPlaceholder({ busy: true, isGroup: true, botName: '小白' }),
-      '它正在工作，发送会插话',
+      '它正在工作，发送会插话；打「停」可中止',
     );
   });
 
@@ -108,5 +110,44 @@ describe('createComposerDrafts：草稿按频道分开', () => {
     const drafts = createComposerDrafts();
     drafts.save('agent-a', '第一行\n第二行 ');
     assert.equal(drafts.read('agent-a'), '第一行\n第二行 ');
+  });
+});
+
+describe('insertMentionText：点名字插入 @', () => {
+  it('空输入框直接插入并把光标放在空格后', () => {
+    assert.deepEqual(insertMentionText('', 0, 0, '小白'), { text: '@小白 ', cursor: 4 });
+  });
+
+  it('紧挨着文字时先补一个空格', () => {
+    assert.deepEqual(insertMentionText('你好', 2, 2, '小白'), { text: '你好 @小白 ', cursor: 7 });
+  });
+
+  it('已有空格不重复补，插在光标处不动后文', () => {
+    assert.deepEqual(insertMentionText('嗨 看这里', 2, 2, '阿黄'), { text: '嗨 @阿黄 看这里', cursor: 6 });
+  });
+
+  it('有选区时替换选中的文字，越界的位置夹回文本范围', () => {
+    assert.deepEqual(insertMentionText('abc', 1, 2, 'x'), { text: 'a @x c', cursor: 5 });
+    assert.deepEqual(insertMentionText('ab', 9, 9, 'x'), { text: 'ab @x ', cursor: 6 });
+  });
+});
+
+describe('nextMenuIndex：下拉菜单方向键', () => {
+  it('上下循环', () => {
+    assert.equal(nextMenuIndex(0, 3, 'ArrowDown'), 1);
+    assert.equal(nextMenuIndex(2, 3, 'ArrowDown'), 0);
+    assert.equal(nextMenuIndex(0, 3, 'ArrowUp'), 2);
+  });
+
+  it('没有焦点项时从两端进入，Home/End 跳到两端', () => {
+    assert.equal(nextMenuIndex(-1, 3, 'ArrowDown'), 0);
+    assert.equal(nextMenuIndex(-1, 3, 'ArrowUp'), 2);
+    assert.equal(nextMenuIndex(1, 3, 'Home'), 0);
+    assert.equal(nextMenuIndex(1, 3, 'End'), 2);
+  });
+
+  it('空菜单返回 -1，其他键不动', () => {
+    assert.equal(nextMenuIndex(0, 0, 'ArrowDown'), -1);
+    assert.equal(nextMenuIndex(1, 3, 'a'), 1);
   });
 });
