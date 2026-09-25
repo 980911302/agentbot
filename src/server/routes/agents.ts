@@ -4,6 +4,7 @@ import type { MemoryScope, MemoryTier } from '../../memory/types.js';
 import { json, readJson } from '../transport/index.js';
 import { messageOf, readString, type RouteContext } from './context.js';
 import { handleSend } from './messages.js';
+import type { WorkStatus } from '../../work/item.js';
 
 function parseScope(value: unknown): MemoryScope {
   if (value === 'user' || value === 'project') return value;
@@ -73,7 +74,10 @@ export async function handleAgentRoute(
   }
 
   if (rest === '/messages' && method === 'GET') {
-    const limit = Number.parseInt(new URL(request.url ?? '/', 'http://x').searchParams.get('limit') ?? '', 10);
+    const limit = Number.parseInt(
+      new URL(request.url ?? '/', 'http://x').searchParams.get('limit') ?? '',
+      10,
+    );
     json(response, 200, {
       messages: await runtime.messages.list(agentId, Number.isFinite(limit) ? limit : undefined),
     });
@@ -86,20 +90,38 @@ export async function handleAgentRoute(
     const limit = Number(params.get('limit') ?? 30);
     const before = params.get('before') ?? undefined;
     if (!Number.isInteger(limit) || limit < 1 || limit > 50 || (before && !/^[\w-]{1,128}$/.test(before))) {
-      json(response, 400, { error: '无效的往来分页参数' }); return;
+      json(response, 400, { error: '无效的往来分页参数' });
+      return;
     }
-    try { json(response, 200, await runtime.correspondence.page(agentId, correspondenceMatch[1]!, before, limit)); }
-    catch (error) { json(response, 400, { error: messageOf(error) }); }
+    try {
+      json(response, 200, await runtime.correspondence.page(agentId, correspondenceMatch[1]!, before, limit));
+    } catch (error) {
+      json(response, 400, { error: messageOf(error) });
+    }
     return;
   }
 
   if (rest === '/tasks' && method === 'GET') {
     const params = new URL(request.url ?? '/', 'http://x').searchParams;
     const offset = Number(params.get('offset') ?? 0);
-    if (!Number.isSafeInteger(offset) || offset < 0) { json(response, 400, { error: 'offset 必须是非负整数' }); return; }
+    if (!Number.isSafeInteger(offset) || offset < 0) {
+      json(response, 400, { error: 'offset 必须是非负整数' });
+      return;
+    }
     const tasks = runtime.taskProgress.list(agentId);
     // 列表只给摘要；完整检查点按 id 单独查询，避免把全部工具记录塞进响应。
-    json(response, 200, { tasks: tasks.slice(offset, offset + 20).map(task => ({ id: task.id, status: task.status, stopReason: task.stopReason, goal: task.goal.slice(0, 300), updatedAt: task.updatedAt })), nextOffset: offset + 20 < tasks.length ? offset + 20 : null });
+    json(response, 200, {
+      tasks: tasks
+        .slice(offset, offset + 20)
+        .map((task) => ({
+          id: task.id,
+          status: task.status,
+          stopReason: task.stopReason,
+          goal: task.goal.slice(0, 300),
+          updatedAt: task.updatedAt,
+        })),
+      nextOffset: offset + 20 < tasks.length ? offset + 20 : null,
+    });
     return;
   }
   const taskMatch = /^\/tasks\/([0-9a-f-]{36})$/.exec(rest);
@@ -140,7 +162,10 @@ export async function handleAgentRoute(
   if (rest === '/resume' && method === 'POST') {
     const body = await readJson(request);
     const commandId = readString(body.commandId) ?? randomUUID();
-    const selection = body.selection && typeof body.selection === 'object' ? body.selection as { kind?: string; inputId?: string; taskId?: string; chainId?: string } : undefined;
+    const selection =
+      body.selection && typeof body.selection === 'object'
+        ? (body.selection as { kind?: string; inputId?: string; taskId?: string; chainId?: string })
+        : undefined;
     const kind = selection?.kind;
     if (kind !== 'input' && kind !== 'task' && kind !== 'chain' && kind !== 'enable_future') {
       json(response, 400, { error: 'selection 必须是 input/task/chain/enable_future' });
@@ -151,13 +176,14 @@ export async function handleAgentRoute(
       commandId,
       requestedBy: { kind: 'user', id: 'owner' },
       agentId,
-      selection: kind === 'input'
-        ? { kind, inputId: chosen.inputId ?? '' }
-        : kind === 'task'
-          ? { kind, taskId: chosen.taskId ?? '' }
-          : kind === 'chain'
-            ? { kind, chainId: chosen.chainId ?? '' }
-            : { kind: 'enable_future' },
+      selection:
+        kind === 'input'
+          ? { kind, inputId: chosen.inputId ?? '' }
+          : kind === 'task'
+            ? { kind, taskId: chosen.taskId ?? '' }
+            : kind === 'chain'
+              ? { kind, chainId: chosen.chainId ?? '' }
+              : { kind: 'enable_future' },
     });
     json(response, 202, resume);
     return;
@@ -165,6 +191,28 @@ export async function handleAgentRoute(
 
   if (rest === '/control' && method === 'GET') {
     json(response, 200, runtime.controlView(agentId));
+    return;
+  }
+
+  // 工作（E4.1）：GET /api/agents/:id/work 列表（可按 status 过滤）
+  if (rest === '/work' && method === 'GET') {
+    const url = new URL(request.url ?? '/', 'http://localhost');
+    const status = url.searchParams.get('status') as WorkStatus | null;
+    const items = await runtime.works.list(agentId, status ?? undefined);
+    json(response, 200, { works: items });
+    return;
+  }
+
+  // GET /api/agents/:id/work/:workId 单件工作 + 步骤
+  const workMatch = /^\/work\/([^/]+)$/.exec(rest);
+  if (workMatch && method === 'GET') {
+    const workId = decodeURIComponent(workMatch[1] ?? '');
+    const work = await runtime.works.get(workId);
+    if (!work || work.ownerAgentId !== agentId) {
+      json(response, 404, { error: '找不到这件工作', code: 'WORK_NOT_FOUND' });
+      return;
+    }
+    json(response, 200, { work, steps: await runtime.works.listSteps(workId) });
     return;
   }
 

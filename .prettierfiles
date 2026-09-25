@@ -29,3 +29,7 @@ scripts/verify-staged.mjs
 src/tools/sensitive-paths.ts
 test/runtime-control-store.test.ts
 src/settings/store.ts
+src/work/item.ts
+src/work/store.ts
+src/work/service.ts
+test/work-item.test.ts

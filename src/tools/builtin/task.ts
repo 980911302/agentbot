@@ -28,6 +28,8 @@ export function createTaskTools(input: {
   dataDir?: string;
   progress?: import('../../storage/task-progress.js').TaskProgressStore;
   outputs?: import('../services/tool-output-store.js').ToolOutputStore;
+  /** TodoWrite 落步后回写「手头工作」的步骤（E4.1）；不传则不记录 */
+  onTodoWrite?: (agentId: string, todos: TodoItem[]) => Promise<void>;
 }) {
   const manager = new WorkerManager({
     provider: input.provider,
@@ -272,6 +274,11 @@ export function createTaskTools(input: {
         if (!item.id || !item.content?.trim()) throw new Error('每条待办都要有 id 和 content');
         if (!valid.has(item.status)) throw new Error(`status 不合法：${item.status}`);
       }
+      // 步骤回写（E4.1）：把待办同步成当前工作的 WorkStep。与待办板本身解耦——
+      // 没有正在进行的工作、或回写失败，都不影响 TodoWrite 的结果。
+      const recordSteps = () => {
+        void input.onTodoWrite?.(context.agentId, todos.get(context.agentId)).catch(() => undefined);
+      };
       if (args.merge) {
         const current = todos.get(context.agentId);
         const merged: TodoItem[] = [...current];
@@ -285,6 +292,7 @@ export function createTaskTools(input: {
       } else {
         todos.set(context.agentId, incoming);
       }
+      recordSteps();
       const board = todos
         .get(context.agentId)
         .map((item) => `[${item.status}] ${item.content}`)

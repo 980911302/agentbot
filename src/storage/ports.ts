@@ -1,11 +1,12 @@
 import type { Message } from '../shared/contracts/sse.js';
+import type { WorkItem, WorkStep } from '../work/item.js';
 
 /**
  * Repository 接口边界（E3.1）。
  *
  * E3.1 只定义边界并让现有 JSON 存储实现之——运行时字段逐步切换到接口类型，
- * 为 E3.1 后续的 SQLite 实现替换做准备。接口分四块：
- *   元数据（registry）/ 消息（messages）/ 投递（inbox）/ Run 账本（turns/trees）。
+ * 为将来替换存储实现做准备。接口分五块：
+ *   元数据（registry）/ 消息（messages）/ 投递（inbox）/ Run 账本（turns/trees）/ 工作（work）。
  */
 
 // ── 元数据：智能体注册表 ──────────────────────────────
@@ -54,6 +55,23 @@ export interface MessageRepositoryPort {
   byRun(agentId: string, runId: string): Promise<Message[]>;
   recent(agentId: string, limit: number, excludeId?: string): Promise<Message[]>;
   count(agentId: string): Promise<number>;
+  clear(agentId: string): Promise<void>;
+}
+
+// ── 工作：同事手头负责的 WorkItem / WorkStep（E4.1） ──────
+export interface WorkRepositoryPort {
+  /** 新建或整条覆盖（revision 由服务层维护） */
+  save(work: WorkItem): Promise<void>;
+  get(workId: string): Promise<WorkItem | undefined>;
+  /** 某个同事的全部工作，最近更新的在前 */
+  listByAgent(agentId: string): Promise<WorkItem[]>;
+  /**
+   * 条件更新：现存的 revision 必须等于 expectedRevision，否则拒绝（架构 §7）。
+   * 返回是否更新成功——调用方据此判断「是不是有人已经改过」。
+   */
+  update(work: WorkItem, expectedRevision: number): Promise<boolean>;
+  appendStep(step: WorkStep): Promise<void>;
+  listSteps(workId: string): Promise<WorkStep[]>;
   clear(agentId: string): Promise<void>;
 }
 
@@ -257,7 +275,13 @@ export interface ToolInvocationPort {
   start(input: ToolInvocationStart): Promise<ToolInvocationRecord>;
   finish(
     id: string,
-    result: { status: 'ok' | 'error' | 'unknown'; summary?: string; error?: string; durationMs?: number; outcome?: Omit<import('../shared/contracts/tool-result.js').ToolResult, 'content'> },
+    result: {
+      status: 'ok' | 'error' | 'unknown';
+      summary?: string;
+      error?: string;
+      durationMs?: number;
+      outcome?: Omit<import('../shared/contracts/tool-result.js').ToolResult, 'content'>;
+    },
   ): Promise<ToolInvocationRecord | undefined>;
   /**
    * 没有结果的调用（started=本进程在飞；unknown=上次进程退出留下的）：

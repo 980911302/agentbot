@@ -9,7 +9,12 @@ import type { RoomEventHandler, RoundOutcome, RoundStatus } from '../../room/typ
 import type { ModelConfigStore } from '../../storage/model-config-store.js';
 import type { SecretStore } from '../../secret/store.js';
 import type { SettingsStore } from '../../settings/store.js';
-import type { RunTreeRecord, RunTurnRecord, ToolInvocationRecord } from '../../storage/ports.js';
+import type {
+  RunTreeRecord,
+  RunTurnRecord,
+  ToolInvocationRecord,
+  WorkRepositoryPort,
+} from '../../storage/ports.js';
 import type { RecoveryPlan } from '../../tools/policy.js';
 import type { Tool } from '../../tools/tool.js';
 
@@ -44,6 +49,8 @@ export interface AgentRuntimeOptions {
   ownerName?: string;
   /** 主人级设置（主人名/时区/语言/通知偏好）持久存储；配了就以它为准 */
   settings?: SettingsStore;
+  /** 工作账本存储（E4.1）；不传则自建 JSON 实现 */
+  workRepository?: WorkRepositoryPort;
   /** 交互代理（工具问用户 → 界面作答）；不传则自建 */
   broker?: InteractionBroker;
   /** 密钥存储；不传则自建 */

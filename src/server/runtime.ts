@@ -34,6 +34,7 @@ import { AgentInbox, type InboxItem } from '../agent/inbox.js';
 import { CorrespondenceStore } from '../storage/correspondence-store.js';
 import { DEFAULT_OWNER_NAME, DEFAULT_STOP_WORDS, isStopSentence } from '../config.js';
 import type { SettingsStore } from '../settings/store.js';
+import type { WorkRepositoryPort } from '../storage/ports.js';
 import { ContextBuilder, type BuiltContext, type BuildOptions } from '../context/builder.js';
 import type { ContextBudget } from '../context/budget.js';
 import type { LLMProvider } from '../llm/provider.js';
@@ -51,6 +52,8 @@ import { buildAgentBrief, buildRoomBrief, decideRoomPosts } from '../room/turn.j
 import type { RoomMessage, RoomEvent, RoomEventHandler, RoundOutcome, RoundStatus } from '../room/types.js';
 import { ROOM_MAX_RUNS_PER_MEMBER, ROOM_POST_LIMIT_PER_TURN } from '../room/types.js';
 import { MessageStore } from '../store/messages.js';
+import { WorkService } from '../work/service.js';
+import { JsonWorkRepository } from '../work/store.js';
 import { resolveProjectOwner } from '../tools/builtin/memory.js';
 import { ToolRegistry } from '../tools/registry.js';
 import { createSendToAgentTool } from '../tools/builtin/room.js';
@@ -123,6 +126,8 @@ interface TurnInput {
 export class AgentRuntime {
   readonly registry: AgentRegistry;
   readonly messages: MessageStore;
+  /** 工作服务（E4.1）：WorkItem 的唯一状态转换入口 */
+  readonly works: WorkService;
   readonly memory: MemoryStore;
   readonly compaction: CompactionStore;
   readonly rooms: RoomStore;
@@ -200,6 +205,9 @@ export class AgentRuntime {
     this.effects = new EffectRunner(this.activation);
     this.deliveries = new DeliveryService(this.control);
     this.messages = new MessageStore(options.dataDir);
+    // 工作账本（E4.1）：同事手头负责的 WorkItem/WorkStep 持久化
+    const workRepository = options.workRepository ?? new JsonWorkRepository(options.dataDir);
+    this.works = new WorkService({ repository: workRepository });
     this.memory = options.memoryStore ?? new MemoryStore(options.dataDir);
     this.compaction = new CompactionStore(options.dataDir);
     this.rooms = new RoomStore(options.dataDir);
@@ -464,6 +472,19 @@ export class AgentRuntime {
           return owner ? { toolNames: owner.toolNames, projectIds: owner.projectIds } : undefined;
         },
         maxIterations: this.options.maxIterations,
+        // TodoWrite → WorkStep（E4.1）：有正在进行的工作才记步骤
+        onTodoWrite: async (agentId, todos) => {
+          const work = await this.works.openWorkOf(agentId);
+          if (!work) return;
+          for (const todo of todos) {
+            await this.works.appendStep({
+              workId: work.id,
+              id: todo.id,
+              title: todo.content,
+              status: todo.status,
+            });
+          }
+        },
         invocations: this.toolLedger,
         dataDir: this.options.dataDir,
         progress: this.taskProgress,
@@ -865,6 +886,22 @@ export class AgentRuntime {
         await this.messages.append(task);
         opts.onEvent?.({ type: 'message', message: task });
         this.stopCoordinator.voidPendingInteractions(agentId, opts.onEvent);
+        // E4.1：托付一件事就记成工作（闲聊返回 null）。这是旁路记录，
+        // 不改发送/执行/停止语义；失败也不能让这条消息发不出去。
+        if (!stop) {
+          await this.works
+            .acceptUserMessage({
+              agentId,
+              channel: { kind: 'dm', id: agentId },
+              messageId: task.id,
+              text,
+            })
+            .catch((error: unknown) => {
+              console.warn(
+                `工作记录失败（不影响本次回合）：${error instanceof Error ? error.message : String(error)}`,
+              );
+            });
+        }
       } catch (error) {
         await this.chatRuns.fail(run.runId, error);
         throw error;
