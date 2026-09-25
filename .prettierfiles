@@ -66,3 +66,4 @@ src/server/routes/profile-payload.ts
 src/server/routes/agent-avatar.ts
 test/fakes/avatar-fixture.ts
 test/agent-profile.test.ts
+test/settings-tool-selection.test.ts

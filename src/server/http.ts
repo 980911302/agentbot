@@ -14,6 +14,7 @@ import { runShutdownSequence, type ShutdownReport } from './lifecycle.js';
 import { BackgroundProcesses } from '../tools/services/background-processes.js';
 import { SEED_AGENTS, SEED_ROOMS } from './seed.js';
 import { createAgentTools } from './tools.js';
+import { isRequiredTool } from '../tools/capabilities.js';
 import { json, readJson, serveStatic, checkRequest } from './transport/index.js';
 import type { RouteContext } from './routes/context.js';
 import { handleBotsCollection, handleBotItem } from './routes/bots.js';
@@ -147,8 +148,13 @@ export async function createAgentServer(options: AgentServerOptions = {}): Promi
     },
   });
 
-  // 健康检查报全量工具面（常驻 + 平台层），而不是装配前的常驻子集
-  const toolDefs = runtime.tools.map((tool) => ({ name: tool.name, description: tool.description }));
+  // 健康检查报全量工具面（常驻 + 平台层），而不是装配前的常驻子集；
+  // required 标记必需能力（E5.3），设置页据此把勾选框锁成只读
+  const toolDefs = runtime.tools.map((tool) => ({
+    name: tool.name,
+    description: tool.description,
+    required: isRequiredTool(tool.name),
+  }));
   await runtime.registry.syncDefaultTools();
   await runtime.migrateExistingAgents();
   const fileExisted = await runtime.registry.existed();

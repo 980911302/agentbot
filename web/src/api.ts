@@ -98,6 +98,32 @@ export async function updateBot(
   return data.bot;
 }
 
+/** 某位同事当前勾选的可选工具（GET /api/agents/:id，读 registry 记录） */
+export async function fetchAgentTools(agentId: string): Promise<string[]> {
+  const data = await request<{ agent: { toolNames?: string[] } }>(
+    `/api/agents/${encodeURIComponent(agentId)}`,
+  );
+  return data.agent.toolNames ?? [];
+}
+
+/**
+ * 保存某位同事的工具装卸（PATCH /api/agents/:id）。
+ * 后端把 `toolNames` 当「用户勾选的可选工具」落成显式策略：允许空集合，
+ * 必需能力不在这个清单里（由 runtime 恒定叠加），所以这里只提交可选工具。
+ * 返回后端确认落盘后的清单，界面据此显示真实结果，不猜状态。
+ */
+export async function saveAgentTools(agentId: string, toolNames: string[]): Promise<string[]> {
+  const data = await request<{ agent: { toolNames?: string[] } }>(
+    `/api/agents/${encodeURIComponent(agentId)}`,
+    {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ toolNames }),
+    },
+  );
+  return data.agent.toolNames ?? [];
+}
+
 export async function fetchSessions(botId: string): Promise<SessionSummary[]> {
   const data = await request<{ sessions: SessionSummary[] }>(
     `/api/sessions?botId=${encodeURIComponent(botId)}`,

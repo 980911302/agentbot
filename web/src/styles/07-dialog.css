@@ -1252,6 +1252,97 @@ background: var(--scrim-strong);
 
 
 
+/* ── 工具装卸（E5.3）：按同事勾选可选工具 ──────────────────────────
+   必需能力由后端恒定叠加，这里只锁成只读展示；保存条吸底，
+   保证列表再长也看得见「保存」（UI-06 的教训：别把保存条滚出视口）。 */
+.agent-tools-hint {
+  margin: 0 0 var(--sp-6);
+  max-width: 560px;
+}
+
+.agent-tools-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+  padding: var(--sp-2) 0;
+}
+
+.agent-tool-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-4);
+  padding: var(--sp-4) 0;
+  border-bottom: 1px solid var(--divider);
+}
+
+.agent-tool-row:last-child {
+  border-bottom: none;
+}
+
+.agent-tool-row input[type='checkbox'] {
+  margin-top: 2px;
+  flex: 0 0 auto;
+  accent-color: var(--accent);
+}
+
+.agent-tool-row.locked {
+  background: var(--bg-subtle);
+  border-radius: var(--r-sm);
+  padding-left: var(--sp-4);
+  padding-right: var(--sp-4);
+}
+
+.agent-tool-name {
+  flex: 0 0 150px;
+  font-size: var(--fs-base);
+  font-weight: 600;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.agent-tool-desc {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  color: var(--text-tertiary);
+  overflow-wrap: anywhere;
+}
+
+.agent-tools-error {
+  color: var(--danger-text);
+}
+
+.agent-tools-savebar {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  margin-top: var(--sp-5);
+  padding: var(--sp-4) 0;
+  background: var(--bg-elevated);
+  border-top: 1px solid var(--divider);
+}
+
+.agent-tools-savebar-actions {
+  display: flex;
+  gap: var(--sp-3);
+  flex: 0 0 auto;
+}
+
+@media (max-width: 1023px) {
+  .agent-tool-row {
+    flex-direction: column;
+    gap: var(--sp-2);
+  }
+
+  .agent-tool-name {
+    flex: 0 0 auto;
+  }
+}
+
 /* ── 窄屏全屏（UI 设计规范 5.11：<768px 弹窗全屏） ──────────────────
    两条路径都覆盖：五个弹窗在用的 .scrim/.dialog，
    以及设置弹窗的 .provider-settings-scrim/window。

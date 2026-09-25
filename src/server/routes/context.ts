@@ -8,7 +8,7 @@ export interface RouteContext {
   staticDir?: string;
   model: string;
   models: ModelOption[];
-  tools: Array<{ name: string; description: string }>;
+  tools: Array<{ name: string; description: string; required?: boolean }>;
   budget: AppConfig['budget'];
   /** 主人显示名：函数形式，设置改了即刻生效（E5.7）。用 runtime.ownerName() 取当前值 */
   ownerName: () => string;

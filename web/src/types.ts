@@ -103,6 +103,8 @@ export interface ModelOption {
 export interface ToolInfo {
   name: string;
   description: string;
+  /** 必需能力（E5.3）：恒定可用、不可卸载，设置页据此把勾选框锁成只读 */
+  required?: boolean;
 }
 
 export interface HealthInfo {
