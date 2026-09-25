@@ -79,13 +79,13 @@ test('响应式回归：1024 右侧面板是覆盖层，<768 侧栏抽屉可开�
   await page.goto('/');
   await page.locator('.channel-item').first().click();
 
-  await page.getByRole('button', { name: '侧边栏与屏幕' }).click();
+  await page.getByRole('button', { name: '右侧面板', exact: true }).click();
   await expect(page.locator('.drawer')).toHaveCSS('position', 'absolute');
   await page.keyboard.press('Escape');
   await expect(page.locator('.drawer')).toBeHidden();
 
   await page.setViewportSize({ width: 375, height: 812 });
-  const toggle = page.getByRole('button', { name: '打开侧边栏' });
+  const toggle = page.getByRole('button', { name: '会话列表', exact: true });
   await expect(toggle).toBeVisible();
   await expect(page.locator('.app-sidebar')).toHaveCSS('visibility', 'hidden');
 
@@ -148,7 +148,7 @@ test('控制数据损坏：状态条给出修复入口，修复后同事变为�
 test('资料吸底保存条：在视口内且恒贴抽屉底边，内容滚动不影响它', async ({ page }) => {
   await page.goto('/');
   await page.locator('.channel-item', { hasText: '普通私聊' }).first().click();
-  await page.getByRole('button', { name: '侧边栏与屏幕' }).click();
+  await page.getByRole('button', { name: '右侧面板', exact: true }).click();
   await page.locator('.drawer-tab', { hasText: '资料' }).first().click();
 
   await page.locator('#bot-profile-title').fill('吸底断言');
@@ -280,7 +280,7 @@ for (const item of WORK_CASES) {
     // 先在宽档选同事：768 档侧栏会收成迷你，名字不显示
     await page.locator('.channel-item', { hasText: WORK_SCENE }).first().click();
     await page.setViewportSize({ width: item.width, height: item.height });
-    await page.getByRole('button', { name: '侧边栏与屏幕' }).click();
+    await page.getByRole('button', { name: '右侧面板', exact: true }).click();
     // <1280 时面板是覆盖层：这条 class 由 App 按「已量到的视口宽度」加，等它出现
     // 说明改视口后的档位状态已经跟上（否则会量到面板还挂在网格里那一帧）
     if (item.width < 1280) await expect(page.locator('.app')).toHaveClass(/panel-overlay/);
@@ -358,7 +358,7 @@ for (const item of WORK_CASES) {
 test('工作面板：步骤按需展开；没有工作的同事给空态', async ({ page }) => {
   await page.goto('/');
   await page.locator('.channel-item', { hasText: WORK_SCENE }).first().click();
-  await page.getByRole('button', { name: '侧边栏与屏幕' }).click();
+  await page.getByRole('button', { name: '右侧面板', exact: true }).click();
   await page.locator('[data-drawer-tab="work"]').click();
 
   const waitingCard = page.locator('.work-card[data-status="waiting"]');

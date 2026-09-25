@@ -90,8 +90,21 @@ describe('controlStatusText：顶栏状态文字', () => {
     assert.equal(controlStatusText({ ...base, faulted: true })?.text, '控制存储损坏');
   });
 
-  it('失败的来信也给出文字，不静默', () => {
-    assert.equal(controlStatusText({ ...base, failedMail: 1 })?.text, '有来信失败');
+  it('消息失败与积压不上顶栏：底部状态条和侧栏已经说明，避免三处重复', () => {
+    assert.equal(controlStatusText({ ...base, failedMail: 1 }), null);
+    assert.equal(controlStatusText({ ...base, pendingMail: 2 }), null);
+    assert.equal(controlNoticeState({ ...base, failedMail: 1 })?.kind, 'failed', '状态条照常显示');
+  });
+
+  it('状态条文案不用「来信」这类内部术语', () => {
+    for (const input of [
+      { ...base, failedMail: 2 },
+      { ...base, pendingMail: 3 },
+      { ...base, autoActivation: 'paused' as const, pendingMail: 1 },
+    ]) {
+      assert.doesNotMatch(controlNoticeState(input)?.detail ?? '', /来信/);
+    }
+    assert.doesNotMatch(retryOutcomeMessage(true, 2), /来信/);
   });
 
   it('顶栏优先级与状态条一致：停止中盖过已暂停', () => {

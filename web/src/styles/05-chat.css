@@ -100,10 +100,15 @@
   border-color: var(--border-strong);
 }
 
+.chat-header-member-stack:hover .header-member-avatar {
+  box-shadow: 0 0 0 2px var(--bg-hover);
+}
+
 .header-member-avatar {
   margin-left: -5px;
   border-radius: 50%;
-  box-shadow: 0 0 0 2px var(--bg);
+  /* 描边与所在胶囊同底色，浅色主题下不再露出一圈异色 */
+  box-shadow: 0 0 0 2px var(--bg-input);
   display: flex;
 }
 

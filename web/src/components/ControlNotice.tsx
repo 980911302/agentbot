@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { IconInfo } from '../icons';
+import { IconAlert, IconInfo } from '../icons';
 import { repairControlStore, resumeAgent, retryAgentMail } from '../api';
 import { ConfirmDialog } from './ConfirmDialog';
 import { toast } from './ui/Toast.js';
@@ -16,8 +16,8 @@ export interface ControlNoticeProps {
 
 /**
  * 控制状态条（UI 设计规范 5.8 / §6）：时间线底部、输入条上方，
- * 宽度同阅读列。告知「停止中 / 已暂停 / 来信失败」等真实控制状态，
- * 并给出「恢复自动处理」「重试失败来信」「修复控制数据」三个入口；成功失败都用 Toast 反馈。
+ * 宽度同阅读列。告知「停止中 / 已暂停 / 消息没处理成功」等真实控制状态，
+ * 并给出「恢复自动处理」「重试」「修复控制数据」三个入口；成功失败都用 Toast 反馈。
  *
  * 不修改后端暂停/许可语义，只读 + 调用既有 resume/retry 接口。
  */
@@ -58,7 +58,8 @@ export function ControlNotice({ agentId, input, onChanged }: ControlNoticeProps)
   return (
     <div className={`control-notice ${state.kind}`} role="status">
       <span className="control-notice-icon" aria-hidden="true">
-        <IconInfo size={15} />
+        {/* 出错（损坏 / 处理失败）用警示图标，其余状态用信息图标 */}
+        {state.kind === 'faulted' || state.kind === 'failed' ? <IconAlert size={15} /> : <IconInfo size={15} />}
       </span>
       <span className="control-notice-text">{state.detail}</span>
       {state.actions.includes('resume') ? (
@@ -88,7 +89,7 @@ export function ControlNotice({ agentId, input, onChanged }: ControlNoticeProps)
           disabled={pending !== null}
           onClick={() => void run('retry')}
         >
-          {pending === 'retry' ? '处理中…' : '重试失败来信'}
+          {pending === 'retry' ? '处理中…' : '重试'}
         </button>
       ) : null}
       <ConfirmDialog

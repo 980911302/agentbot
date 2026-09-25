@@ -57,7 +57,7 @@ export function controlNoticeState(input: ControlNoticeInput): ControlNoticeStat
   if (input.autoActivation === 'paused') {
     const actions: ControlAction[] = ['resume'];
     if (input.failedMail > 0) actions.push('retry');
-    const waitingText = waiting > 0 ? `，${waiting} 封来信待处理` : '';
+    const waitingText = waiting > 0 ? `，${waiting} 条消息等它处理` : '';
     return {
       kind: 'paused',
       detail: `已暂停自动处理${waitingText}。`,
@@ -67,14 +67,14 @@ export function controlNoticeState(input: ControlNoticeInput): ControlNoticeStat
   if (input.failedMail > 0) {
     return {
       kind: 'failed',
-      detail: `有 ${input.failedMail} 封来信处理失败，需要重试。`,
+      detail: `有 ${input.failedMail} 条消息没处理成功，可以重试。`,
       actions: ['retry'],
     };
   }
   if (input.pendingMail > 0) {
     return {
       kind: 'pending',
-      detail: `${input.pendingMail} 封来信待处理。`,
+      detail: `还有 ${input.pendingMail} 条消息等它处理。`,
       actions: [],
     };
   }
@@ -86,16 +86,19 @@ export interface ControlStatusText {
   kind: ControlNoticeKind;
 }
 
-/** 顶栏状态文字：与状态条同一优先级，不各说各话 */
+/**
+ * 顶栏状态文字：与状态条同一优先级，不各说各话。
+ * 只标「它现在处于什么模式」（损坏 / 停止中 / 已暂停）；消息失败与积压
+ * 由底部状态条（带重试入口）和侧栏状态点说明，顶栏不再重复第三遍。
+ */
 export function controlStatusText(input: ControlNoticeInput): ControlStatusText | null {
   const state = controlNoticeState(input);
   if (!state) return null;
+  if (state.kind === 'failed' || state.kind === 'pending') return null;
   const text = {
     faulted: '控制存储损坏',
     stopping: '正在停止',
     paused: '已暂停',
-    failed: '有来信失败',
-    pending: '有来信待处理',
   }[state.kind];
   return { text, kind: state.kind };
 }
@@ -115,6 +118,6 @@ export function resumeOutcomeMessage(ok: boolean): string {
 /** 重试失败来信的结果反馈（Toast）；成功时带上实际重试的条数 */
 export function retryOutcomeMessage(ok: boolean, retried: number): string {
   if (!ok) return '重试没成功，请稍后再试';
-  if (retried <= 0) return '没有需要重试的来信';
-  return `已重新投递 ${retried} 封来信`;
+  if (retried <= 0) return '没有需要重试的消息';
+  return `已重新处理 ${retried} 条消息`;
 }

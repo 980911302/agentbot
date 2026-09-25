@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import type { ReactNode, WheelEvent as ReactWheelEvent } from 'react';
+import type { KeyboardEvent as ReactKeyboardEvent, ReactNode, WheelEvent as ReactWheelEvent } from 'react';
 import type { ArtifactView, BotSummary, DisplayMessage, InteractionRequest, RoomFlowView } from '../types';
 import { fetchRoomFlow, controlRoomFlow } from '../api';
 import { RichText } from '../markdown';
 import { BotAvatar } from './BotAvatar';
-import { IconArrowDown, IconCheck, IconShare, IconSidebar } from '../icons';
+import { IconArrowDown, IconCheck, IconMenu, IconShare, IconSidebar } from '../icons';
 import { MessageItem } from './MessageItem';
 import { ControlNotice } from './ControlNotice';
 import { InteractionCard } from './InteractionCard';
@@ -113,6 +113,9 @@ export function ChatView({
   }));
   /** 群顶栏成员叠放（规范 5.6：最多 4 个 + 数量） */
   const memberStack = headerMemberStack(faces);
+  /** 点标题：私聊打开资料编辑，群里打开成员面板（以前群标题点了没反应） */
+  const titleAction = isGroup ? onOpenMembers : onOpenProfile;
+  const titleActionLabel = isGroup ? '查看群成员' : `打开${title}的资料`;
   const [peer, setPeer] = useState<MessageActor | null>(null);
   useEffect(() => setPeer(null), [channelKey]);
 
@@ -293,11 +296,11 @@ export function ChatView({
           <button
             type="button"
             className="chat-header-icon-btn sidebar-toggle"
-            aria-label="打开侧边栏"
-            title="打开侧边栏"
+            aria-label="会话列表"
+            title="会话列表"
             onClick={onToggleSidebar}
           >
-            <IconSidebar size={17} />
+            <IconMenu size={17} />
           </button>
           {peer ? (
             <div className="correspondence-header-pair">
@@ -317,6 +320,9 @@ export function ChatView({
             title={busy ? (actionHint ?? '正在处理…') : (onOpenProfile ? '编辑智能体资料' : undefined)}
             onClick={onOpenProfile}
             role={onOpenProfile ? 'button' : undefined}
+            tabIndex={onOpenProfile ? 0 : undefined}
+            aria-label={onOpenProfile ? `打开${title}的资料` : undefined}
+            onKeyDown={onOpenProfile ? (event) => activateOnKey(event, onOpenProfile) : undefined}
           >
             <BotAvatar
               name={title}
@@ -334,18 +340,13 @@ export function ChatView({
             ) : null}
           </div>
           <div
-            className={`chat-header-title-box${onOpenProfile ? ' clickable' : ''}`}
-            onClick={onOpenProfile}
-            role={onOpenProfile ? 'button' : undefined}
-            tabIndex={onOpenProfile ? 0 : undefined}
-            aria-label={onOpenProfile ? `打开${title}的资料` : undefined}
-            onKeyDown={onOpenProfile ? (event) => {
-              if (event.key === 'Enter' || event.key === ' ') {
-                event.preventDefault();
-                onOpenProfile();
-              }
-            } : undefined}
-            title={onOpenProfile ? '编辑智能体资料' : undefined}
+            className={`chat-header-title-box${titleAction ? ' clickable' : ''}`}
+            onClick={titleAction}
+            role={titleAction ? 'button' : undefined}
+            tabIndex={titleAction ? 0 : undefined}
+            aria-label={titleAction ? titleActionLabel : undefined}
+            onKeyDown={titleAction ? (event) => activateOnKey(event, titleAction) : undefined}
+            title={titleAction ? titleActionLabel : undefined}
           >
             <div className="chat-header-title-row">
               <h2 className="chat-header-title">{title}</h2>
@@ -398,8 +399,8 @@ export function ChatView({
           <button
             type="button"
             className="chat-header-icon-btn"
-            aria-label="侧边栏与屏幕"
-            title="查看任务与环境详情"
+            aria-label="右侧面板"
+            title="右侧面板"
             onClick={onToggleInfo}
           >
             <IconSidebar size={17} />
@@ -610,6 +611,14 @@ export function ChatView({
       </>}
     </div>
   );
+}
+
+/** role=button 的非按钮元素：Enter / 空格触发 */
+function activateOnKey(event: ReactKeyboardEvent<HTMLElement>, action: () => void) {
+  if (event.key === 'Enter' || event.key === ' ') {
+    event.preventDefault();
+    action();
+  }
 }
 
 function ArtifactRow({ artifacts }: { artifacts: ArtifactView[] }) {

@@ -215,16 +215,6 @@ export function IconInfo(props: IconProps) {
   );
 }
 
-export function IconMic(props: IconProps) {
-  return (
-    <svg {...base(props)}>
-      <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
-      <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-      <line x1="12" y1="19" x2="12" y2="22" />
-    </svg>
-  );
-}
-
 export function IconGrid(props: IconProps) {
   return (
     <svg {...base(props)}>
@@ -251,6 +241,17 @@ export function IconSidebar(props: IconProps) {
     <svg {...base(props)}>
       <rect x="3" y="3" width="18" height="18" rx="2" />
       <line x1="15" y1="3" x2="15" y2="21" />
+    </svg>
+  );
+}
+
+/** 三横线：左侧会话列表（侧栏）开关，和右侧面板的 IconSidebar 区分开 */
+export function IconMenu(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <line x1="4" y1="6" x2="20" y2="6" />
+      <line x1="4" y1="12" x2="20" y2="12" />
+      <line x1="4" y1="18" x2="20" y2="18" />
     </svg>
   );
 }
