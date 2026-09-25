@@ -52,3 +52,9 @@ test/lifecycle-shutdown.test.ts
 src/tools/capabilities.ts
 test/tool-capability-policy.test.ts
 test/worker-capability-inheritance.test.ts
+test/live-view.test.ts
+test/dialog-view.test.ts
+test/channel-actions-view.test.ts
+test/channel-select.test.ts
+test/sidebar-width.test.ts
+test/send-view.test.ts
