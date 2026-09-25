@@ -6,6 +6,7 @@ import { memberPauseTag } from '../features/chat/group-view';
 import type { BotSummary, DisplayMessage } from '../types';
 import { BotAvatar, type AvatarMember } from './BotAvatar';
 import { ToolCallCard } from './ToolCallCard';
+import { IconChevronRight, IconTool } from '../icons';
 
 function getInitials(name: string): string {
   const trimmed = name.trim();
@@ -103,14 +104,32 @@ export function MessageItem({
     </div>
   ) : null;
 
-  /** 工具过程：折叠卡片，默认收起，不跟正文抢（规范 5.7 / §3） */
+  /** 工具过程聚合成一条摘要，默认收起；失败时展开，便于看见需要处理的问题。 */
+  const toolState = message.toolCalls.some((call) => call.status === 'error')
+    ? 'error'
+    : message.toolCalls.some((call) => call.status === 'running')
+      ? 'running'
+      : 'ok';
+  const toolStateLabel =
+    toolState === 'error' ? '有调用失败' : toolState === 'running' ? '执行中' : '已完成';
   const toolCards =
     message.toolCalls.length > 0 ? (
-      <div className="msg-tool-cards">
-        {message.toolCalls.map((call) => (
-          <ToolCallCard key={call.id} call={call} />
-        ))}
-      </div>
+      <details className={`tool-call-group ${toolState}`} open={toolState === 'error'}>
+        <summary className="tool-call-group-summary">
+          <span className={`tool-status-dot ${toolState}`} />
+          <IconTool size={13} />
+          <span className="tool-call-group-title">执行过程</span>
+          <span className="tool-call-group-meta">
+            {message.toolCalls.length} 次调用 · {toolStateLabel}
+          </span>
+          <IconChevronRight size={14} className="tool-call-group-chevron" />
+        </summary>
+        <div className="msg-tool-cards">
+          {message.toolCalls.map((call) => (
+            <ToolCallCard key={call.id} call={call} />
+          ))}
+        </div>
+      </details>
     ) : null;
 
   /** 合并组里的后续消息：只出气泡，不重复头像、名字与时间 */

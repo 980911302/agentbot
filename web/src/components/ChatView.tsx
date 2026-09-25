@@ -4,7 +4,7 @@ import type { ArtifactView, BotSummary, DisplayMessage, InteractionRequest, Room
 import { fetchRoomFlow, controlRoomFlow } from '../api';
 import { RichText } from '../markdown';
 import { BotAvatar } from './BotAvatar';
-import { IconArrowDown, IconArrowUp, IconCheck, IconShare, IconSidebar } from '../icons';
+import { IconArrowDown, IconCheck, IconShare, IconSidebar } from '../icons';
 import { MessageItem } from './MessageItem';
 import { ControlNotice } from './ControlNotice';
 import { InteractionCard } from './InteractionCard';
@@ -410,29 +410,27 @@ export function ChatView({
         <CorrespondencePanel key={`${channelKey}:${peer.id}`} agentId={bot.id} agentName={title} peer={peer}
           live={messages.flatMap(message => message.correspondence ? [message.correspondence] : [])} onClose={() => setPeer(null)} />
       ) : <>
-      {/* 顶部悬浮未读药丸 (图二对应) */}
+      {/* 离开底部时显示一枚居中的回到底部提示；跳转与关闭使用独立按钮。 */}
       {awayFromBottom ? (
-        <div
-          className="floating-unread-pill"
-          role="button"
-          tabIndex={0}
-          onClick={jumpToBottom}
-          title="点击直达最新消息"
-        >
-          <IconArrowUp size={14} />
-          <span>{pendingCount > 0 ? `${pendingCount} 条新消息` : '回到最新消息'}</span>
-          <span
+        <div className="floating-unread-pill">
+          <button
+            type="button"
+            className="floating-unread-jump"
+            onClick={jumpToBottom}
+            title="点击回到最新消息"
+          >
+            <IconArrowDown size={14} />
+            <span>{pendingCount > 0 ? `${pendingCount} 条新消息` : '回到最新消息'}</span>
+          </button>
+          <button
+            type="button"
             className="floating-unread-close"
-            role="button"
-            tabIndex={0}
-            onClick={(e) => {
-              e.stopPropagation();
-              setAwayFromBottom(false);
-            }}
+            onClick={() => setAwayFromBottom(false)}
             title="关闭提示"
+            aria-label="关闭回到最新消息提示"
           >
             ×
-          </span>
+          </button>
         </div>
       ) : null}
 
@@ -544,22 +542,16 @@ export function ChatView({
         </div>
       </div>
 
-      {/* 底部悬浮直达最新消息按钮 (截图对应) */}
-      {awayFromBottom ? (
-        <button
-          type="button"
-          className="floating-scroll-bottom-btn"
-          onClick={jumpToBottom}
-          title="直达最新消息"
-          aria-label="直达最新消息"
-        >
-          <IconArrowDown size={16} />
-        </button>
-      ) : null}
-
-      {busy && !isGroup ? (
-        <div className="chat-status-line" title={actionHint ?? undefined}>
-          <span>{bot?.activity ? `正在 ${bot.activity}` : '正在…'}</span>
+      {busy && !isGroup && !liveText ? (
+        <div className="chat-status-line" role="status" aria-live="polite" title={actionHint ?? undefined}>
+          <BotAvatar name={bot?.name || '助手'} color={bot?.color || '#b89b6a'} size={28} agentId={bot?.id} status="thinking" />
+          <span className="chat-status-copy">
+            <span className="chat-status-name">{bot?.name || '助手'}</span>
+            <span className="chat-status-message">
+              {bot?.activity ? `正在${bot.activity}` : '正在组织回复'}
+              <span className="chat-status-dots" aria-hidden="true"><i /><i /><i /></span>
+            </span>
+          </span>
         </div>
       ) : null}
 
