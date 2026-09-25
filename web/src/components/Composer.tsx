@@ -141,6 +141,11 @@ export function Composer({
   };
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // 输入法组合中（拼音选词、日文变换等）：方向键 / 回车 / Tab / Esc 都归输入法，
+    // 这里一个都不接管——否则 @ 菜单会吃掉选词的方向键，回车会把拼音当成员插入。
+    // keyCode 229 兜底：部分浏览器组合结束那一下 isComposing 已为 false。
+    if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+
     if (mentionOpen && mentionCandidates.length > 0) {
       if (event.key === 'ArrowDown') {
         event.preventDefault();
@@ -167,7 +172,7 @@ export function Composer({
       }
     }
 
-    if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+    if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
       submit();
     }
