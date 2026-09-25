@@ -1,11 +1,14 @@
 import { describe, it } from 'node:test';
 import { strict as assert } from 'node:assert';
 import type { DisplayMessage } from '../web/src/types.js';
+import type { Correspondence } from '../src/shared/contracts/message-identity.js';
 import {
   dateDividerLabel,
   groupTimelineMessages,
   jumpToBottomVisible,
   needsDateDivider,
+  timelineBlocks,
+  type TimelineBlock,
   type TimelineEntry,
 } from '../web/src/features/chat/timeline-view.js';
 
@@ -168,6 +171,68 @@ describe('groupTimelineMessages：跨天插分隔行', () => {
 
   it('空时间线不给分隔', () => {
     assert.deepEqual(groupTimelineMessages([], { isGroup: false, now: T0 }), []);
+  });
+});
+
+describe('timelineBlocks：往来条切开的各段共用一条日期线', () => {
+  const transfer = (id: string, at: number): Correspondence => ({
+    id,
+    from: { kind: 'agent', id: 'a1', name: '小审' },
+    to: { kind: 'agent', id: 'a2', name: '白泽' },
+    text: '传话',
+    createdAt: at,
+  });
+  const kinds = (blocks: TimelineBlock[]) => blocks.map((block) => block.kind);
+
+  it('同一天里往来条之后不再重复插「今天」', () => {
+    const blocks = timelineBlocks(
+      [
+        { kind: 'message', message: msg('m1', 'user', T0) },
+        { kind: 'correspondence', id: 'c1', transfers: [transfer('t1', T0 + MIN)] },
+        { kind: 'message', message: msg('m2', 'assistant', T0 + 2 * MIN) },
+        { kind: 'correspondence', id: 'c2', transfers: [transfer('t2', T0 + 3 * MIN)] },
+        { kind: 'message', message: msg('m3', 'user', T0 + 4 * MIN) },
+      ],
+      { isGroup: false, now: T0 },
+    );
+    assert.deepEqual(kinds(blocks), ['divider', 'group', 'correspondence', 'group', 'correspondence', 'group']);
+    assert.equal(blocks.filter((block) => block.kind === 'divider').length, 1, '整条时间线只有一个起点分隔');
+  });
+
+  it('往来条之后跨天了，照样插新一天的分隔', () => {
+    const blocks = timelineBlocks(
+      [
+        { kind: 'message', message: msg('m1', 'user', T0) },
+        { kind: 'correspondence', id: 'c1', transfers: [transfer('t1', T0 + MIN)] },
+        { kind: 'message', message: msg('m2', 'user', T0 + 24 * 60 * MIN) },
+      ],
+      { isGroup: false, now: T0 + 24 * 60 * MIN },
+    );
+    assert.deepEqual(kinds(blocks), ['divider', 'group', 'correspondence', 'divider', 'group']);
+    assert.equal((blocks[3] as Extract<TimelineBlock, { kind: 'divider' }>).label, '今天');
+  });
+
+  it('时间线以往来条开头时，后面第一段消息仍给起点分隔', () => {
+    const blocks = timelineBlocks(
+      [
+        { kind: 'correspondence', id: 'c1', transfers: [transfer('t1', T0)] },
+        { kind: 'message', message: msg('m1', 'user', T0 + MIN) },
+      ],
+      { isGroup: false, now: T0 },
+    );
+    assert.deepEqual(kinds(blocks), ['correspondence', 'divider', 'group']);
+  });
+
+  it('groupTimelineMessages 接受上一段的 previousAt：同一天不插', () => {
+    const entries = groupTimelineMessages([msg('m2', 'user', T0 + 5 * MIN)], {
+      isGroup: false,
+      now: T0,
+      previousAt: T0,
+    });
+    assert.deepEqual(
+      entries.map((entry) => entry.kind),
+      ['group'],
+    );
   });
 });
 
