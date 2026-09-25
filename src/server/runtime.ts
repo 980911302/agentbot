@@ -62,11 +62,13 @@ import { DelegationService } from '../work/delegation-service.js';
 import { JsonDelegationRepository } from '../work/delegation-store.js';
 import { isOpenDelegation } from '../work/delegation.js';
 import type { InteractionRequest } from '../shared/contracts/sse.js';
+import type { MessageActor } from '../shared/contracts/message-identity.js';
 import { resolveProjectOwner } from '../tools/builtin/memory.js';
 import { ToolRegistry } from '../tools/registry.js';
 import { effectiveToolNames } from '../tools/capabilities.js';
 import { createSendToAgentTool } from '../tools/builtin/room.js';
 import { createTaskTools } from '../tools/builtin/task.js';
+import { workerResultLetter, type Worker, type WorkerManager } from '../tools/services/worker-manager.js';
 import { createReadToolOutputTool } from '../tools/builtin/tool-output.js';
 import { ToolOutputStore } from '../tools/services/tool-output-store.js';
 import { TaskProgressStore } from '../storage/task-progress.js';
@@ -170,6 +172,8 @@ export class AgentRuntime {
   /** 同事来信的消费（E2.2 拆出） */
   private readonly inboxProcessor: InboxProcessor;
   private readonly inboxScheduler: InboxScheduler;
+  /** 后台工人的持久账本与收尾投递（E4.5）：启动扫描要能补送上次进程没送出的结果 */
+  private readonly workerManager: WorkerManager;
   /** 回合执行核心（E2.2 拆出）：调度/记账/模型循环/记忆收尾 */
   private readonly executor: RunExecutor;
   /** 接收幂等日志（E3.2） */
@@ -556,8 +560,15 @@ export class AgentRuntime {
         outputs: this.toolOutputs,
         // E8.4：后台工人登记进停机清单
         background: this.options.background,
+        // ── E4.5 新增（都追加在参数表末尾，避免与并行分支撞在同一段插入）──
+        // 工人是为派工者手头那件工作执行的（E4.1）；没有正在进行的工作就不关联
+        workOf: async (ownerId) => (await this.works.openWorkOf(ownerId))?.id,
+        // 工人收尾投递（E4.5）：结果作为一封信送回派工者，走既有 inbox/Delivery 链路
+        onWorkerSettled: (worker) => this.deliverWorkerResult(worker),
       }),
     ];
+    // 工人账本（E4.5）：启动扫描要能补送上次进程没送出的收尾结果
+    this.workerManager = workerManagerOf(this.tools);
     // 新同事默认拿到全部工具——包括工作台那一组
     this.registry.setDefaultToolNames(this.tools.map((tool) => tool.name));
     this.inboxScheduler = new InboxScheduler({
@@ -864,6 +875,51 @@ export class AgentRuntime {
     // 可以重复发布；快照和实时事件均按同一个投递 id 去重。
     for (const agentId of new Set([from.id, to.id]))
       this.events.publish({ kind: 'agent', agentId, payload: { type: 'correspondence', transfer } });
+  }
+
+  /**
+   * 工人收尾投递（E4.5）：结果作为一封信回到派工者，而不是只能靠 CheckSubagent 轮询。
+   *
+   * 不为工人另造一套投递：走 SendToAgent 用的同一条可靠链路——
+   * DeliveryService.submit 落 outbox → OutboxProjector.project 写进收件箱 → 调度器唤醒派工者新回合。
+   * 投递按 (actorId, inputId, …) 指纹幂等，所以重启补送不会重复送到。
+   */
+  private async deliverWorkerResult(worker: Worker): Promise<void> {
+    const owner = worker.ownerId ? await this.registry.get(worker.ownerId) : undefined;
+    if (!owner) throw new Error(`派工者 ${worker.ownerId ?? '(未知)'} 已不存在，工人结果无处投递`);
+    const text = workerResultLetter(worker);
+    const from: MessageActor = { kind: 'agent', id: worker.id, name: `工人：${worker.description}` };
+    const to: MessageActor = {
+      kind: 'agent',
+      id: owner.id,
+      name: owner.name,
+      color: owner.color,
+      avatar: owner.avatar,
+    };
+    // 工人自己的经历线留一条收尾：审计「它交了什么」不依赖收件箱是否已被消费
+    await this.messages.appendIfAbsent({
+      id: `worker-result:${worker.id}`,
+      agentId: worker.id,
+      role: 'assistant',
+      content: { type: 'text', text },
+      createdAt: worker.endedAt ?? Date.now(),
+      source: 'agent',
+    });
+    const submitted = await this.deliveries.submit({
+      actorId: worker.id,
+      inputId: `worker:${worker.id}`,
+      // 结果信记在派工者那一轮的同一条协作链上：链预算仍然算得住，不另开一条绕过上限
+      chainId: worker.chainId ?? `worker:${worker.id}`,
+      target: { kind: 'agent', id: owner.id, nameAtSend: owner.name },
+      payload: text,
+      depth: (worker.chainDepth ?? 0) + 1,
+    });
+    if (submitted.kind !== 'accepted') {
+      // 链预算用尽时不假装送到：结果留在工人记录里，重启扫描会再试，界面上仍能查证
+      throw new Error(`工人结果投递被拒（${submitted.code}），未送达派工者`);
+    }
+    await this.projector.project(submitted.receipt.actionId, { from, to });
+    this.inboxScheduler.watch(owner.id);
   }
 
   /**
@@ -1319,6 +1375,10 @@ export class AgentRuntime {
     await this.migrateExistingAgents();
     await this.projector.recover().catch(() => 0);
     await this.roomFlowService.recoverOutbox().catch(() => 0);
+    // 工人收尾投递补送（E4.5）：上次进程收尾了却没送回去的结果信在这里补上。
+    // 投递层按指纹幂等，所以重复补送不会让派工者收到两封一样的信。
+    const workerResults = await this.workerManager.deliverPendingResults().catch(() => 0);
+    if (workerResults > 0) console.log(`启动扫描：补送 ${workerResults} 条工人收尾结果`);
     const unresolvedInvocations: StartupReport['unresolvedInvocations'] = [];
     for (const record of await this.toolLedger.unfinished()) {
       if (record.status !== 'started') {
@@ -2114,6 +2174,15 @@ type WorkLinkOutcome = AcceptResult | ClarifyResult;
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** 从工具面里取回工人账本（E4.5：Task 工具带着它的 WorkerManager，启动扫描要用） */
+function workerManagerOf(tools: Tool<any>[]): WorkerManager {
+  const task = tools.find((tool) => tool.name === 'Task') as
+    | (Tool<unknown> & { workerManager?: WorkerManager })
+    | undefined;
+  if (!task?.workerManager) throw new Error('工具面里没有装配 Task 工人族，工人恢复无法进行');
+  return task.workerManager;
 }
 
 export type { AgentEvent, RoomEvent, RoundOutcome };

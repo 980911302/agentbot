@@ -58,3 +58,4 @@ test/channel-actions-view.test.ts
 test/channel-select.test.ts
 test/sidebar-width.test.ts
 test/send-view.test.ts
+test/worker-persistence.test.ts
