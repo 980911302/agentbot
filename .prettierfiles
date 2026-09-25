@@ -70,3 +70,4 @@ test/settings-tool-selection.test.ts
 test/unread-view.test.ts
 test/theme.test.ts
 test/export-view.test.ts
+test/thinking.test.ts
