@@ -722,6 +722,19 @@ export class AgentRuntime {
 
   async recover(): Promise<StartupReport> {
     await this.migrateExistingAgents();
+    // 先回收「上次进程」领走没确认的来信，再做任何可能往收件箱投信的恢复步骤。
+    // 后面的 outbox 补投影、工人收尾补送都会唤醒本进程的收件箱调度器，它可能立刻
+    // 领走新到的信开回合；如果回收放在它们之后，就会把**本进程刚领走、正在处理**的信
+    // 当成上次进程的残留作废重投：正在跑的那一轮租约失效，拿到的执行票据没结清，
+    // 派工者从此一直被判「忙」，结果信再也开不了新回合（E4.5 重启用例偶发 30 秒超时）。
+    const agentsAtStart = await this.registry.list();
+    for (const agent of agentsAtStart) {
+      await this.inbox
+        .reclaimAll(agent.id, {
+          maxAttempts: this.options.deliveryMaxAttempts ?? DELIVERY_DEFAULTS.maxAttempts,
+        })
+        .catch(() => 0);
+    }
     await this.projector.recover().catch(() => 0);
     await this.roomFlowService.recoverOutbox().catch(() => 0);
     // 工人收尾投递补送（E4.5）：上次进程收尾了却没送回去的结果信在这里补上。
@@ -741,12 +754,8 @@ export class AgentRuntime {
     }
 
     const pendingDeliveries: StartupReport['pendingDeliveries'] = [];
+    // 这里不再回收领取：此刻 claimed 的信只可能是本进程正在处理的（上次进程的已在开头回收）
     for (const agent of await this.registry.list()) {
-      await this.inbox
-        .reclaimAll(agent.id, {
-          maxAttempts: this.options.deliveryMaxAttempts ?? DELIVERY_DEFAULTS.maxAttempts,
-        })
-        .catch(() => 0);
       const items = await this.inbox.peek(agent.id).catch(() => []);
       for (const item of items) await this.archiveLetter(item);
       const claimable = await this.inbox.claimableCount(agent.id).catch(() => 0);
