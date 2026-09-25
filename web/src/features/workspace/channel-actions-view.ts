@@ -6,7 +6,7 @@
  * 容易出错但只靠手点很难覆盖的判定能被 node:test 直接盯住。
  */
 
-import { formatClock } from '../../format';
+import { formatRelativeTime } from '../../format';
 import type { BotSummary, RoomView } from '../../types';
 import type { ChannelItem } from '../../components/Sidebar';
 
@@ -39,7 +39,7 @@ export function channelFromRoom(room: RoomView): ChannelItem {
   return {
     id: room.id,
     name: room.name,
-    time: formatClock(room.updatedAt),
+    time: formatRelativeTime(room.updatedAt),
     lastMessage: '还没有人说话',
     color: room.members[0]?.color ?? '#b89b6a',
     role: `${room.members.length} 位成员`,

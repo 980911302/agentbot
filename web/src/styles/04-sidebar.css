@@ -251,9 +251,10 @@ z-index: var(--z-sidebar)
 }
 
 .sidebar-empty-icon {
-  font-size: 22px;
+  display: grid;
+  place-items: center;
   margin-bottom: 2px;
-  opacity: 0.8;
+  color: var(--text-tertiary);
 }
 
 .sidebar-empty-title {
@@ -347,7 +348,8 @@ z-index: var(--z-sidebar)
   border-color: var(--border);
 }
 
-/* ── 状态点（UI-03）：忙碌 / 暂停 / 失败来信 / 待处理来信 ────────── */
+/* ── 状态点（UI-03）：暂停 / 消息没处理成功 / 消息等处理 ───────────
+   在干活不画点，只看头像的脸。未读是另一个东西：右侧的数字徽标 .channel-unread */
 .channel-status-dot {
   position: absolute;
   right: -1px;
@@ -359,33 +361,31 @@ z-index: var(--z-sidebar)
   box-sizing: content-box;
 }
 
-.channel-status-dot.busy {
-  background: var(--info);
-  animation: pulse 1.15s var(--ease) infinite;
-}
-
 .channel-status-dot.paused {
   background: var(--warn);
 }
 
+/* 没处理成功：带「!」的警示点，和未读的数字徽标一眼分开 */
 .channel-status-dot.failed {
-  background: var(--danger);
+  display: grid;
+  place-items: center;
+  width: 12px;
+  height: 12px;
+  background: var(--danger-strong);
+  color: var(--on-danger);
+}
+
+.channel-status-dot.failed::after {
+  content: '!';
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  line-height: 1;
 }
 
 .channel-status-dot.pending {
   background: var(--bg-sidebar);
   border: 2px solid var(--warn);
   box-sizing: border-box;
-}
-
-.channel-blue-dot,
-.channel-unread-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--danger);
-  flex-shrink: 0;
-  margin-left: 6px;
 }
 
 .channel-avatar-wrapper {
@@ -584,14 +584,13 @@ z-index: var(--z-panel);
   display: none;
 }
 
-.app-sidebar.mini .channel-blue-dot,
-.app-sidebar.mini .channel-unread-dot {
+/* 迷你模式：未读数在头像右上角，状态点在右下角，互不遮挡 */
+.channel-unread.corner {
   position: absolute;
-  bottom: 5px;
-  right: 5px;
-  width: 7px;
-  height: 7px;
+  top: -4px;
+  right: -6px;
   margin-left: 0;
+  border: 2px solid var(--bg-sidebar);
 }
 
 .app-sidebar.mini .sidebar-footer {

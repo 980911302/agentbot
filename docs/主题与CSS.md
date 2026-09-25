@@ -291,14 +291,13 @@ CSS 里写不了这个常量，改一处要同步另一处，两边都有注释�
 | `welcome-in` | 450ms | 空态 | 否 |
 | `dot-bounce` | 1.15s stagger 140ms | 思考三点 | 是 |
 | `caret-blink` | 0.9s steps | 流式光标 | 是 |
-| `pulse-ring` | 1.6s | 侧栏 working 圈 | 是 |
 | `done-pop` | 2.5s forwards | 完成勾 | 否 |
 | `shimmer` | 1.5s | 骨架 | 是 |
 | `aura-ambient` | 7s alternate | 空态光 | 是 |
 | `badge-float` | 4.5s alternate | 空态徽章 | 是 |
 | 活头像 breathe/blink/work | 见组件 | 脸 | 是 |
 
-禁止：整页左右滑、消息列表每条飞入、弹性放大超过 1.08、工具调用每步闪一次。
+禁止：整页左右滑、消息列表每条飞入、弹性放大超过 1.08、工具调用每步闪一次。侧栏「在干活」只看脸（UI交互与视觉.md §9），不再叠 `pulse-ring` 圈或忙碌状态点。
 
 ---
 

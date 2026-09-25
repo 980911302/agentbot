@@ -23,7 +23,7 @@ export function useWorkspaceSession(input: {
    * localStorage 只留纯界面偏好（面板/侧栏宽度、主题），不再是这个名字的事实源。
    */
   const [ownerName, setOwnerNameState] = useState(
-    () => localStorage.getItem('agentbot.ownerName') ?? 'linlin zhang',
+    () => localStorage.getItem('agentbot.ownerName') ?? '主人',
   );
 
   const { syncWorkspace, setActiveChannelId } = input;

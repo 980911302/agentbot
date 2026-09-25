@@ -219,7 +219,7 @@ test('主人名持久在后端：改完刷新仍在（localStorage 清空也不�
   );
 
   // 复位，避免影响同一 webServer 上的其它用例
-  await page.getByRole('dialog', { name: '设置' }).getByLabel('主人显示名').fill('linlin zhang');
+  await page.getByRole('dialog', { name: '设置' }).getByLabel('主人显示名').fill('主人');
   await page.getByRole('dialog', { name: '设置' }).getByLabel('主人显示名').blur();
 });
 
