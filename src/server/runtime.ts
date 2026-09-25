@@ -978,16 +978,13 @@ export class AgentRuntime {
     // 先落盘再回执：客户端拿到 messageId 时消息已经在库里（E3.2/E3.4）
     if (!duplicate) {
       try {
-        await this.messages.append(task);
-        opts.onEvent?.({ type: 'message', message: task });
-        this.stopCoordinator.voidPendingInteractions(agentId, opts.onEvent);
-        // E4.3 §7.2：用户新句作废未回答的持久问题卡（不当答案），工作本身继续存在。
-        // 等待被满足后的唤醒回合不是「新句」，不能顺手作废别的卡。
-        if (!options.waitAnswer) await this.voidPendingUserWaits(agentId, opts.onEvent);
         // E4.1/E4.2：把这条消息关联到工作（新建 / 接着 / 修订；闲聊返回 null；
         // 含糊返回候选，交给回合短问）。旁路记录，不改发送/执行/停止语义；
         // 失败也不能让这条消息发不出去。
         // 带 workId 的唤醒（E4.3）走显式关联：不用再判定这句话接哪件工作。
+        //
+        // E4.6：判定必须在 append 之前——消息是不可变内容，来源标注要随它一起落盘，
+        // 这样它以后作为历史出现在上下文里时，模型才知道这句话属于哪件工作。
         if (!stop && options.workId) {
           const linked = await this.works.get(options.workId);
           workLink =
@@ -1008,6 +1005,14 @@ export class AgentRuntime {
             );
           }
         }
+        if (workLink && workLink.kind !== 'clarify') task.workId = workLink.work.id;
+
+        await this.messages.append(task);
+        opts.onEvent?.({ type: 'message', message: task });
+        this.stopCoordinator.voidPendingInteractions(agentId, opts.onEvent);
+        // E4.3 §7.2：用户新句作废未回答的持久问题卡（不当答案），工作本身继续存在。
+        // 等待被满足后的唤醒回合不是「新句」，不能顺手作废别的卡。
+        if (!options.waitAnswer) await this.voidPendingUserWaits(agentId, opts.onEvent);
       } catch (error) {
         await this.chatRuns.fail(run.runId, error);
         throw error;
@@ -1617,11 +1622,14 @@ export class AgentRuntime {
           ? '这是**新开的一件工作**'
           : '这是**接着当前工作**的补充';
     return [
-      `【当前工作】${link.work.title}（id=${link.work.id}，revision=${link.work.revision}）`,
+      `【当前工作】${link.work.title}（id=${link.work.id}，revision=${link.work.revision}，状态=${link.work.status}）`,
       `目标：${link.work.objective}`,
+      link.work.progressSummary ? `最近进展：${link.work.progressSummary}` : '',
       relation,
+      // E4.6：工作事实只认 WorkItem。更早的摘要/日志/记忆可能停在旧状态上，不能反过来改工作。
+      '这件工作的状态以本行为准；更早的摘要、日志和长期记忆只是历史背景，不能据此说它已完成或取消。',
       '收尾时如实说明交付了什么；不要只凭一句话就把工作说成完成。',
-    ].join('\n');
+    ].filter(Boolean).join('\n');
   }
 
   /**

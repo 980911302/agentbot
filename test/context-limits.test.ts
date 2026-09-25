@@ -3,7 +3,7 @@ import { it } from 'node:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fitContextWindow, RESPONSE_RESERVE } from '../src/context/window.js';
+import { fitContextWindow, fitToolSchemas, contextAvailable, toolSchemaCost, RESPONSE_RESERVE } from '../src/context/window.js';
 import { estimateTokens, truncateToTokens, DEFAULT_BUDGET } from '../src/context/budget.js';
 import { groupMessages, trimRecentGroups } from '../src/context/history-selector.js';
 import { ContextBuilder } from '../src/context/builder.js';
@@ -11,7 +11,7 @@ import { AgentLoop } from '../src/agent/agent-loop.js';
 import { Compactor, CompactionStore } from '../src/memory/compact.js';
 import { MessageStore } from '../src/store/messages.js';
 import type { Message, Agent, ToolSchema } from '../src/agent/types.js';
-import type { LLMMessage } from '../src/llm/provider.js';
+import type { LLMMessage, LLMProvider } from '../src/llm/provider.js';
 import { FakeProvider } from './fakes/fake-provider.js';
 import { defineTool } from '../src/tools/tool.js';
 
@@ -122,4 +122,149 @@ it('动态记忆变化不改写稳定 system 前缀', async () => {
   const second = await builder.build(agent, task, { turnBrief: '第二轮简报' });
   assert.equal(first.messages[0]!.content, second.messages[0]!.content);
   assert.notEqual(first.messages[1]!.content, second.messages[1]!.content);
+});
+
+it('连续压缩只推进实际覆盖的序号：水位不回退、不重复、不跳号', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'compaction-seq-'));
+  try {
+    const all: Message[] = Array.from({ length: 30 }, (_, index) => ({
+      id: `m${index}`,
+      agentId: 'a',
+      createdAt: index + 1,
+      role: 'user',
+      content: { type: 'text', text: `msg-${index}:` + 'x'.repeat(5000) },
+    }));
+    const store = new CompactionStore(dir);
+    // 与 MessageStore.olderThan 同一语义：丢开最近 keep 条，只取水位之后的。
+    const messages = {
+      olderThan: async (_agentId: string, keep: number, coveredUpTo: number) =>
+        all
+          .slice(0, Math.max(0, all.length - keep))
+          .filter((message) => message.createdAt > coveredUpTo),
+    };
+    const covered: string[] = [];
+    const provider = new FakeProvider({
+      auto: (prompt) => {
+        covered.push(
+          ...[...prompt[1]!.content!.matchAll(/msg-(\d+):/g)].map((match) => `m${match[1]}`),
+        );
+        return FakeProvider.text(`第 ${covered.length} 条位置上的摘要`);
+      },
+    });
+    let rounds = 0;
+    for (;;) {
+      const state = await store.get('a');
+      const compactor = new Compactor(messages as never, store, 1, 0);
+      const result = await compactor.maybeCompact(
+        { id: 'a', memory: { compaction: state } } as never,
+        provider,
+      );
+      if (!result) break;
+      rounds += 1;
+      assert.ok(rounds <= 10, '压缩不能原地打转');
+      // 每一轮的水位正好落在本轮实际覆盖的最后一条上，计数与覆盖条数一致
+      assert.equal(result.state.messageCount, covered.length);
+      assert.equal(result.state.coversUpTo, all[covered.length - 1]!.createdAt);
+      assert.ok(result.state.coversUpTo >= (state?.coversUpTo ?? 0), '水位只前进');
+    }
+    assert.equal(covered.length, all.length, '30 条全部被覆盖，一条都没被跳过');
+    assert.deepEqual(covered, all.map((message) => message.id), '覆盖序号连续、不重复、不跳号');
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+it('超大工具 schema 先降级：工具结构不丢，请求总量仍在窗口内', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'context-schema-'));
+  try {
+    const budgetTokens = 20000;
+    const available = contextAvailable(budgetTokens);
+    const requests: Array<{ schema: number; total: number; name: string; parameters: unknown }> = [];
+    const provider: LLMProvider = {
+      name: 'fake',
+      chat: async (messages, options) => {
+        const tools = options?.tools ?? [];
+        requests.push({
+          schema: toolSchemaCost(tools),
+          total: toolSchemaCost(tools) + estimateTokens(JSON.stringify(messages)),
+          name: tools[0]?.name ?? '',
+          parameters: tools[0]?.parameters,
+        });
+        return FakeProvider.text('已按预算核对');
+      },
+    };
+    const huge = defineTool({
+      name: 'Read',
+      description: '工具说明'.repeat(20000),
+      parameters: {
+        type: 'object',
+        properties: { path: { type: 'string', description: '路径说明'.repeat(20000) } },
+        required: ['path'],
+      },
+      execute: () => 'ok',
+    });
+    const loop = new AgentLoop({ provider, messages: new MessageStore(dir) });
+    const agent = { id: 'a1', tools: [huge], memory: { projectIds: [] } } as unknown as Agent;
+    await loop.run(agent, {
+      messages: [{ role: 'user', content: '当前任务' }],
+      stats: { budgetTokens },
+    } as never);
+    assert.ok(requests.length > 0, '模型确实收到了请求');
+    for (const request of requests) {
+      assert.ok(request.total <= available, `请求 ${request.total} tokens 不应超过可用 ${available}`);
+      assert.equal(request.name, 'Read', '工具名不能被截掉');
+      const parameters = request.parameters as {
+        properties?: Record<string, { type?: string }>;
+        required?: string[];
+      };
+      assert.equal(parameters.properties?.path?.type, 'string', '参数类型不能被截掉');
+      assert.deepEqual(parameters.required, ['path'], '必填声明不能被截掉');
+    }
+    // 预算够用时不做任何降级
+    const [small] = fitToolSchemas(
+      [{ name: 'Read', description: '读取文件', parameters: { type: 'object', properties: {} } }],
+      budgetTokens,
+    );
+    assert.equal(small!.description, '读取文件');
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+it('工具 schema 与输出预留和输入共用一份预算：builder 不再按整额分配', async () => {
+  const history: Message[] = Array.from({ length: 30 }, (_, index) => ({
+    id: `h${index}`,
+    agentId: 'a',
+    createdAt: index + 1,
+    role: 'assistant',
+    content: { type: 'text', text: '历史'.repeat(3000) },
+  }));
+  const builder = new ContextBuilder({ recent: async () => history } as never, DEFAULT_BUDGET);
+  const agent = {
+    id: 'a',
+    name: 'A',
+    instructions: '职责',
+    memory: { refs: [], compaction: null, projectIds: [] },
+  } as unknown as Agent;
+  const current: Message = {
+    id: 't',
+    agentId: 'a',
+    createdAt: 1,
+    role: 'user',
+    content: { type: 'text', text: '当前任务' },
+  };
+  const recentLimit = (built: { stats: { sections: Array<{ key: string; limit: number }> } }) =>
+    built.stats.sections.find((section) => section.key === 'recent')!.limit;
+  const tools: ToolSchema[] = [
+    { name: 'Huge', description: '说明'.repeat(4000), parameters: { type: 'object', properties: {} } },
+  ];
+  const withoutTools = await builder.build(agent, current);
+  const withTools = await builder.build(agent, current, { tools });
+  // 原文额度少掉的正好是工具 schema 的成本：预算是同一份，不是两处各留一套余量
+  assert.equal(
+    recentLimit(withoutTools) - recentLimit(withTools),
+    toolSchemaCost(tools) - toolSchemaCost([]),
+  );
+  assert.ok(recentLimit(withTools) < recentLimit(withoutTools));
+  assert.equal(withTools.stats.budgetTokens, DEFAULT_BUDGET.total, '窗口总量语义不变');
 });

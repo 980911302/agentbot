@@ -49,7 +49,8 @@ export class MemoryExtractor {
         const who =
           message.role === 'user' ? messageIdentity(message).role === 'user' ? 'USER' : message.source === 'room' ? 'ROOM_INPUT' : 'AGENT_INPUT'
             : message.role === 'assistant' ? 'ASSISTANT' : 'TOOL';
-        return `${who}: ${attributedText(message, messageText(message))}`;
+        // 工作 id 对「记住什么」没有意义（这里按 USER/AGENT_INPUT 分人），不塞进抽取输入。
+        return `${who}: ${attributedText(message, messageText(message), false)}`;
       })
       .join('\n');
 

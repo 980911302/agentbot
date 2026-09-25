@@ -75,7 +75,9 @@ export function trimRecentGroups(
 }
 
 function cost(message: Message): number {
-  return estimateTokens(messageText(message)) + 8 + (message.images?.length ?? 0) * IMAGE_CONTEXT_RESERVE;
+  // E4.6：来源标注（[消息来自… · 工作 …]）是真的发进模型的输入，必须计进预算；
+  // 只算正文会让群/同事消息在裁剪时被低估，最后交给 window 再砍一刀。
+  return estimateTokens(attributedText(message, messageText(message))) + 8 + (message.images?.length ?? 0) * IMAGE_CONTEXT_RESERVE;
 }
 
 /** 从最近消息的 tool_calls 参数里提取工作文件（最近 12 个） */
