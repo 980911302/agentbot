@@ -463,9 +463,15 @@ border-color: var(--accent-edge);
 .chat-welcome__duty {
   max-width: 420px;
   margin: 0;
-  font-size: 14px;
+  font-size: var(--fs-base);
   line-height: 1.5;
   color: var(--text-secondary);
+  /* 最多三行，超出省略：简介再长也不把欢迎页撑成一篇文档 */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
 }
 
 .chat-welcome__empty-copy {

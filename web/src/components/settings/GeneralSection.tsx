@@ -13,6 +13,7 @@ export function GeneralSection({
   theme,
   ownerName,
   endpoint,
+  online = true,
   toolCount,
   onTheme,
   onOwnerName,
@@ -20,6 +21,8 @@ export function GeneralSection({
   theme: ThemePreference;
   ownerName: string;
   endpoint: string;
+  /** 后端是否连得上：以前这里永远亮绿点，断线也一样 */
+  online?: boolean;
   toolCount: number;
   onTheme: (next: ThemePreference) => void;
   onOwnerName: (next: string) => void;
@@ -70,7 +73,7 @@ export function GeneralSection({
                 className="provider-text-input"
                 aria-label="主人显示名"
                 value={ownerNameInput}
-                placeholder="linlin zhang"
+                placeholder="你希望智能体怎么称呼你"
                 onChange={(e) => setOwnerNameInput(e.target.value)}
                 onBlur={commitOwnerName}
                 onKeyDown={(e) => {
@@ -91,7 +94,12 @@ export function GeneralSection({
               <span className="settings-row-desc">智能体协同主进程在本机运行，对话数据不出域</span>
             </div>
             <div className="settings-row-inline">
-              <span className="live-dot pulse" />
+              <span
+                className={`live-dot${online ? ' pulse' : ' offline'}`}
+                role="img"
+                aria-label={online ? '已连接' : '未连接'}
+                title={online ? '已连接' : '未连接：本地服务没有响应'}
+              />
               <span className="settings-mono-value">{endpoint || 'http://127.0.0.1:8787'}</span>
             </div>
           </div>

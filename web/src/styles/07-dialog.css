@@ -420,6 +420,10 @@ color: var(--on-accent);
   display: inline-block;
 }
 
+.live-dot.offline {
+  background: var(--danger);
+}
+
 .live-dot.pulse {
   box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 70%, transparent);
   animation: pulseDot 1.8s infinite;
