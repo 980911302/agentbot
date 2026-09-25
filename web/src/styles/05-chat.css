@@ -130,6 +130,11 @@ z-index: var(--z-header);
   background: var(--bg-hover);
 }
 
+/* 导出会话刚复制成功：对勾用成功色，1.8s 后恢复 */
+.chat-header-icon-btn.done {
+  color: var(--ok-text);
+}
+
 /* 顶栏菜单按钮：仅单栏档（<768）显示，其余档隐藏。
    断点值与唯一出处见 web/src/features/chat/layout-view.ts 与 docs/主题与CSS.md（UI-09）。 */
 .sidebar-toggle {
