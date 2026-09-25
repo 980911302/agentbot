@@ -223,14 +223,13 @@
   /* 进出场容器（遮罩/弹窗/切页）的过渡放回 80ms：仍是淡入淡出，但不跳变。
      不改 transition-property——颜色/边框类反馈保持瞬时。 */
   .scrim,
-  .provider-settings-scrim,
-  .ui-modal-scrim,
-  .dialog,
-  .provider-settings-window,
-  .ui-modal,
-  .swap,
-  .drawer-panel,
-  .chat-message-list {
+.provider-settings-scrim,
+.ui-modal-scrim,
+.dialog,
+.provider-settings-window,
+.ui-modal,
+.swap,
+.chat-message-list {
     transition-duration: var(--dur-instant) !important;
   }
 

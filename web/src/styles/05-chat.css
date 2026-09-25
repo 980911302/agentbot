@@ -83,14 +83,17 @@
   line-height: 1.2;
 }
 
+/* 顶栏成员叠放：本身是可点的成员面板入口。原先文件末尾还有一份同名定义把底色、边框、内边距清掉，
+   这里合并成最终生效的样子 */
 .chat-header-member-stack {
   display: flex;
   align-items: center;
+  gap: 0;
   margin-left: 8px;
-  padding: 3px 7px 3px 5px;
+  padding: 0;
+  border: none;
   border-radius: var(--r-full);
-  background: var(--bg-input);
-  border: 1px solid var(--border);
+  background: none;
   cursor: pointer;
   transition: background var(--dur-fast), border-color var(--dur-fast);
 }
@@ -222,43 +225,6 @@
   white-space: nowrap;
 }
 
-.correspondence-count {
-  color: var(--text-tertiary);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-}
-
-.correspondence-action-btn {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-left: 4px;
-  padding: 2px 8px;
-  border-radius: var(--r-full);
-  background: var(--accent-weak);
-  color: var(--accent-text);
-  font-size: 11px;
-  font-weight: 600;
-  border: 1px solid var(--accent-border);
-}
-
-.correspondence-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  height: 52px;
-  padding: 0 20px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg);
-}
-
-.correspondence-header-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
 .correspondence-header-pair {
   display: flex;
   flex-direction: row;
@@ -307,7 +273,7 @@
   top: calc(100% + 8px);
   left: 50%;
   transform: translateX(-50%);
-z-index: var(--z-dropdown);
+  z-index: var(--z-dropdown);
   min-width: 180px;
   padding: 6px;
   border: 1px solid var(--border);
@@ -595,15 +561,13 @@ z-index: var(--z-dropdown);
 }
 
 /* ── Message Items (1:1 two-column vs group speaker stream) ─ */
-.msg-row,
-.msg-group-item {
+.msg-row {
   display: flex;
   gap: 12px;
   align-items: flex-start;
 }
 
-.msg-row.dm-user,
-.msg-group-item.user {
+.msg-row.dm-user {
   justify-content: flex-end;
 }
 
@@ -635,8 +599,7 @@ z-index: var(--z-dropdown);
   margin-bottom: 4px;
 }
 
-.msg-bubble-box.dm-user,
-.user-bubble {
+.msg-bubble-box.dm-user {
   background: var(--ai-user-bubble);
   border: 1px solid var(--accent-border);
   color: var(--ai-user-bubble-text);
@@ -721,9 +684,6 @@ button.msg-sender-name:hover {
 }
 
 /* Assistant Message: Left Aligned */
-.msg-group-item.assistant {
-  justify-content: flex-start;
-}
 
 .assistant-content {
   align-items: flex-start;
@@ -777,7 +737,7 @@ button.msg-sender-name:hover {
   font-weight: 700;
   display: grid;
   place-items: center;
-z-index: var(--z-header);
+  z-index: var(--z-header);
 }
 
 .msg-avatar-col {
@@ -971,12 +931,6 @@ z-index: var(--z-header);
 }
 
 /* ── Tool Call Card ───────────────────────────────────────── */
-.tools-container {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-top: 10px;
-}
 
 .tool-card-item {
   border: 1px solid var(--border);
@@ -1151,7 +1105,7 @@ z-index: var(--z-header);
   flex-direction: column;
   align-items: center;
   background: var(--scrim-bottom);
-z-index: var(--z-header);
+  z-index: var(--z-header);
   position: relative;
 }
 
@@ -1165,7 +1119,7 @@ z-index: var(--z-header);
   border-radius: 12px;
   box-shadow: var(--shadow-lg);
   overflow: hidden;
-z-index: var(--z-dropdown);
+  z-index: var(--z-dropdown);
   animation: pop var(--dur-fast) var(--ease);
 }
 
@@ -1312,7 +1266,7 @@ z-index: var(--z-dropdown);
 
 .capsule-action-btn.send {
   background: var(--accent-strong);
-color: var(--on-accent);
+  color: var(--on-accent);
   box-shadow: none;
 }
 
@@ -1324,8 +1278,8 @@ color: var(--on-accent);
 
 .capsule-action-btn.stop {
   background: var(--danger-strong);
-color: var(--on-danger);
-box-shadow: var(--danger-glow);
+  color: var(--on-danger);
+  box-shadow: var(--danger-glow);
 }
 
 .capsule-action-btn:active:not(:disabled) {
@@ -1420,7 +1374,7 @@ box-shadow: var(--danger-glow);
    下拉退化成一块从触发器下面垂下来的裸文本）。 */
 .menu {
   position: absolute;
-z-index: var(--z-dropdown);
+  z-index: var(--z-dropdown);
   min-width: 220px;
   padding: 6px;
   background: var(--bg-elevated);
@@ -1481,7 +1435,7 @@ z-index: var(--z-dropdown);
   border-bottom: 1px solid var(--border);
   font-size: 12px;
   gap: 12px;
-z-index: var(--z-header);
+  z-index: var(--z-header);
   transition: background var(--dur-fast) var(--ease);
 }
 
@@ -1501,15 +1455,10 @@ z-index: var(--z-header);
 .room-flow-badge {
   padding: 2px 6px;
   border-radius: var(--r-sm);
-background: var(--accent-faint);
-color: var(--accent-text);
+  background: var(--accent-faint);
+  color: var(--accent-text);
   font-weight: 500;
   font-size: 11px;
-}
-
-.room-flow-phase {
-  color: var(--text);
-  font-weight: 500;
 }
 
 .room-flow-status {
@@ -1531,11 +1480,6 @@ color: var(--accent-text);
 .room-flow-status.status-paused {
   background: var(--bg-hover);
   color: var(--text-tertiary);
-}
-
-.room-flow-actors {
-  color: var(--text-secondary);
-  font-size: 11.5px;
 }
 
 .room-flow-actions {
@@ -1565,8 +1509,8 @@ color: var(--accent-text);
 }
 
 .flow-btn.cancel:hover {
-color: var(--danger);
-border-color: var(--danger);
+  color: var(--danger);
+  border-color: var(--danger);
 }
 
 /* ── UI-04 时间线：日期分隔与合并行 ─────────────────────────────
@@ -1795,17 +1739,6 @@ border-color: var(--danger);
   font-size: 10px;
   font-weight: 600;
   line-height: 16px;
-}
-
-/* 顶栏成员叠放：本身是可点的成员面板入口 */
-.chat-header-member-stack {
-  display: flex;
-  align-items: center;
-  gap: 0;
-  padding: 0;
-  border: none;
-  background: none;
-  cursor: pointer;
 }
 
 .chat-header-member-stack .header-member-avatar {

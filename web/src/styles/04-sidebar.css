@@ -9,7 +9,7 @@
   border-right: 1px solid var(--border);
   user-select: none;
   position: relative;
-z-index: var(--z-sidebar)
+  z-index: var(--z-sidebar);
 }
 
 .sidebar-window-header {
@@ -19,31 +19,6 @@ z-index: var(--z-sidebar)
   height: 52px;
   padding: 0 14px;
   -webkit-app-region: drag;
-}
-
-.sidebar-brand-box {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  -webkit-app-region: no-drag;
-}
-
-.sidebar-brand-name {
-  font-family: var(--serif);
-  font-size: 15px;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  color: var(--text);
-}
-
-.sidebar-brand-badge {
-  font-size: 10px;
-  font-weight: 600;
-  padding: 1px 6px;
-  border-radius: 9999px;
-  background: var(--accent-weak);
-  color: var(--accent-text);
-  border: 1px solid var(--accent-border);
 }
 
 .search-shortcut-hint {
@@ -471,23 +446,6 @@ z-index: var(--z-sidebar)
   gap: 3px;
 }
 
-.sidebar-footer-btn {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
-  border-radius: 8px;
-  color: var(--text-secondary);
-  font-size: 13px;
-  font-weight: 500;
-  transition: background 140ms ease, color 140ms ease;
-}
-
-.sidebar-footer-btn:hover {
-  background: var(--bg-hover);
-  color: var(--text);
-}
-
 .sidebar-user-row {
   display: flex;
   align-items: center;
@@ -511,12 +469,12 @@ z-index: var(--z-sidebar)
   height: 28px;
   border-radius: 50%;
   background: var(--accent-gradient);
-color: var(--on-accent);
+  color: var(--on-accent);
   display: grid;
   place-items: center;
   font-size: 11px;
   font-weight: 700;
-box-shadow: var(--shadow-md);
+  box-shadow: var(--shadow-md);
 }
 
 .sidebar-mini-plus-btn {
@@ -531,7 +489,7 @@ box-shadow: var(--shadow-md);
   bottom: 0;
   width: 6px;
   cursor: col-resize;
-z-index: var(--z-panel);
+  z-index: var(--z-panel);
   transition: background var(--dur-fast);
 }
 
@@ -597,11 +555,7 @@ z-index: var(--z-panel);
   padding: 12px 0 16px;
   align-items: center;
   gap: 12px;
-border-top: 1px solid var(--divider);
-}
-
-.app-sidebar.mini .sidebar-footer-btn {
-  display: none;
+  border-top: 1px solid var(--divider);
 }
 
 .app-sidebar.mini .sidebar-mini-plus-btn {

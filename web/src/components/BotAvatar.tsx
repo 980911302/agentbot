@@ -1,5 +1,6 @@
 import { faceStateFromStatus, groupCompositeFaces } from '../features/chat/ui-chrome';
 import {
+  LEGACY_DEFAULT_AVATAR_HEX,
   LivingAvatar,
   defaultAgentAvatarColor,
   loadAvatarShape,
@@ -41,7 +42,7 @@ export function resolveAvatarColor(color?: string): AvatarColor {
 function identityAvatarColor(color: string | undefined, identity: string | undefined): AvatarColor {
   const resolved = resolveAvatarColor(color);
   const normalized = color?.toLowerCase();
-  const isLegacyDefault = !color || ['#b89b6a', '#93784a', '#ad8a54', '#b8924e', '#8a5a32'].includes(normalized ?? '');
+  const isLegacyDefault = !color || LEGACY_DEFAULT_AVATAR_HEX.includes(normalized ?? '');
   return identity && isLegacyDefault ? defaultAgentAvatarColor(identity) : resolved;
 }
 

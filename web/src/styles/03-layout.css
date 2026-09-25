@@ -50,11 +50,13 @@
     inset: 0;
     background: var(--scrim);
     backdrop-filter: blur(2px);
-    z-index: var(--z-panel);
+    z-index: calc(var(--z-panel) - 1);
   }
 
+  /* 面板压住自己的遮罩（29 < 30），但必须低于弹窗遮罩 --z-modal(50)：
+     以前用 --z-nested(55)，面板会浮在确认框上面 */
   .app.panel-overlay .drawer {
-    z-index: var(--z-nested);
+    z-index: var(--z-panel);
   }
 }
 
@@ -72,7 +74,7 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
-  /* 右侧面板在单栏档也贴边满高（z-index 沿用 1279 那条的 --z-nested，要压住遮罩） */
+  /* 右侧面板在单栏档也贴边满高（z-index 沿用 1279 那条的 --z-panel：压住遮罩、低于弹窗） */
   .app.with-screen .drawer {
     position: fixed;
     top: 0;
@@ -94,54 +96,6 @@
   padding: 4px 12px;
 }
 
-.working-bubble {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--text-secondary);
-}
-
-.working-label {
-  color: var(--text-secondary);
-  font-size: 13px;
-}
-
-/* ── Jump to Bottom Button ────────────────────────────────── */
-.scroll-bottom {
-  position: absolute;
-  bottom: 84px;
-  right: 32px;
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  background: var(--bg-sidebar);
-  border: 1px solid var(--border-strong);
-  color: var(--text);
-  display: grid;
-  place-items: center;
-  box-shadow: var(--shadow-md);
-z-index: var(--z-header)
-  transition: transform var(--dur-fast), background var(--dur-fast);
-  animation: pop var(--dur-fast) var(--ease);
-}
-
-.scroll-bottom:hover {
-  transform: translateY(-2px);
-  background: var(--bg-card);
-}
-
-.unread-dot {
-  position: absolute;
-  top: -4px;
-  right: -4px;
-  padding: 2px 5px;
-  border-radius: var(--r-full);
-  background: var(--accent-strong);
-color: var(--on-accent)
-  font-size: 10px;
-  font-weight: 700;
-}
-
 /* ── Offline Banner ───────────────────────────────────────── */
 .offline {
   position: fixed;
@@ -156,18 +110,18 @@ color: var(--on-accent)
   font-size: 12px;
   font-weight: 500;
   box-shadow: var(--shadow-md);
-z-index: var(--z-toast)
+  z-index: var(--z-toast);
 }
 
 /* ── 危险按钮 + 确认弹窗 ──────────────────────────────── */
 
 .btn.danger {
   background: var(--danger-strong);
-color: var(--on-danger)
+  color: var(--on-danger);
 }
 
 .btn.danger:hover {
-background: var(--danger-strong);
+  background: var(--danger-strong);
 }
 
 .dialog.confirm .dialog-body {
@@ -217,11 +171,6 @@ background: var(--danger-strong);
 
 /* ── 在场感：头像即状态 ───────────────────────────────── */
 
-.channel-avatar-wrapper {
-  position: relative;
-}
-
-
 .chat-header-avatar {
   position: relative;
   flex: none;
@@ -242,9 +191,9 @@ background: var(--danger-strong);
   width: 16px;
   height: 16px;
   border-radius: 50%;
-background: var(--ok-strong);
-color: var(--on-ok)
-box-shadow: 0 0 0 2px var(--bg-card);
+  background: var(--ok-strong);
+  color: var(--on-ok);
+  box-shadow: 0 0 0 2px var(--bg-card);
 }
 
 @keyframes done-pop {
@@ -380,8 +329,8 @@ box-shadow: 0 0 0 2px var(--bg-card);
   display: inline;
   padding: 0 4px;
   border-radius: var(--r-sm);
-background: var(--accent-weak);
-color: var(--accent-text);
+  background: var(--accent-weak);
+  color: var(--accent-text);
   font-weight: 600;
 }
 
@@ -404,28 +353,9 @@ color: var(--accent-text);
 
 /* ── 设置页行内输入 ──────────────────────────────────── */
 
-.row .row-input {
-  width: 170px;
-  padding: 5px 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm);
-  background: var(--bg-sidebar);
-  font: inherit;
-  font-size: 13px;
-  color: var(--text);
-  text-align: right;
-}
-
-.row .row-input:focus {
-  outline: none;
-border-color: var(--accent-edge);
-}
-
 .notice-line {
     opacity: 0.85;
 }
-
-/* ── 2026 Vibe Coding Studio & Ambient Atmosphere ──────── */
 
 /* ── Chat Welcome & Empty State (Aligned with AgentHub @agenthub-cloud/ui) ──── */
 .empty-workbench-view {
@@ -495,51 +425,6 @@ border-color: var(--accent-edge);
   animation: welcome-in 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
-.chat-welcome__aura {
-  position: absolute;
-  top: -40px;
-  left: 50%;
-  transform: translate(-50%);
-  width: 580px;
-  height: 420px;
-  background: var(--aura-glow);
-  border-radius: 50%;
-  filter: blur(52px);
-  pointer-events: none;
-  z-index: 0;
-  animation: aura-ambient 7s ease-in-out infinite alternate;
-}
-
-.chat-welcome__hero {
-  position: relative;
-  z-index: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  margin-bottom: 24px;
-}
-
-.chat-welcome__badge {
-  width: 46px;
-  height: 46px;
-  border-radius: 14px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin-bottom: 14px;
-color: var(--on-accent);
-  background: var(--accent-gradient);
-box-shadow: var(--shadow-gold);
-  animation: badge-float 4.5s ease-in-out infinite alternate;
-}
-
-.chat-welcome__bot-avatar {
-  margin-bottom: 14px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
 .chat-welcome__title {
   font-family: var(--serif);
   font-size: 28px;
@@ -550,21 +435,12 @@ box-shadow: var(--shadow-gold);
   line-height: 1.3;
 }
 
-.chat-welcome__title-sub {
-  color: var(--text);
-  font-weight: 650;
-}
-
 .chat-welcome__desc {
   font-size: 14.5px;
   color: var(--text-secondary);
   line-height: 1.5;
   margin: 0;
   font-weight: 450;
-}
-
-.chat-welcome__cta-wrap {
-  margin-top: 18px;
 }
 
 .chat-welcome__cta-btn {
@@ -575,128 +451,23 @@ box-shadow: var(--shadow-gold);
   padding: 0 20px;
   border-radius: 10px;
   background: var(--accent-strong);
-color: var(--on-accent);
+  color: var(--on-accent);
   font-size: 14px;
   font-weight: 600;
   border: none;
   cursor: pointer;
-box-shadow: var(--shadow-gold-soft);
+  box-shadow: var(--shadow-gold-soft);
   transition: all 0.16s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .chat-welcome__cta-btn:hover {
   background: var(--accent-hover);
   transform: translateY(-1px);
-box-shadow: var(--shadow-info);
+  box-shadow: var(--shadow-info);
 }
 
 .chat-welcome__cta-btn:active {
   transform: translateY(0);
-}
-
-.chat-welcome__cta-plus {
-  font-size: 16px;
-  font-weight: 700;
-}
-
-.chat-welcome__prompts {
-  position: relative;
-  z-index: 1;
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 14px;
-  width: 100%;
-  max-width: 760px;
-  margin-bottom: 20px;
-}
-
-@media (max-width: 767px) {
-  .chat-welcome__prompts {
-    grid-template-columns: 1fr;
-    gap: 10px;
-  }
-}
-
-.chat-welcome__prompt-card {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  text-align: left;
-  padding: 16px 16px 14px;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: 16px;
-  cursor: pointer;
-box-shadow: var(--shadow-panel);
-  transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1);
-  min-height: 110px;
-}
-
-.chat-welcome__prompt-card:hover {
-  background: var(--bg-hover);
-  border-color: var(--border-strong);
-  transform: translateY(-3px);
-box-shadow: var(--shadow-panel-lg);
-}
-
-.chat-welcome__prompt-card:active {
-  transform: translateY(0) scale(0.98);
-}
-
-.chat-welcome__card-badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 2px 8px;
-  border-radius: 6px;
-  background: var(--accent-weak);
-  color: var(--accent-text);
-  border: 1px solid var(--accent-border);
-  font-size: 11px;
-  font-weight: 600;
-  margin-bottom: 12px;
-  transition: transform 0.2s ease;
-}
-
-.chat-welcome__prompt-card:hover .chat-welcome__card-badge {
-  transform: scale(1.05);
-}
-
-.chat-welcome__card-body {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  width: 100%;
-}
-
-.chat-welcome__card-title {
-  font-size: 13.5px;
-  font-weight: 650;
-  color: var(--text);
-  margin: 0;
-  letter-spacing: -0.01em;
-  line-height: 1.35;
-}
-
-.chat-welcome__card-desc {
-  font-size: 12px;
-  color: var(--text-tertiary);
-  line-height: 1.45;
-  margin: 0;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.chat-welcome__disclaimer {
-  position: relative;
-  z-index: 1;
-  font-size: 12px;
-  color: var(--text-tertiary);
-  margin-top: 8px;
-  letter-spacing: 0.01em;
 }
 
 @keyframes aura-ambient {
