@@ -75,6 +75,14 @@ const readPinnedChannels = (): string[] => {
   }
 };
 
+function insertPinned(current: string[], id: string, index: number): string[] {
+  const previousIndex = current.indexOf(id);
+  const without = current.filter((item) => item !== id);
+  const nextIndex = Math.max(0, Math.min(without.length, index - (previousIndex >= 0 && previousIndex < index ? 1 : 0)));
+  without.splice(nextIndex, 0, id);
+  return without;
+}
+
 export function Sidebar({
   channels,
   activeId,
@@ -95,15 +103,23 @@ export function Sidebar({
   const [cursor, setCursor] = useState(-1);
   const [pinnedIds, setPinnedIds] = useState<string[]>(readPinnedChannels);
   const [draggingChannelId, setDraggingChannelId] = useState<string | null>(null);
+  const [draggingSource, setDraggingSource] = useState<'list' | 'pinned' | null>(null);
   const [pinDropActive, setPinDropActive] = useState(false);
+  const [pinInsertIndex, setPinInsertIndex] = useState<number | null>(null);
+  const [unpinDropActive, setUnpinDropActive] = useState(false);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   const pinDropRef = useRef<HTMLDivElement | null>(null);
+  const dragPreviewRef = useRef<HTMLDivElement | null>(null);
+  const draggingIdRef = useRef<string | null>(null);
+  const draggingSourceRef = useRef<'list' | 'pinned' | null>(null);
   /** ⌘K 在迷你模式下先展开，展开完成后再聚焦（见下方 effect） */
   const expandPendingRef = useRef(false);
 
   const closeMenu = useCallback(() => setMenu(null), []);
+
+  useEffect(() => () => dragPreviewRef.current?.remove(), []);
 
   useEffect(() => {
     try {
@@ -259,22 +275,70 @@ export function Sidebar({
   const togglePinned = useCallback((id: string) => {
     setPinnedIds((current) => current.includes(id)
       ? current.filter((item) => item !== id)
-      : [id, ...current]);
+      : [...current, id]);
   }, []);
 
-  const dropToPin = (event: React.DragEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    const id = event.dataTransfer.getData('text/plain') || draggingChannelId;
-    if (id && channels.some((channel) => channel.id === id && channel.kind !== 'room')) {
-      setPinnedIds((current) => [id, ...current.filter((item) => item !== id)]);
-    }
-    setPinDropActive(false);
+  const finishDrag = () => {
+    dragPreviewRef.current?.remove();
+    dragPreviewRef.current = null;
+    draggingIdRef.current = null;
+    draggingSourceRef.current = null;
     setDraggingChannelId(null);
+    setDraggingSource(null);
+    setPinDropActive(false);
+    setPinInsertIndex(null);
+    setUnpinDropActive(false);
+  };
+
+  const pinChannelAt = (id: string | null, index: number) => {
+    if (id && channels.some((channel) => channel.id === id && channel.kind !== 'room')) {
+      setPinnedIds((current) => insertPinned(current, id, index));
+    }
+    finishDrag();
+  };
+
+  const pinIndexAt = (section: HTMLElement, x: number, y: number): number => {
+    const cards = [...section.querySelectorAll<HTMLElement>('.pinned-channel-item')];
+    if (cards.length === 0) return 0;
+    const inRow = cards.filter((card) => {
+      const rect = card.getBoundingClientRect();
+      return y >= rect.top - 5 && y <= rect.bottom + 5;
+    });
+    if (inRow.length === 0) return y < cards[0]!.getBoundingClientRect().top ? 0 : cards.length;
+    for (const card of inRow) {
+      if (x < card.getBoundingClientRect().left + card.offsetWidth / 2) {
+        return cards.indexOf(card);
+      }
+    }
+    return cards.indexOf(inRow[inRow.length - 1]!) + 1;
+  };
+
+  const setAvatarDragPreview = (event: React.DragEvent<HTMLDivElement>, name: string) => {
+    dragPreviewRef.current?.remove();
+    const preview = document.createElement('div');
+    preview.className = 'sidebar-drag-preview';
+    preview.setAttribute('aria-hidden', 'true');
+    const avatar = event.currentTarget.querySelector<HTMLElement>('.bot-avatar')?.cloneNode(true) as HTMLElement | undefined;
+    if (avatar) {
+      avatar.style.width = '64px';
+      avatar.style.height = '64px';
+      const svg = avatar.querySelector('svg');
+      svg?.setAttribute('width', '64');
+      svg?.setAttribute('height', '64');
+      svg?.setAttribute('data-frozen', 'true');
+      preview.appendChild(avatar);
+    }
+    const label = document.createElement('span');
+    label.textContent = name;
+    preview.appendChild(label);
+    document.body.appendChild(preview);
+    dragPreviewRef.current = preview;
+    event.dataTransfer.setDragImage(preview, 40, 32);
   };
 
   // 高度在动画中从 0 展开；快速拖动时用完整目标高度接住放置。
   const isOverPinDrop = (event: React.DragEvent<HTMLDivElement>) => {
-    if (!draggingChannelId) return false;
+    if (!draggingIdRef.current || draggingSourceRef.current !== 'list') return false;
     const target = pinDropRef.current;
     if (!target) return false;
     const rect = target.getBoundingClientRect();
@@ -283,7 +347,7 @@ export function Sidebar({
       && event.clientY >= rect.top && event.clientY <= rect.top + openHeight;
   };
 
-  const renderChannel = (channel: ChannelItem, pinned = false) => {
+  const renderChannel = (channel: ChannelItem, pinned = false, pinIndex = -1) => {
     const index = flat.indexOf(channel);
     const isActive = channel.id === activeId;
     const dot = channelStatusDot(channel);
@@ -295,19 +359,22 @@ export function Sidebar({
         role="button"
         tabIndex={0}
         aria-current={isActive ? 'page' : undefined}
-        draggable={!isGroup}
-        className={`channel-item${isActive ? ' active' : ''}${index === effectiveCursor ? ' cursor' : ''}${pinned ? ' pinned-channel-item' : ''}${draggingChannelId === channel.id ? ' dragging' : ''}`}
+        draggable={!isGroup && !isMini}
+        className={`channel-item${isActive ? ' active' : ''}${index === effectiveCursor ? ' cursor' : ''}${pinned ? ' pinned-channel-item' : ''}${draggingChannelId === channel.id ? ' dragging' : ''}${pinned && pinInsertIndex === pinIndex ? ' pin-insert-before' : ''}${pinned && pinIndex === pinnedChannels.length - 1 && pinInsertIndex === pinnedChannels.length ? ' pin-insert-after' : ''}`}
         onDragStart={(event) => {
           if (isGroup) return;
           event.dataTransfer.effectAllowed = 'move';
           event.dataTransfer.setData('text/plain', channel.id);
+          setAvatarDragPreview(event, channel.name);
+          draggingIdRef.current = channel.id;
+          draggingSourceRef.current = pinned ? 'pinned' : 'list';
           setDraggingChannelId(channel.id);
+          setDraggingSource(pinned ? 'pinned' : 'list');
           setPinDropActive(false);
+          setPinInsertIndex(null);
+          setUnpinDropActive(false);
         }}
-        onDragEnd={() => {
-          setDraggingChannelId(null);
-          setPinDropActive(false);
-        }}
+        onDragEnd={finishDrag}
         onMouseMove={() => {
           if (keyword && index >= 0 && index !== effectiveCursor) setCursor(index);
         }}
@@ -433,7 +500,7 @@ export function Sidebar({
         className="sidebar-channel-list"
         ref={listRef}
         onDragOver={(event) => {
-          if (!draggingChannelId) return;
+          if (!draggingIdRef.current) return;
           const overTarget = isOverPinDrop(event);
           setPinDropActive(overTarget);
           if (overTarget) {
@@ -442,15 +509,19 @@ export function Sidebar({
           }
         }}
         onDrop={(event) => {
-          if (isOverPinDrop(event)) dropToPin(event);
+          if (isOverPinDrop(event)) {
+            event.preventDefault();
+            pinChannelAt(draggingIdRef.current, pinnedIds.length);
+          }
         }}
       >
         {!isMini ? (
           <div
             ref={pinDropRef}
-            className={`sidebar-pin-drop${draggingChannelId ? ' dragging-target' : ''}${pinDropActive ? ' active' : ''}`}
-            aria-hidden={!draggingChannelId}
+            className={`sidebar-pin-drop${draggingSource === 'list' ? ' dragging-target' : ''}${pinDropActive ? ' active' : ''}`}
+            aria-hidden={draggingSource !== 'list'}
             onDragOver={(event) => {
+              if (draggingSourceRef.current !== 'list') return;
               event.preventDefault();
               event.dataTransfer.dropEffect = 'move';
               setPinDropActive(true);
@@ -462,7 +533,9 @@ export function Sidebar({
             }}
             onDrop={(event) => {
               event.stopPropagation();
-              dropToPin(event);
+              if (draggingSourceRef.current !== 'list') return;
+              event.preventDefault();
+              pinChannelAt(draggingIdRef.current, pinnedIds.length);
             }}
           >
             <span className="sidebar-pin-drop-icon">＋</span>
@@ -480,11 +553,62 @@ export function Sidebar({
         ) : (
           <>
             {pinnedChannels.length > 0 ? (
-              <section className="sidebar-pinned-section" aria-label="置顶智能体">
-                {pinnedChannels.map((channel) => renderChannel(channel, true))}
+              <section
+                className="sidebar-pinned-section"
+                aria-label="置顶智能体"
+                onDragOver={(event) => {
+                  if (!draggingIdRef.current) return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  event.dataTransfer.dropEffect = 'move';
+                  setPinInsertIndex(pinIndexAt(event.currentTarget, event.clientX, event.clientY));
+                  setPinDropActive(false);
+                  setUnpinDropActive(false);
+                }}
+                onDragLeave={(event) => {
+                  const rect = event.currentTarget.getBoundingClientRect();
+                  if (event.clientX < rect.left || event.clientX > rect.right
+                    || event.clientY < rect.top || event.clientY > rect.bottom) {
+                    setPinInsertIndex(null);
+                  }
+                }}
+                onDrop={(event) => {
+                  if (!draggingIdRef.current) return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  pinChannelAt(draggingIdRef.current, pinIndexAt(event.currentTarget, event.clientX, event.clientY));
+                }}
+              >
+                {pinnedChannels.map((channel, index) => renderChannel(channel, true, index))}
               </section>
             ) : null}
-            <div className="sidebar-conversation-list">
+            <div
+              className={`sidebar-conversation-list${draggingSource === 'pinned' ? ' can-unpin' : ''}${unpinDropActive ? ' unpin-active' : ''}`}
+              onDragOver={(event) => {
+                if (draggingSourceRef.current !== 'pinned') return;
+                event.preventDefault();
+                event.stopPropagation();
+                event.dataTransfer.dropEffect = 'move';
+                setUnpinDropActive(true);
+                setPinInsertIndex(null);
+              }}
+              onDragLeave={(event) => {
+                const rect = event.currentTarget.getBoundingClientRect();
+                if (event.clientX < rect.left || event.clientX > rect.right
+                  || event.clientY < rect.top || event.clientY > rect.bottom) {
+                  setUnpinDropActive(false);
+                }
+              }}
+              onDrop={(event) => {
+                if (draggingSourceRef.current !== 'pinned' || !draggingIdRef.current) return;
+                event.preventDefault();
+                event.stopPropagation();
+                const id = draggingIdRef.current;
+                setPinnedIds((current) => current.filter((item) => item !== id));
+                finishDrag();
+              }}
+            >
+              <div className="sidebar-unpin-hint" aria-hidden={draggingSource !== 'pinned'}>拖到会话列表取消置顶</div>
               {flat.map((channel) => renderChannel(channel))}
             </div>
           </>
