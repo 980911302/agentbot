@@ -12,6 +12,7 @@ import { createSendToAgentTool } from '../src/tools/builtin/room.js';
 import { createUpdateStateTools } from '../src/tools/builtin/update-state.js';
 import { createMemoryTools } from '../src/tools/builtin/memory.js';
 import { createShellTools } from '../src/tools/builtin/shell.js';
+import { createManageRoomFlowTool } from '../src/tools/builtin/manage-room-flow.js';
 import { ShellSessionManager } from '../src/tools/services/shell-session-manager.js';
 import { ArtifactService } from '../src/tools/services/artifact-service.js';
 import { WorkerManager } from '../src/tools/services/worker-manager.js';
@@ -27,14 +28,15 @@ before(async () => { dir = await mkdtemp(join(tmpdir(), 'agentbot-tool-limits-')
 after(async () => { await rm(dir, { recursive: true, force: true }); });
 
 describe('所有内置工具都有独立的量限额', () => {
-  it('24 个真实工具全部在预算表登记，schema 的字符串/数组都有上限', () => {
+  it('25 个真实工具全部在预算表登记，schema 的字符串/数组都有上限', () => {
     const tools = [
       ...createAgentTools({ rootDir: dir, memory: {} as never, secrets: {} as never, broker: {} as never }).tools,
       ...createWorkbenchTools({} as never),
       ...createTaskTools({ provider: new FakeProvider(), messages: {} as never, workerTools: () => [] }),
       createSendToAgentTool({ maxDepth: 3, resolveTarget: async () => undefined, dispatch: async () => '' }),
+      createManageRoomFlowTool({} as never),
     ];
-    assert.equal(tools.length, 24);
+    assert.equal(tools.length, 25);
     assert.deepEqual(tools.map(tool => tool.name).sort(), Object.keys(TOOL_LIMITS).sort());
     const check = (schema: any): void => {
       if (schema.type === 'string') assert.ok(schema.maxLength > 0);

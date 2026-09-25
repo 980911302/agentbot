@@ -26,6 +26,10 @@ export const TOOL_LIMITS: Record<string, { input: number; output: number }> = {
   MessageSubagent: { input: 14000, output: 2000 },
   StopSubagent: { input: 1000, output: 2000 },
   TodoWrite: { input: 24000, output: 8000 },
+  // ManageRoomFlow（OPT-08）：5 个字符串字段各自 ≤1000 字符 + actors 列表（每个参与者约 40 字符，
+  // 够 50 人）→ 输入 8000，与同类控制工具（CreateChannel 3000 / CreateAgent 10000）同量级；
+  // status 返回流程摘要 JSON（含 currentActors）→ 输出 4000，与 SendToAgent 同档。
+  ManageRoomFlow: { input: 8000, output: 4000 },
 };
 export const MAX_TOOL_CALLS_PER_TURN = 128;
 export const MAX_TOOL_CHARS_PER_TURN = 256000;

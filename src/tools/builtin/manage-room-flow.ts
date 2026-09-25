@@ -1,10 +1,24 @@
-import type { Tool, ToolContext } from '../tool.js';
+import { defineTool, type Tool } from '../tool.js';
 import { ControlError } from '../../storage/runtime-control-store.js';
 import type { RoomFlowService } from '../../server/runtime/room-flow-service.js';
 import type { ActorRef } from '../../shared/contracts/room-flow.js';
 
-export function createManageRoomFlowTool(flowService: RoomFlowService): Tool {
-  return {
+export interface ManageRoomFlowArgs {
+  action: 'start' | 'pause' | 'resume' | 'cancel' | 'status';
+  room_id?: string;
+  flow_id?: string;
+  protocol?: string;
+  actors?: ActorRef[];
+  reason?: string;
+}
+
+/**
+ * OPT-08：和其它工具一样走 defineTool —— schema 过 boundedSchema（字符串/数组上限、
+ * additionalProperties:false）、参数在执行前校验、结果按 limitsFor 收敛。
+ * 恢复分类见 src/tools/policy.ts（控制面动作，结果未知时不自动重做）。
+ */
+export function createManageRoomFlowTool(flowService: RoomFlowService): Tool<ManageRoomFlowArgs> {
+  return defineTool<ManageRoomFlowArgs>({
     name: 'ManageRoomFlow',
     description: [
       '受控群流程协调与控制工具。',
@@ -37,7 +51,7 @@ export function createManageRoomFlowTool(flowService: RoomFlowService): Tool {
       },
       required: ['action'],
     },
-    async execute(args, context: ToolContext) {
+    async execute(args, context) {
       const action = String(args.action);
       const agentId = context.agentId;
 
@@ -48,7 +62,7 @@ export function createManageRoomFlowTool(flowService: RoomFlowService): Tool {
         }
         if (!roomId) throw new ControlError('缺少 room_id', 'INVALID_ARGUMENT');
         const protocol = String(args.protocol || 'sequential_turn');
-        const actors = (args.actors as ActorRef[]) || [];
+        const actors = args.actors ?? [];
         if (actors.length === 0) {
           throw new ControlError('启动流程必须指定至少 1 个参与者', 'INVALID_ARGUMENT');
         }
@@ -80,7 +94,7 @@ export function createManageRoomFlowTool(flowService: RoomFlowService): Tool {
       }
 
       if (action === 'pause') {
-        const updated = await flowService.pauseFlow(flowId, args.reason as string);
+        const updated = await flowService.pauseFlow(flowId, args.reason);
         return `流程 ${updated.id} 已暂停`;
       }
 
@@ -90,7 +104,7 @@ export function createManageRoomFlowTool(flowService: RoomFlowService): Tool {
       }
 
       if (action === 'cancel') {
-        const updated = await flowService.cancelFlow(flowId, args.reason as string);
+        const updated = await flowService.cancelFlow(flowId, args.reason);
         return `流程 ${updated.id} 已取消，房间恢复开放模式`;
       }
 
@@ -107,5 +121,5 @@ export function createManageRoomFlowTool(flowService: RoomFlowService): Tool {
 
       throw new ControlError(`不支持的动作：${action}`, 'INVALID_ACTION');
     },
-  };
+  });
 }

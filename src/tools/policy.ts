@@ -36,11 +36,31 @@ const VERIFY_TOOLS = new Set([
   'UpdateChannel',
 ]);
 
-/** 其余（Shell、Task、传话、外发、未知工具）一律不盲目重跑 */
-export function replayPolicyOf(tool: string): ReplayPolicy {
+/**
+ * 有副作用且无法自证是否已生效：结果未知时不自动重做，先核对外部状态再问用户。
+ * ManageRoomFlow（OPT-08）在这里：它改的是群流程的授权链，重放会重复推进流程。
+ */
+const MANUAL_TOOLS = new Set([
+  'Shell',
+  'Task',
+  'MessageSubagent',
+  'StopSubagent',
+  'SendToAgent',
+  'SendToUser',
+  'ManageRoomFlow',
+]);
+
+/** 显式登记的分类；没登记的工具返回 undefined（只有 replayPolicyOf 会回退成 manual） */
+export function declaredReplayPolicyOf(tool: string): ReplayPolicy | undefined {
   if (RERUN_TOOLS.has(tool)) return 'rerun';
   if (VERIFY_TOOLS.has(tool)) return 'verify';
-  return 'manual';
+  if (MANUAL_TOOLS.has(tool)) return 'manual';
+  return undefined;
+}
+
+/** 只读取可重读 / 本地写入先核对 / 其余（壳、派工、外发、控制面、未知工具）一律不盲目重跑 */
+export function replayPolicyOf(tool: string): ReplayPolicy {
+  return declaredReplayPolicyOf(tool) ?? 'manual';
 }
 
 /**
