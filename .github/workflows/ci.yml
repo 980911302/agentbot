@@ -14,4 +14,6 @@ jobs:
       - run: npm install
       - run: npm --prefix web install
       - run: npm --prefix desktop install
+      # npm run ci 的最后一步是 Playwright 前端冒烟：runner 上要先装 headless Chromium 与系统依赖
+      - run: npx playwright install --with-deps --only-shell chromium
       - run: npm run ci
