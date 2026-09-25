@@ -1062,14 +1062,13 @@ z-index: var(--z-dropdown);
   flex-direction: column;
   align-items: stretch;
   width: 100%;
-  max-width: 768px;
-  background: var(--bg-elevated);
-  border-radius: 22px;
+  max-width: var(--read-w);
+  background: var(--bg-card);
+  border-radius: var(--r-xl);
   padding: 8px 12px 6px;
   gap: 0;
-  box-shadow: none;
+  box-shadow: var(--shadow-sm);
   border: 1px solid var(--border);
-  backdrop-filter: blur(16px);
   transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
 }
 
@@ -1136,21 +1135,24 @@ z-index: var(--z-dropdown);
 
 .capsule-input {
   flex: 1;
-  min-height: 24px;
-  max-height: 140px;
+  min-height: 32px;
+  /* 8 行封顶（--fs-md 15px × 1.5 = 24px 行高 × 8 + 上下内边距 8px）；
+     常量与算法在 web/src/features/chat/composer-view.ts，改一处要同步另一处 */
+  max-height: 200px;
+  overflow-y: auto;
   border: none;
   background: transparent;
   color: var(--text);
-  font-size: 14.5px;
+  font-size: var(--fs-md);
+  line-height: 24px;
   outline: none;
   resize: none;
   padding: 4px 2px;
-  line-height: 1.55;
 }
 
 .capsule-input::placeholder {
   color: var(--text-tertiary);
-  font-size: 14px;
+  font-size: var(--fs-base);
 }
 
 .capsule-action-btn {
@@ -1280,6 +1282,16 @@ box-shadow: var(--danger-glow);
   padding: 6px 4px 2px;
   margin-top: 4px;
   border-top: 1px solid var(--divider);
+}
+
+/* 快捷提示（规范 §5.9）：与模型 chip 同一行，靠右 */
+.composer-hint {
+  margin-left: auto;
+  padding-right: 2px;
+  font-size: var(--fs-sm);
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  user-select: none;
 }
 
 .composer-model-slot {

@@ -257,6 +257,13 @@ CSS 里不能 `var(--x) @media`，各 `@media (max-width: …)` 用字面量并�
 
 侧栏拖宽范围 200–360，低于 160 吸附迷你 72px；迷你档与抽屉档不写拖拽宽度（窗口变宽会还原）。
 
+### 输入条高度（UI-07）
+
+`.capsule-input` 的 1~8 行自适应与 `max-height: 200px` 由
+`web/src/features/chat/composer-view.ts` 的 `composerAreaSize()` 决定
+（一行 = `--fs-md` 15px × 1.5 = 24px，加上下内边距 8px；8 行 = 200px，超出转文本域内部滚动）。
+CSS 里写不了这个常量，改一处要同步另一处，两边都有注释指向对方。
+
 ---
 
 ## 7. 令牌检查（CI 强制）

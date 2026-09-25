@@ -5,13 +5,14 @@ import type { LLMMessage, LLMResponse } from '../../src/llm/provider.js';
  *
  * 两种用法：
  *   1. 自动应答：new FakeProvider({ auto: (messages) => ({...}) }) —— 每次调用立即返回
+ *      （也可以返回 Promise，用来构造模型「忙住」的时序，见 UI-07 的忙碌态验收）
  *   2. 手动放行：new FakeProvider() 后用 pending/release 精确控制时序；abort 会拒绝
  *
  * 只为本进程服务；不访问网络、不依赖真实 API Key。
  */
 
 export interface FakeProviderOptions {
-  auto?: (messages: LLMMessage[], opts: { signal?: AbortSignal; onDelta?: (text: string) => void }) => LLMResponse;
+  auto?: (messages: LLMMessage[], opts: { signal?: AbortSignal; onDelta?: (text: string) => void }) => LLMResponse | Promise<LLMResponse>;
   /** 默认 true：abort 时 chat() 拒绝 */
   rejectOnAbort?: boolean;
 }

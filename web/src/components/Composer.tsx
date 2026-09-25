@@ -3,6 +3,7 @@ import { useClickOutside } from '../hooks';
 import { IconArrowUp, IconCheck, IconChevronDown, IconMic, IconPlus, IconTool } from '../icons';
 import { BotAvatar } from './BotAvatar';
 import { mentionCandidateList } from '../features/chat/ui-chrome';
+import { composerAreaSize, composerPlaceholder } from '../features/chat/composer-view';
 import type { ModelOption, ToolInfo } from '../types';
 
 export interface ChannelMemberItem {
@@ -59,11 +60,13 @@ export function Composer({
 
   const mentionCandidates = isGroup ? mentionCandidateList(members, mentionQuery) : [];
 
+  // 高度按行数算（1~8 行，超出内部滚动），常量在 features/chat/composer-view.ts
   const resize = () => {
     const area = areaRef.current;
     if (!area) return;
     area.style.height = 'auto';
-    area.style.height = `${Math.min(area.scrollHeight, 140)}px`;
+    const { height } = composerAreaSize(area.scrollHeight);
+    area.style.height = `${height}px`;
   };
 
   useEffect(() => {
@@ -170,9 +173,7 @@ export function Composer({
     }
   };
 
-  const placeholder = isGroup
-    ? '在群聊中发消息，输入 @ 唤醒指定成员…'
-    : `给 ${botName || 'Bot'} 发消息`;
+  const placeholder = composerPlaceholder({ busy, isGroup, botName });
 
   return (
     <div className="composer-capsule-wrapper">
@@ -180,15 +181,18 @@ export function Composer({
         <div className="composer-voice-toast">语音输入功能适配中，请使用键盘输入</div>
       ) : null}
 
-      {/* Mention Auto-complete Popover */}
+      {/* Mention Auto-complete Popover：键盘上下选、Enter/Tab 插入、Esc 只关菜单 */}
       {mentionOpen && mentionCandidates.length > 0 ? (
         <div className="composer-mention-popover">
-          <div className="mention-header">选择要 @ 的成员 ({mentionCandidates.length})</div>
-          <div className="mention-list">
+          <div className="mention-header" id="composer-mention-label">选择要 @ 的成员 ({mentionCandidates.length})</div>
+          <div className="mention-list" role="listbox" id="composer-mention-list" aria-labelledby="composer-mention-label">
             {mentionCandidates.map((member, idx) => (
               <button
                 type="button"
                 key={member.id}
+                id={`composer-mention-option-${member.id}`}
+                role="option"
+                aria-selected={idx === mentionIndex}
                 className={`mention-item${idx === mentionIndex ? ' selected' : ''}`}
                 onMouseEnter={() => setMentionIndex(idx)}
                 onClick={() => insertMention(member)}
@@ -255,6 +259,14 @@ export function Composer({
           placeholder={placeholder}
           onChange={handleTextChange}
           onKeyDown={handleKeyDown}
+          aria-label={isGroup ? '群消息输入框' : '消息输入框'}
+          aria-expanded={mentionOpen && mentionCandidates.length > 0}
+          aria-controls="composer-mention-list"
+          aria-activedescendant={
+            mentionOpen && mentionCandidates[mentionIndex]
+              ? `composer-mention-option-${mentionCandidates[mentionIndex]?.id}`
+              : undefined
+          }
         />
 
         {/* Right: Send / Mic——界面不做停止入口；打「停」走停止令全链（见 docs/架构设计.md「插话、停止和等待」） */}
@@ -348,6 +360,8 @@ export function Composer({
             </div>
           ) : null}
         </div>
+        {/* 规范 §5.9：模型 chip 与快捷提示同一行 */}
+        <span className="composer-hint">Enter 发送 · Shift+Enter 换行</span>
       </div>
       </div>
     </div>

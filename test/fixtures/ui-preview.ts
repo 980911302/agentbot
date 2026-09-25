@@ -24,13 +24,17 @@ import type { MessageActor } from '../../src/shared/contracts/message-identity.j
 
 const temp = await tempDataDir('agentbot-ui-preview');
 
-/** 假模型：按触发词走三条剧本——模型报错 / 选项卡提问 / 默认短答 */
+/** 假模型：按触发词走三条剧本——模型报错 / 选项卡提问 / 慢回复（UI-07 忙碌态）；默认短答 */
 const provider = new FakeProvider({
-  auto: (messages: LLMMessage[]) => {
+  auto: async (messages: LLMMessage[]) => {
     const last = messages[messages.length - 1];
     const text = typeof last?.content === 'string' ? last.content : '';
     if (text.includes('触发模型错误')) {
       throw new Error('模型服务暂不可用：502 Bad Gateway（预览场景，非真实故障）');
+    }
+    if (text.includes('慢回复演示')) {
+      // UI-07：把这一回合拖住，界面才有稳定的忙碌态可看（占位文字与插话按钮）
+      await new Promise((resolve) => setTimeout(resolve, 8000));
     }
     if (text.includes('请主人定方向')) {
       return {
@@ -195,6 +199,11 @@ await say(interactive.id, 'user', { type: 'text', text: '请主人定方向，�
 const interactiveAccepted = await runtime.acceptMessage(interactive.id, '请主人定方向');
 void interactiveAccepted.execute().catch(() => undefined);
 
+// ── 10. 忙碌态：对这位同事发含「慢回复演示」的话，回合被拖住（UI-07）──
+const busy = await createAgent('忙碌态·慢回复演示', '#64748b', '界面验收：发送含「慢回复演示」的话，占位文字变忙碌态');
+await say(busy.id, 'user', { type: 'text', text: '等一下再回：先看别的。' });
+await say(busy.id, 'assistant', { type: 'text', text: '好，我在。' }, actor(busy));
+
 console.log(JSON.stringify({
   url: server.url,
   dataDir: temp.dir,
@@ -208,9 +217,10 @@ console.log(JSON.stringify({
     '模型报错·失败演示': failing.id,
     '长对话·跨天两百条': long.id,
     '交互卡·待回答': interactive.id,
+    '忙碌态·慢回复演示': busy.id,
   },
   activeFlowId: activeFlow.id,
-  hint: '场景 7 在界面里对该同事发送「触发模型错误」可看到实时报错行（失败运行不落库，刷新后只剩用户消息）',
+  hint: '场景 7 在界面里对该同事发送「触发模型错误」可看到实时报错行（失败运行不落库，刷新后只剩用户消息）；场景 10 发送含「慢回复演示」的话会把回合拖住 8 秒，用来看忙碌态占位文字（UI-07）',
 }, null, 2));
 
 let closing = false;
