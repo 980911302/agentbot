@@ -1,3 +1,5 @@
+import { createRuntimeAssembly } from '../app/bootstrap.js';
+import type { WaitRequest } from './runtime/send-to-agent-service.js';
 import { ActivationCoordinator } from './runtime/activation-coordinator.js';
 import { DeliveryService } from './runtime/delivery-service.js';
 import { EffectRunner } from './runtime/effect-runner.js';
@@ -10,10 +12,8 @@ import { RoomFlowStore } from '../storage/room-flow-store.js';
 import { RoomFlowService } from './runtime/room-flow-service.js';
 import { RoomFlowScheduler } from './runtime/room-flow-scheduler.js';
 import { RoomFlowRouter } from './runtime/room-flow-router.js';
-import { ProtocolRegistry, SequentialTurnProtocol } from './runtime/room-flow-protocols.js';
-import { createManageRoomFlowTool } from '../tools/builtin/manage-room-flow.js';
+import { ProtocolRegistry } from './runtime/room-flow-protocols.js';
 import type { RoomFlow } from '../shared/contracts/room-flow.js';
-import { toRoomFlowView } from './presenters.js';
 import { InboxScheduler } from './runtime/inbox-scheduler.js';
 import type {
   Agent,
@@ -26,13 +26,12 @@ import type {
 } from '../agent/types.js';
 import { AgentLoop } from '../agent/agent-loop.js';
 import { AgentRegistry } from '../agent/registry.js';
-import { createWorkbenchTools } from '../tools/builtin/workbench.js';
 import { Workbench } from '../workbench/service.js';
 import { InteractionBroker } from '../interaction/broker.js';
 import { SecretStore } from '../secret/store.js';
 import { AgentInbox, type InboxItem } from '../agent/inbox.js';
 import { CorrespondenceStore } from '../storage/correspondence-store.js';
-import { DEFAULT_OWNER_NAME, DEFAULT_STOP_WORDS, isStopSentence } from '../config.js';
+import { DEFAULT_OWNER_NAME } from '../config.js';
 import type { SettingsStore } from '../settings/store.js';
 import type { WorkRepositoryPort, WorkWaitRepositoryPort } from '../storage/ports.js';
 import { ContextBuilder, type BuiltContext, type BuildOptions } from '../context/builder.js';
@@ -53,21 +52,14 @@ import type { RoomMessage, RoomEvent, RoomEventHandler, RoundOutcome, RoundStatu
 import { ROOM_MAX_RUNS_PER_MEMBER, ROOM_POST_LIMIT_PER_TURN } from '../room/types.js';
 import { MessageStore } from '../store/messages.js';
 import { WorkService, type AcceptResult, type ClarifyResult } from '../work/service.js';
-import { JsonWorkRepository } from '../work/store.js';
 import { isTerminalWork } from '../work/item.js';
 import { WaitService, WAIT_TERMINAL_MESSAGES } from '../work/wait-service.js';
-import { JsonWorkWaitRepository } from '../work/wait-store.js';
 import { answerSummary, isAgentWaitForPeer, type WorkWait } from '../work/wait.js';
 import { DelegationService } from '../work/delegation-service.js';
-import { JsonDelegationRepository } from '../work/delegation-store.js';
 import { isOpenDelegation } from '../work/delegation.js';
 import type { InteractionRequest } from '../shared/contracts/sse.js';
 import { resolveProjectOwner } from '../tools/builtin/memory.js';
 import { ToolRegistry } from '../tools/registry.js';
-import { effectiveToolNames } from '../tools/capabilities.js';
-import { createSendToAgentDispatcher, type WaitRequest } from './runtime/send-to-agent-service.js';
-import { createTaskTools } from '../tools/builtin/task.js';
-import { createReadToolOutputTool } from '../tools/builtin/tool-output.js';
 import { ToolOutputStore } from '../tools/services/tool-output-store.js';
 import { TaskProgressStore } from '../storage/task-progress.js';
 import type { Tool, TurnState } from '../tools/tool.js';
@@ -91,7 +83,6 @@ import { planRecovery } from '../tools/policy.js';
 import { RunExecutor } from './runtime/run-executor.js';
 import { RoomDispatcher } from './runtime/room-dispatcher.js';
 import { ReceivedStore } from '../storage/received-store.js';
-import { JsonRunLedger } from '../storage/run-ledger.js';
 import type { RunLedger } from '../storage/run-ledger.js';
 import { JsonToolInvocationLedger } from '../storage/tool-ledger.js';
 import { EventJournal } from './events/journal.js';
@@ -105,10 +96,7 @@ import {
 } from './presenters.js';
 export * from './runtime/types.js';
 
-const DEFAULT_MAX_AGENT_DEPTH = 3;
 const OWNER_ID = 'owner';
-/** 到点扫描间隔（E4.3）：不引入调度框架，用一个兜底定时器 + 启动扫描覆盖 */
-const WAIT_SWEEP_INTERVAL_MS = 30_000;
 /** 用户问题卡的默认答复期限：持久等待不该被 5 分钟掐掉；到点只判过期，不当已回答 */
 const DEFAULT_USER_WAIT_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -205,374 +193,78 @@ export class AgentRuntime {
   /** 是否已经进入停机（E8.4）：beginShutdown 幂等 */
   private shutdownStarted = false;
 
+  /**
+   * 门面构造：装配已全部搬到 src/app/bootstrap.ts（OPT-03），这里只做两件事——
+   * 把门面自己的延迟回调交给装配根，再把装配结果落到字段上。
+   * 公开构造签名（AgentRuntimeOptions）保持不变，测试与组合根无需改动。
+   */
   constructor(readonly options: AgentRuntimeOptions) {
-    this.dataDir = options.dataDir;
-    this.chatRuns = new ChatRunCoordinator(options.dataDir, this.events);
-    this.ledger = new JsonRunLedger(options.dataDir);
-    this.registry = new AgentRegistry(options.dataDir, []);
-    this.control = RuntimeControlStore.openSync(options.dataDir, {
-      // 接近软上限时告警：真撞上去 transact 会直接拒绝，同事之间的投递就失败了
-      onNearLimit: (bytes, limit) => {
-        console.warn(
-          `控制存储已达 ${(bytes / 1024).toFixed(0)}KiB／上限 ${(limit / 1024).toFixed(0)}KiB：` +
-            '已终结票据超量时会拒绝新写入，请减小 ticketRetention 或清理历史数据',
-        );
+    const deps = createRuntimeAssembly(
+      options,
+      {
+        isBusy: (agentId) => this.isBusy(agentId),
+        watchInbox: (agentId) => this.inboxScheduler.watch(agentId),
+        drainInbox: (agentId, drainOptions) => this.drainInbox(agentId, drainOptions),
+        runTurn: (agentId, task, turn, turnOptions) => this.runTurn(agentId, task, turn, turnOptions),
+        membersOf: (roomId) => this.membersOf(roomId),
+        ownerName: () => this.ownerName(),
+        enrollAgent: (agentId) => this.enrollAgent(agentId),
+        archiveLetter: (item) => this.archiveLetter(item),
+        beginWait: (input) => this.beginWait(input),
+        requestUserWaitCard: (agentId, input) => this.requestUserWaitCard(agentId, input),
+        resolveAgentWaitsForReply: (agentId, peerAgentId, resultRef, threadId) =>
+          this.resolveAgentWaitsForReply(agentId, peerAgentId, resultRef, threadId),
+        workBriefForPeerReply: (agentId, peerAgentId, threadId) =>
+          this.workBriefForPeerReply(agentId, peerAgentId, threadId),
+        acceptDelegationLetter: (agentId, letter) => this.acceptDelegationLetter(agentId, letter),
+        sweepDueWaits: (now) => this.sweepDueWaits(now),
       },
-    });
-    this.activation = new ActivationCoordinator(this.control, {
-      processEpoch: this.control.currentProcessEpoch,
-      exists: async (agentId) => Boolean(await this.registry.get(agentId)),
-    });
-    this.effects = new EffectRunner(this.activation);
-    this.deliveries = new DeliveryService(this.control);
-    this.messages = new MessageStore(options.dataDir);
-    // 工作账本（E4.1）：同事手头负责的 WorkItem/WorkStep 持久化
-    const workRepository = options.workRepository ?? new JsonWorkRepository(options.dataDir);
-    this.works = new WorkService({ repository: workRepository });
-    // 等待账本（E4.3）：等谁/到点/等回答落成 WorkWait，重启后还能接上
-    const waitRepository = options.waitRepository ?? new JsonWorkWaitRepository(options.dataDir);
-    this.waits = new WaitService({ repository: waitRepository });
-    // 委派账本（E4.4）：谁把哪件事派给谁 + 线程键，精确停止/唤醒都读它
-    this.delegations = new DelegationService({ repository: new JsonDelegationRepository(options.dataDir) });
-    this.memory = options.memoryStore ?? new MemoryStore(options.dataDir);
-    this.compaction = new CompactionStore(options.dataDir);
-    this.rooms = new RoomStore(options.dataDir);
-    this.inbox = new AgentInbox(options.dataDir);
-    this.correspondence = new CorrespondenceStore(options.dataDir);
-    this.projector = new OutboxProjector({
-      store: this.control,
-      inbox: this.inbox,
-      correspondence: this.correspondence,
-      rooms: this.rooms,
-      messages: this.messages,
-    });
-    this.roomFlowStore = new RoomFlowStore(options.dataDir);
-    this.protocolRegistry = new ProtocolRegistry();
-    const defaultSeqProtocol = new SequentialTurnProtocol();
-    this.protocolRegistry.register('sequential-turn', defaultSeqProtocol);
-    this.protocolRegistry.register('sequential_turn', defaultSeqProtocol);
-    this.roomFlowService = new RoomFlowService({
-      store: this.roomFlowStore,
-      rooms: this.rooms,
-      protocols: this.protocolRegistry,
-      resolveAgentName: async (agentId) => (await this.registry.get(agentId))?.name,
-      publishTimelineMessage: async (msg) => {
-        await this.rooms.appendIfAbsent(msg);
-        this.events.publish({
-          kind: 'room',
-          roomId: msg.roomId,
-          payload: { type: 'room_message', message: msg },
-        });
-      },
-      onGrantReady: async (flow, grant) => {
-        await this.roomFlowScheduler.scheduleGrant(flow, grant);
-      },
-      onFlowUpdated: (flow) => {
-        this.events.publish({
-          kind: 'room',
-          roomId: flow.roomId,
-          payload: { type: 'flow_updated', flow: toRoomFlowView(flow) },
-        });
-      },
-    });
-    this.roomFlowScheduler = new RoomFlowScheduler({
-      inbox: this.inbox,
-      flowService: this.roomFlowService,
-      drainInbox: (agentId) => this.inboxScheduler?.watch(agentId),
-    });
-    this.broker = options.broker ?? new InteractionBroker();
-    this.secrets = options.secrets ?? new SecretStore(options.dataDir);
-    this.modelConfigStore = options.modelConfigStore ?? new ModelConfigStore(options.dataDir);
-    this.stopCoordinator = new StopCoordinator({
-      registry: this.registry,
-      messages: this.messages,
-      inbox: this.inbox,
-      rooms: this.rooms,
-      broker: this.broker,
-      ledger: this.ledger,
-      pendingStops: this.pendingStops,
-      stopWords: options.stopWords ?? DEFAULT_STOP_WORDS,
-      stopAckTimeoutMs: options.stopAckTimeoutMs ?? 30_000,
-      activation: this.activation,
-      effects: this.effects,
-      // E4.4：精确停止读委派账本；子工作随委派停、等待随委派作废
-      delegations: this.delegations,
-      cancelWork: async (workId, reason) => {
-        await this.works.close(workId, 'cancelled', reason).catch((error) => {
-          // 已经收尾的工作不重复关（幂等）；其它错误记一笔即可，不拦停止
-          if (!String(messageOf(error)).includes('已经结束')) {
-            console.warn(`停止时关工作失败（${workId}）：${messageOf(error)}`);
-          }
-        });
-      },
-      onDelegationCancelled: async (delegation) => {
-        await this.waits.cancelByThread(delegation.id, '这条委派已被停止');
-      },
-      // 迟到的 stop-ack 把 needs_attention 更新掉（设计 §7.1）
-      onStopAcksSettled: async (stopId, remaining) => {
-        if (!stopId) return;
-        await this.activation
-          .settleStop(stopId, remaining.length > 0 ? 'needs_attention' : 'settled', remaining)
-          .catch(() => undefined);
-      },
-    });
-
-    this.roomFlowRouter = new RoomFlowRouter({
-      rooms: this.rooms,
-      flowService: this.roomFlowService,
-      stopCoordinator: this.stopCoordinator,
-      isStopSentence: (text) => isStopSentence(text, options.stopWords ?? DEFAULT_STOP_WORDS),
-    });
-    this.builder = new ContextBuilder(this.messages, options.budget);
-    this.compactor = new Compactor(
-      this.messages,
-      this.compaction,
-      options.budget.compactionTrigger,
-      options.budget.reserveRecent,
+      // events / locks / pendingStops 是门面自有的可变状态，装配只借用
+      { events: this.events, locks: this.locks, pendingStops: this.pendingStops },
     );
-    this.extractor = new MemoryExtractor(this.memory, options.memoryExtraction);
 
-    // 工作台：智能体在对话里替用户改工作台（建同事、建群、拉人、代群发言）
-    this.workbench = new Workbench({
-      registry: this.registry,
-      rooms: this.rooms,
-      messages: this.messages,
-      // 新建同事务必登记 enabled，否则重启后会被迁移逻辑当成旧智能体暂停
-      enrollAgent: (agentId) => this.enrollAgent(agentId),
-      postToRoom: async (roomId, text, excludeAgentIds, agentChainDepth, signal, callerId) => {
-        if (!callerId) throw new Error('代群发言缺少真实发送者');
-        const summary = await this.roomDispatcher.enqueueMessage(roomId, text, {
-          excludeAgentIds,
-          agentChainDepth,
-          signal,
-          roomSenderId: callerId,
-          onRoomEvent: (payload) => this.events.publish({ kind: 'room', roomId, payload }),
-        });
-        for (const member of (await this.rooms.get(roomId))?.memberIds ?? [])
-          if (member !== callerId) this.inboxScheduler.watch(member);
-        return { roomName: summary.roomName, roundId: summary.roundId };
-      },
-    });
-
-    this.roomDispatcher = new RoomDispatcher({
-      registry: this.registry,
-      rooms: this.rooms,
-      messages: this.messages,
-      inbox: this.inbox,
-      locks: this.locks,
-      membersOf: (roomId) => this.membersOf(roomId),
-      ownerNameFallback: () => this.ownerName(),
-      stopWords: options.stopWords ?? DEFAULT_STOP_WORDS,
-      runTurn: (agentId, task, turn, options) => this.runTurn(agentId, task, turn, options),
-      // 只通知调度器，绝不沿发送方的栈递归执行收件人。
-      drainInbox: (agentId) => this.inboxScheduler.watch(agentId),
-      router: this.roomFlowRouter,
-    });
-
-    this.inboxProcessor = new InboxProcessor({
-      inbox: this.inbox,
-      registry: this.registry,
-      maxAgentChainDepth: this.options.maxAgentChainDepth ?? DEFAULT_MAX_AGENT_DEPTH,
-      stopCoordinator: this.stopCoordinator,
-      // stop-ack 由这里确认并登记给等待中的停止令，不再靠 take 去信箱里抢
-      onStopAck: (agentId, item) =>
-        this.stopCoordinator.noteStopAck(agentId, item.fromAgentId, item.treeId, {
-          ...(item.cancelId ? { cancelId: item.cancelId } : {}),
-          ...(item.childWorkId ? { childWorkId: item.childWorkId } : {}),
-          ...(item.correlationId ? { correlationId: item.correlationId } : {}),
-        }),
-      // 同事回信已确认处理：按线程键精确解决「等这位同事回信」的等待（E4.3/E4.4）
-      onLettersHandled: async (agentId, letters) => {
-        for (const letter of letters) {
-          await this.resolveAgentWaitsForReply(agentId, letter.fromAgentId, `letter:${letter.id}`, letter.correlationId);
-        }
-      },
-      // 这封信是不是某个等待的唤醒事件：是就把那份工作写进本轮 brief
-      workBriefForLetter: (agentId, fromAgentId, correlationId) =>
-        this.workBriefForPeerReply(agentId, fromAgentId, correlationId),
-      // 这封信是一条委派：收件方为它开一件工作并回填 childWorkId（E4.4）
-      acceptDelegation: (agentId, letter) => this.acceptDelegationLetter(agentId, letter),
-      runTurn: (agentId, task, turn, options) =>
-        this.runTurn(agentId, task, { extraTools: [], ...turn }, options),
-      // 排队的群回合：事件按 roomId 归属（前端据此路由到群频道）
-      deliverRoom: async (item, options) => {
-        const roomId = item.room?.roomId ?? '';
-        const { run } = await this.chatRuns.prepare({
-          channelId: roomId,
-          roomId,
-          kind: 'room',
-          source: 'room',
-          input: item.text,
-          messageId: item.checkpoint?.messageId,
-        });
-        const scoped = this.chatRuns.bind(run, options);
-        return this.chatRuns.execute(
-          run.runId,
-          () => this.roomDispatcher.deliverQueued(item, scoped),
-          (result) => {
-            if (result.status === 'error') throw new Error(result.note ?? '延迟群回合执行失败');
-            return {};
-          },
-        );
-      },
-      archiveLetter: (item) => this.archiveLetter(item),
-      admit: async (item) => {
-        const decision = await this.activation.tryActivate({
-          agentId: item.toAgentId,
-          runId: item.id,
-          taskId: item.id,
-          inputId: item.id,
-          chainId: item.chainId ?? item.correlationId ?? item.id,
-          source: item.kind === 'room' ? 'room' : 'inbox',
-          disposition: item.disposition,
-          lease:
-            item.leaseOwner && item.leaseEpoch !== undefined
-              ? { deliveryId: item.id, ownerId: item.leaseOwner, epoch: item.leaseEpoch }
-              : undefined,
-          flowId: item.flowId,
-          flowGrantId: item.grantId,
-          replyRoute: item.replyRoute,
-        });
-        if (decision.kind === 'admitted') {
-          await this.activation.markRunning(decision.ticket);
-        }
-        return decision;
-      },
-      settleTicket: (ticketId) => this.activation.settleTicket(ticketId),
-      canRetry: async (agentId, messageId) => {
-        const all = this.chatRuns.list();
-        const ids = new Set(
-          all
-            .filter((run) => run.messageId === messageId && (!run.agentId || run.agentId === agentId))
-            .map((run) => run.runId),
-        );
-        for (let size = -1; size !== ids.size;) {
-          size = ids.size;
-          for (const run of all) if (run.parentRunId && ids.has(run.parentRunId)) ids.add(run.runId);
-        }
-        const runs = all.filter((run) => ids.has(run.runId) && run.agentId === agentId);
-        // 只有"查得到运行、而且其中真有人动过手"才判不可重试。
-        // 查不到记录（运行账本按 1000 条上限裁掉、任务进度按 500 条裁掉、或换了进程）
-        // 时无法证明有副作用，不能据此把信判死——那会让长期实例在清理后永久丢信。
-        if (runs.length === 0) return true;
-        return runs.every((run) => {
-          const progress = this.taskProgress.get(run.runId, agentId);
-          return progress === undefined || progress.mayHaveSideEffects === false;
-        });
-      },
-      leaseMs: options.deliveryLeaseMs,
-      maxAttempts: options.deliveryMaxAttempts,
-      baseDelayMs: options.deliveryBaseDelayMs,
-    });
-
-    this.agentService = new AgentService({
-      registry: this.registry,
-      memory: this.memory,
-      compaction: this.compaction,
-      createProvider: options.createProvider,
-      defaultModel: options.defaultModel,
-      knownModels: options.knownModels,
-      budget: options.budget,
-      tools: () => this.tools,
-    });
-
-    this.receivedStore = new ReceivedStore(options.dataDir);
-    this.toolLedger = new JsonToolInvocationLedger(options.dataDir);
-    this.taskProgress = new TaskProgressStore(options.dataDir);
-    this.toolOutputs = new ToolOutputStore(options.dataDir);
-
-    this.executor = new RunExecutor({
-      registry: this.registry,
-      messages: this.messages,
-      memory: this.memory,
-      inbox: this.inbox,
-      builder: this.builder,
-      compactor: this.compactor,
-      compaction: this.compaction,
-      extractor: this.extractor,
-      agentService: this.agentService,
-      stopCoordinator: this.stopCoordinator,
-      activation: this.activation,
-      effectRunner: this.effects,
-      flowService: this.roomFlowService,
-      drainInbox: (agentId, options) => this.drainInbox(agentId, options),
-      canAutoActivate: (agentId) => {
-        if (!this.control.allowsAutomaticExecution()) return false;
-        return this.control.snapshot().agents[agentId]?.autoActivation !== 'paused';
-      },
-      locks: this.locks,
-      ledger: this.ledger,
-      toolLedger: this.toolLedger,
-      progress: this.taskProgress,
-      outputs: this.toolOutputs,
-      maxIterations: options.maxIterations,
-      chatRuns: this.chatRuns,
-      canResumeRoom: async (agentId, roomId) =>
-        (await this.rooms.get(roomId))?.memberIds.includes(agentId) ?? false,
-      publishResumedPosts: (agentId, continuation, posts, opts) =>
-        this.roomDispatcher.publishResumedPosts(agentId, continuation, posts, opts),
-      // E4.3：SendToUser 的提问类出口落成持久 WorkWait（工具不认识存储）
-      requestUserWait: (agentId, input) => this.requestUserWaitCard(agentId, input),
-      onMemory: (agentId, runId, added, merged) =>
-        this.events.publish({ kind: 'agent', agentId, runId, payload: { type: 'memory', added, merged } }),
-    });
-
-    this.tools = [
-      ...options.tools,
-      ...(options.tools.some((tool) => tool.name === 'ReadToolOutput') ? [] : [createReadToolOutputTool()]),
-      createManageRoomFlowTool(this.roomFlowService),
-      ...createWorkbenchTools(this.workbench),
-      this.createSendToAgentTool(),
-      ...createTaskTools({
-        provider: this.agentService.providerFor(this.options.defaultModel),
-        messages: this.messages,
-        workerTools: async (ownerId) => {
-          const owner = ownerId ? await this.registry.get(ownerId) : undefined;
-          // 按派工者实际可用的工具面取（含恒定叠加的必需能力），工人再自行取交集
-          return owner ? this.tools.filter((tool) => effectiveToolNames(owner.toolNames).includes(tool.name)) : [];
-        },
-        providerFor: (model) => this.agentService.providerFor(this.agentService.resolveModel(model)),
-        ownerAuthority: async (ownerId) => {
-          const owner = await this.registry.get(ownerId);
-          return owner ? { toolNames: effectiveToolNames(owner.toolNames), projectIds: owner.projectIds } : undefined;
-        },
-        maxIterations: this.options.maxIterations,
-        // TodoWrite → WorkStep（E4.1）：有正在进行的工作才记步骤
-        onTodoWrite: async (agentId, todos) => {
-          const work = await this.works.openWorkOf(agentId);
-          if (!work) return;
-          for (const todo of todos) {
-            await this.works.appendStep({
-              workId: work.id,
-              id: todo.id,
-              title: todo.content,
-              status: todo.status,
-            });
-          }
-        },
-        invocations: this.toolLedger,
-        dataDir: this.options.dataDir,
-        progress: this.taskProgress,
-        outputs: this.toolOutputs,
-        // E8.4：后台工人登记进停机清单
-        background: this.options.background,
-      }),
-    ];
-    // 新同事默认拿到全部工具——包括工作台那一组
-    this.registry.setDefaultToolNames(this.tools.map((tool) => tool.name));
-    this.inboxScheduler = new InboxScheduler({
-      inbox: this.inbox,
-      busy: (agentId) => this.isBusy(agentId) || this.inboxProcessor.isProcessing(agentId),
-      exists: async (agentId) => Boolean(await this.registry.get(agentId)),
-      process: (agentId) => this.drainInbox(agentId),
-    });
-    // 到点等待的兜底扫描（E4.3）：启动扫描在 recover() 里做一次，这之后靠定时器补
-    this.waitTimer = setInterval(() => {
-      void this.sweepDueWaits().catch((error) => {
-        console.warn(`等待到点扫描失败：${error instanceof Error ? error.message : String(error)}`);
-      });
-    }, WAIT_SWEEP_INTERVAL_MS);
-    this.waitTimer.unref?.();
+    this.dataDir = deps.dataDir;
+    this.chatRuns = deps.chatRuns;
+    this.ledger = deps.ledger;
+    this.registry = deps.registry;
+    this.control = deps.control;
+    this.activation = deps.activation;
+    this.effects = deps.effects;
+    this.deliveries = deps.deliveries;
+    this.messages = deps.messages;
+    this.works = deps.works;
+    this.waits = deps.waits;
+    this.delegations = deps.delegations;
+    this.memory = deps.memory;
+    this.compaction = deps.compaction;
+    this.rooms = deps.rooms;
+    this.inbox = deps.inbox;
+    this.correspondence = deps.correspondence;
+    this.projector = deps.projector;
+    this.roomFlowStore = deps.roomFlowStore;
+    this.protocolRegistry = deps.protocolRegistry;
+    this.roomFlowService = deps.roomFlowService;
+    this.roomFlowScheduler = deps.roomFlowScheduler;
+    this.broker = deps.broker;
+    this.secrets = deps.secrets;
+    this.modelConfigStore = deps.modelConfigStore;
+    this.stopCoordinator = deps.stopCoordinator;
+    this.roomFlowRouter = deps.roomFlowRouter;
+    this.builder = deps.builder;
+    this.compactor = deps.compactor;
+    this.extractor = deps.extractor;
+    this.workbench = deps.workbench;
+    this.roomDispatcher = deps.roomDispatcher;
+    this.inboxProcessor = deps.inboxProcessor;
+    this.agentService = deps.agentService;
+    this.receivedStore = deps.receivedStore;
+    this.toolLedger = deps.toolLedger;
+    this.taskProgress = deps.taskProgress;
+    this.toolOutputs = deps.toolOutputs;
+    this.executor = deps.executor;
+    this.tools = deps.tools;
+    this.inboxScheduler = deps.inboxScheduler;
+    this.waitTimer = deps.waitTimer;
   }
 
   async close(): Promise<void> {
@@ -1358,25 +1050,6 @@ export class AgentRuntime {
     if (restored > 0) console.log(`启动扫描：恢复 ${restored} 张待回答的问题卡`);
 
     return { unresolvedInvocations, pendingDeliveries };
-  }
-
-  // ── 智能体 1:1 ──────────────────────────────────────
-
-  /** SendToAgent：投递编排已抽到 runtime/send-to-agent-service.ts（OPT-03），这里只接线 */
-  private createSendToAgentTool() {
-    return createSendToAgentDispatcher({
-      maxAgentChainDepth: this.options.maxAgentChainDepth ?? DEFAULT_MAX_AGENT_DEPTH,
-      registry: this.registry,
-      workbench: this.workbench,
-      delegations: this.delegations,
-      deliveries: this.deliveries,
-      works: this.works,
-      projector: this.projector,
-      inbox: this.inbox,
-      watchInbox: (agentId) => this.inboxScheduler.watch(agentId),
-      beginWait: (input) => this.beginWait(input),
-      archiveLetter: (item) => this.archiveLetter(item),
-    });
   }
 
   /** 消费积压的同事来信（领取 → 处理 → 确认；搬至 InboxProcessor，此处保持兼容入口） */
