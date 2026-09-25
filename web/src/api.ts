@@ -98,6 +98,32 @@ export async function updateBot(
   return data.bot;
 }
 
+/** 某位同事当前勾选的可选工具（GET /api/agents/:id，读 registry 记录） */
+export async function fetchAgentTools(agentId: string): Promise<string[]> {
+  const data = await request<{ agent: { toolNames?: string[] } }>(
+    `/api/agents/${encodeURIComponent(agentId)}`,
+  );
+  return data.agent.toolNames ?? [];
+}
+
+/**
+ * 保存某位同事的工具装卸（PATCH /api/agents/:id）。
+ * 后端把 `toolNames` 当「用户勾选的可选工具」落成显式策略：允许空集合，
+ * 必需能力不在这个清单里（由 runtime 恒定叠加），所以这里只提交可选工具。
+ * 返回后端确认落盘后的清单，界面据此显示真实结果，不猜状态。
+ */
+export async function saveAgentTools(agentId: string, toolNames: string[]): Promise<string[]> {
+  const data = await request<{ agent: { toolNames?: string[] } }>(
+    `/api/agents/${encodeURIComponent(agentId)}`,
+    {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ toolNames }),
+    },
+  );
+  return data.agent.toolNames ?? [];
+}
+
 export async function fetchSessions(botId: string): Promise<SessionSummary[]> {
   const data = await request<{ sessions: SessionSummary[] }>(
     `/api/sessions?botId=${encodeURIComponent(botId)}`,
@@ -698,4 +724,36 @@ export async function testModelSettings(data: {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(data),
   });
+}
+
+// ── 头像（E5.1）：新增函数一律追加到文件末尾，减少与并行改动的冲突 ──
+
+/**
+ * 上传头像：图片读成 data URL 交给资源接口，服务端落盘到数据目录的头像目录。
+ * 返回的资源地址带 updatedAt，可直接用作 <img src> 做即时预览。
+ */
+export async function uploadBotAvatar(
+  id: string,
+  dataUrl: string,
+): Promise<{ avatar: string; avatarUrl: string | null }> {
+  const data = await request<{ agent: { avatar?: string }; avatarUrl: string | null }>(
+    `/api/agents/${encodeURIComponent(id)}/avatar`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ dataUrl }),
+    },
+  );
+  return { avatar: data.agent.avatar ?? '', avatarUrl: data.avatarUrl };
+}
+
+/** 清空头像：明确语义——删掉文件并把字段置空（不是「没传」） */
+export async function clearBotAvatar(
+  id: string,
+): Promise<{ avatar: string; avatarUrl: string | null }> {
+  const data = await request<{ agent: { avatar?: string }; avatarUrl: string | null }>(
+    `/api/agents/${encodeURIComponent(id)}/avatar`,
+    { method: 'DELETE' },
+  );
+  return { avatar: data.agent.avatar ?? '', avatarUrl: data.avatarUrl };
 }

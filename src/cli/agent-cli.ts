@@ -91,7 +91,7 @@ async function main(): Promise<void> {
   // CLI 模式没有界面，卡片交互拿不到回答；让工具报错时说得清楚些
   bind({
     agentName: async (agentId) => (await runtime.registry.get(agentId))?.name ?? agentId,
-    updateAgent: (agentId, patch) => runtime.registry.update(agentId, patch),
+    updateProfile: (agentId, patch) => runtime.profiles.updateById(agentId, patch),
   });
 
   const agent = await runtime.ensureDefaultAgent();

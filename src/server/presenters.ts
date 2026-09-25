@@ -1,4 +1,5 @@
 import type { AgentRecord, Message } from '../agent/types.js';
+import { isAvatarRef } from '../shared/contracts/agent-profile.js';
 import { messageIdentity, type MessageIdentity, type Correspondence } from '../shared/contracts/message-identity.js';
 
 /**
@@ -15,6 +16,14 @@ export interface BotViewSource {
   conversationCount: number;
 }
 
+/**
+ * 头像资源地址（E5.1）：只有上传过的头像（记录里是 `avatars/<文件名>` 引用）才有，
+ * 带 updatedAt 做缓存失效。记录里的 avatar 仍是原值，兼容历史上的 emoji / 绝对路径。
+ */
+export function avatarUrlOf(record: Pick<AgentRecord, 'id' | 'avatar' | 'updatedAt'>): string | null {
+  return isAvatarRef(record.avatar) ? `/api/agents/${record.id}/avatar?v=${record.updatedAt}` : null;
+}
+
 /** 智能体的界面视图：状态与计数一律来自真实数据源，不放假数 */
 export function toBotView(record: AgentRecord, source: BotViewSource) {
   return {
@@ -27,6 +36,7 @@ export function toBotView(record: AgentRecord, source: BotViewSource) {
     instructions: record.instructions,
     color: record.color,
     avatar: record.avatar,
+    avatarUrl: avatarUrlOf(record),
     section: record.section,
     hidden: record.hidden,
     status: source.busy ? 'working' : 'idle',

@@ -1,5 +1,10 @@
-import type { AgentPatch } from '../agent/registry.js';
 import type { AgentRecord } from '../agent/types.js';
+import {
+  isProfilePatchEmpty,
+  type AgentProfilePatch,
+  type AvatarUploadInput,
+} from '../shared/contracts/agent-profile.js';
+import { AgentProfileError, type AgentProfileService } from '../agent/profile-service.js';
 import { ROOM_MEMBER_LIMIT, type Room } from '../room/types.js';
 import type { AgentRegistry } from '../agent/registry.js';
 import type { RoomStore } from '../room/store.js';
@@ -21,6 +26,8 @@ export interface PostToRoomResult {
 
 export interface WorkbenchDeps {
   registry: AgentRegistry;
+  /** 资料唯一写入口（E5.1）：改资料不在这里另写一套合并逻辑 */
+  profiles: AgentProfileService;
   rooms: RoomStore;
   messages: MessageStore;
   /** 由运行时注入：只写群消息并入队（排除调用者自己），不等待扇出执行。 */
@@ -60,7 +67,7 @@ export class Workbench {
     description?: string;
     instructions?: string;
     color?: string;
-    avatar?: string;
+    avatar?: AvatarUploadInput;
     section?: string;
     resourceId?: string;
   }): Promise<AgentRecord> {
@@ -85,11 +92,10 @@ export class Workbench {
         description: input.description,
         instructions: input.instructions,
         color: input.color?.trim(),
-        avatar: input.avatar,
         section: input.section,
       });
       await this.deps.enrollAgent?.(absent.id);
-      return absent;
+      return this.applyAvatar(absent, input.avatar);
     }
 
     const created = await this.deps.registry.create({
@@ -98,36 +104,43 @@ export class Workbench {
       description: input.description,
       instructions: input.instructions,
       color: input.color?.trim(),
-      avatar: input.avatar,
       section: input.section,
     });
     await this.deps.enrollAgent?.(created.id);
-    return created;
+    return this.applyAvatar(created, input.avatar);
+  }
+
+  /** 建同事时给的头像也走资料服务（落盘与引用规则只有一份） */
+  private async applyAvatar(record: AgentRecord, avatar?: AvatarUploadInput): Promise<AgentRecord> {
+    if (!avatar) return record;
+    return this.deps.profiles.updateById(record.id, { avatar });
   }
 
   /**
-   * 改同事资料。合并写入：没传的字段保持原值，空字符串不会把资料抹空。
-   * 允许改别人（规格第 1 节），但不允许读别人的私聊与记忆。
-   */
-  /**
-   * 改同事的名字/职责。工具描述承诺「也可以给一个已存在的名字」，所以这里先按 id
-   * 找、找不到再按名字找（CreateAgent 已保证名字唯一，按名字匹配不会歧义）。
+   * 改同事资料：合并写入，没传的字段保持原值，空字符串不会把资料抹空，
+   * null 是显式清空（E5.1）。允许改别人（规格第 1 节），但不允许读别人的私聊与记忆。
+   *
+   * 工具描述承诺「也可以给一个已存在的名字」，所以这里先按 id 找、找不到再按名字找
+   * （CreateAgent 已保证名字唯一，按名字匹配不会歧义）。
    * 另外：一个字段都没给时直接返回，不落盘——registry.update 无论有没有改动都会刷新
    * updatedAt，而列表按 updatedAt 倒序，空调用会静默改动侧栏排序（E5.8）。
    */
-  async updateAgent(targetIdOrName: string, patch: AgentPatch): Promise<AgentRecord> {
+  async updateAgent(targetIdOrName: string, patch: AgentProfilePatch): Promise<AgentRecord> {
     const byId = await this.deps.registry.get(targetIdOrName);
     const target = byId ?? (await this.deps.registry.findByName(targetIdOrName.trim()));
     if (!target) throw new WorkbenchError(`找不到 id 或名字为 ${targetIdOrName} 的同事`);
 
     // 不能枚举字段名判断「要不要改」：avatar/color/hidden/projectIds 等都要算数，
     // 只挑 name/instructions/title 会把合法的头像、配色更新静默吞掉。
-    const nothingToChange = Object.values(patch).every((value) => value === undefined);
-    if (nothingToChange) return target;
+    if (isProfilePatchEmpty(patch)) return target;
 
-    const updated = await this.deps.registry.update(target.id, patch);
-    if (!updated) throw new WorkbenchError(`更新「${target.name}」失败`);
-    return updated;
+    try {
+      return await this.deps.profiles.updateById(target.id, patch);
+    } catch (error) {
+      // 工具层只认 WorkbenchError（会转成 "Error: ..." 回给模型）
+      if (error instanceof AgentProfileError) throw new WorkbenchError(error.message);
+      throw error;
+    }
   }
 
   async listAgents(): Promise<AgentRecord[]> {

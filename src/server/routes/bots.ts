@@ -2,8 +2,14 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { privateConversationMessages, toBotView } from '../presenters.js';
 import { json, readJson } from '../transport/json.js';
 import { readString, resolveAgent, type RouteContext } from './context.js';
+import { parseProfileBody, respondProfileError } from './profile-payload.js';
 
-/** /api/bots、/api/agents 集合：GET 列表 / POST 创建。响应了才返回 true */
+/**
+ * /api/bots、/api/agents 集合：GET 列表 / POST 创建。响应了才返回 true
+ *
+ * bots 是历史兼容接口（界面还在用）：字段与 /api/agents 一致，写操作委托同一个
+ * 资料服务（E5.1），不在这里另写一套合并逻辑。
+ */
 export async function handleBotsCollection(
   request: IncomingMessage,
   response: ServerResponse,
@@ -31,6 +37,7 @@ export async function handleBotsCollection(
     const record = await runtime.createAgent({
       name: readString(body.name),
       title: readString(body.title),
+      description: readString(body.description),
       instructions: readString(body.instructions) ?? readString(body.role),
       color: readString(body.color),
     });
@@ -70,24 +77,25 @@ export async function handleBotItem(
 
   if (method === 'PATCH') {
     const body = await readJson(request);
-    const updated = await context.runtime.registry.update(record.id, {
-      name: readString(body.name),
-      title: readString(body.title),
-      instructions: readString(body.instructions) ?? readString(body.role),
-      description: readString(body.description),
-      section: readString(body.section),
-      color: readString(body.color),
-      avatar: readString(body.avatar),
-      hidden: typeof body.hidden === 'boolean' ? body.hidden : undefined,
-    });
-    json(response, 200, {
-      bot: updated
-        ? toBotView(updated, {
-            busy: context.runtime.isBusy(updated.id),
-            conversationCount: privateConversationMessages(await context.runtime.messages.list(updated.id)).length,
-          })
-        : null,
-    });
+    const { patch, errors } = parseProfileBody(body, { legacyRoleAlias: true });
+    if (errors.length > 0) {
+      json(response, 400, { error: errors.join('；') });
+      return true;
+    }
+    try {
+      // 与 /api/agents/:id 是同一个资料服务：两套接口改的就是同一份
+      const updated = await context.runtime.profiles.updateById(record.id, patch);
+      json(response, 200, {
+        agent: updated,
+        bot: toBotView(updated, {
+          busy: context.runtime.isBusy(updated.id),
+          conversationCount: privateConversationMessages(await context.runtime.messages.list(updated.id)).length,
+        }),
+      });
+    } catch (error) {
+      if (respondProfileError(response, error)) return true;
+      throw error;
+    }
     return true;
   }
 

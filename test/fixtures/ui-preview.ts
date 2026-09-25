@@ -22,6 +22,7 @@ import { createAgentServer } from '../../src/server/http.js';
 import { FakeProvider } from '../fakes/fake-provider.js';
 import { tempDataDir } from '../fakes/test-env.js';
 import { agentWaitKey } from '../../src/work/wait.js';
+import { testPngDataUrl } from '../fakes/avatar-fixture.js';
 import type { LLMMessage } from '../../src/llm/provider.js';
 import type { MessageActor } from '../../src/shared/contracts/message-identity.js';
 
@@ -474,6 +475,14 @@ await runtime.waits.create({
   condition: `等「${peers.name}」给出 159 的日志结论`,
 });
 
+// ── 12. 同事资料与头像（E5.1）：四个字段分开 + 通过资源接口展示的头像 ──
+// 头像走资料服务落盘到数据目录的 avatars/，界面预览读 GET /api/agents/:id/avatar
+await runtime.profiles.updateById(plain.id, {
+  title: '联调负责人',
+  description: '负责接口联调与验收，先看契约再动手。',
+  avatar: { dataUrl: testPngDataUrl() },
+});
+
 console.log(
   JSON.stringify(
     {
@@ -491,6 +500,7 @@ console.log(
         '交互卡·待回答': interactive.id,
         '忙碌态·慢回复演示': busy.id,
         '手头工作·三件在办': worker.id,
+        '资料与头像（E5.1 走普通私聊）': plain.id,
       },
       activeFlowId: activeFlow.id,
       works: { active: [uiWork.id, displayNameWork.id], waiting: waitingWork.id },

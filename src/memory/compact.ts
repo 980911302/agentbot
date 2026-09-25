@@ -6,6 +6,7 @@ import type { Agent, Message } from '../agent/types.js';
 import type { LLMProvider } from '../llm/provider.js';
 import type { MessageStore } from '../store/messages.js';
 import { estimateTokens } from '../context/budget.js';
+import { attributionLabel } from '../shared/contracts/message-identity.js';
 import { isMissingFile, writeJsonAtomic } from '../storage/atomic-json.js';
 import { assertExecution, guarded, type ExecutionGuard } from '../agent/execution-guard.js';
 
@@ -84,7 +85,11 @@ export class Compactor {
     for (let index = 0; index < older.length;) {
       const cohort: Message[] = [older[index++]!];
       while (older[index]?.createdAt === cohort[0]!.createdAt) cohort.push(older[index++]!);
-      const size = cohort.reduce((sum, message) => sum + messageText(message).length + 10, 0);
+      // 来源标签也会写进摘要正文：分块预算必须把它算进来，否则实际提示比 48000 字符更肥。
+      const size = cohort.reduce(
+        (sum, message) => sum + messageText(message).length + speaker(message).length + 10,
+        0,
+      );
       if (chars + size > 48000) break;
       included.push(...cohort); chars += size;
     }
@@ -123,6 +128,10 @@ export class Compactor {
 }
 
 function speaker(message: Message): string {
+  // E4.6：压缩是把历史交给模型的一次改写，来源必须跟着正文走。
+  // 以前 user 角色一律写成「用户」，压一次就把群里的同事、主人的话混成一段无来源文字。
+  const label = attributionLabel(message);
+  if (label) return label;
   if (message.role === 'user') return '用户';
   if (message.role === 'assistant') return '助手';
   return '工具';

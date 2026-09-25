@@ -3,6 +3,7 @@ import { createDelegationWaitBridge } from '../server/runtime/delegation-wait-br
 import { createRoomGateway } from '../server/runtime/room-gateway-service.js';
 import { createControlViews } from '../server/runtime/control-view-service.js';
 import { createMessageAcceptance } from '../server/runtime/message-acceptance-service.js';
+import { createWorkerResultDelivery } from '../server/runtime/worker-result-service.js';
 import type { createRuntimeStorage } from './storage-layer.js';
 import type { createRuntimeServices } from './service-layer.js';
 import type { createExecutionLayer } from './execution-layer.js';
@@ -72,5 +73,13 @@ export function createFacadeServices(
     voidPendingUserWaits: (agentId, emit) => waitLifecycle.voidPendingUserWaits(agentId, emit as AgentEventHandler | undefined),
   });
 
-  return { waitLifecycle, delegationWaits, roomGateway, controlViews, acceptance };
+  const workerResults = createWorkerResultDelivery({
+    registry,
+    messages,
+    deliveries: store.deliveries,
+    projector: store.projector,
+    watchInbox: (agentId) => host.watchInbox(agentId),
+  });
+
+  return { waitLifecycle, delegationWaits, roomGateway, controlViews, acceptance, workerResults };
 }

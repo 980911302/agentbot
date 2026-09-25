@@ -16,11 +16,14 @@ import { chatRows, transferLabel, transferPeers } from '../web/src/features/chat
 import { ChatEngine } from '../web/src/features/chat/chat-engine.js';
 import { toLLMMessages } from '../src/llm/convert.js';
 import { renderMessages } from '../src/context/history-selector.js';
+import { ContextBuilder } from '../src/context/builder.js';
+import type { Agent } from '../src/agent/types.js';
 import { CorrespondenceStore } from '../src/storage/correspondence-store.js';
 import { AgentRuntime } from '../src/server/runtime.js';
 import { RoomDispatcher } from '../src/server/runtime/room-dispatcher.js';
 import { createAgentServer } from '../src/server/http.js';
 import { DEFAULT_BUDGET } from '../src/context/budget.js';
+import { Compactor, CompactionStore } from '../src/memory/compact.js';
 import { FakeProvider } from './fakes/fake-provider.js';
 import { tempDataDir } from './fakes/test-env.js';
 
@@ -143,6 +146,173 @@ describe('模型角色与真实消息身份分离', () => {
       ['b'],
     );
     assert.equal(chatRows([...shown, ...toDisplayMessages([input()]), ...shown]).length, 2);
+  });
+});
+
+describe('E4.6 上下文保留发送者、频道与所属工作', () => {
+  const c: MessageActor = { kind: 'agent', id: 'c', name: '架构师' };
+  const contextAgent = (patch: Partial<Agent['memory']> = {}) =>
+    ({
+      id: 'b',
+      name: '测试工程师',
+      instructions: '负责测试',
+      memory: { refs: [], compaction: null, projectIds: [], ...patch },
+    }) as unknown as Agent;
+  const builtTexts = (built: { messages: Array<{ content: string | null }> }) =>
+    built.messages.map((message) => message.content ?? '');
+
+  it('群消息、同事来信与私聊各带来源，互不冒充；历史消息保留所属工作', async () => {
+    const history: Message[] = [
+      input({ id: 'dm', content: { type: 'text', text: '把导航修一下' }, workId: 'w-1' }),
+      input({
+        id: 'room',
+        source: 'room',
+        roomId: 'r1',
+        roomName: '开发群',
+        sender: c,
+        content: { type: 'text', text: '接口已经好了' },
+      }),
+      input({
+        id: 'peer',
+        source: 'agent',
+        sender: a,
+        content: { type: 'text', text: '测试结果见附件' },
+      }),
+    ];
+    const builder = new ContextBuilder({ recent: async () => history } as never, DEFAULT_BUDGET);
+    const task = input({ id: 'task', content: { type: 'text', text: '继续' }, workId: 'w-1' });
+    const built = await builder.build(contextAgent(), task);
+    const texts = builtTexts(built);
+
+    // 私聊：是本人当面说的（role=user），带所属工作，但不冒充群来源或同事
+    const dm = texts.find((text) => text.includes('把导航修一下'))!;
+    assert.match(dm, /^\[工作 w-1\]/);
+    assert.doesNotMatch(dm, /开发群|消息来自/);
+    const dmMessage = built.messages.find((message) => message.content?.includes('把导航修一下'))!;
+    assert.equal(dmMessage.role, 'user');
+
+    // 群：说清是谁、在哪个群（模型 role 仍是协议角色，来源只在标注里）
+    const room = texts.find((text) => text.includes('接口已经好了'))!;
+    assert.match(room, /开发群/);
+    assert.match(room, /架构师/);
+    assert.doesNotMatch(room, /^把导航修一下/);
+
+    // 同事来信：说清作者
+    const peer = texts.find((text) => text.includes('测试结果见附件'))!;
+    assert.match(peer, /消息来自 幕僚/);
+    assert.doesNotMatch(peer, /开发群/);
+
+    // 当前这一句的工作由回合 brief 权威说明，不重复挂 workId，最后一条仍是用户原话
+    assert.equal(built.messages.at(-1)?.content, '继续');
+  });
+
+  it('群消息里的同事正文不会在压缩与摘要里退化成无来源的「用户」', async () => {
+    const provider = new FakeProvider({
+      auto: (messages) => {
+        const prompt = messages[1]!.content!;
+        assert.match(prompt, /开发群/);
+        assert.match(prompt, /架构师/);
+        assert.doesNotMatch(prompt, /用户: 接口已经好了/);
+        return FakeProvider.text('群里同事说接口已经好了');
+      },
+    });
+    const dir = await tempDataDir('compact-provenance');
+    try {
+      const older: Message[] = [
+        input({
+          id: 'room-old',
+          source: 'room',
+          roomId: 'r1',
+          roomName: '开发群',
+          sender: c,
+          workId: 'w-9',
+          content: { type: 'text', text: '接口已经好了' },
+        }),
+      ];
+      const compactor = new Compactor({ olderThan: async () => older } as never, new CompactionStore(dir.dir), 1, 0);
+      const result = await compactor.maybeCompact(
+        { id: 'b', memory: { compaction: null } } as never,
+        provider,
+      );
+      assert.equal(result?.state.messageCount, 1);
+    } finally {
+      await dir.cleanup();
+    }
+  });
+
+  it('旧摘要只是历史资料，说「已完成」也顶不掉 WorkItem 的当前状态', async () => {
+    const builder = new ContextBuilder({ recent: async () => [] } as never, DEFAULT_BUDGET);
+    const agent = contextAgent({
+      compaction: { summary: '登录页导航已经全部完成并交付', coversUpTo: 9, messageCount: 12, updatedAt: 1 },
+    });
+    const task = input({ id: 'task', content: { type: 'text', text: '继续' } });
+    const brief = [
+      '【当前工作】修导航（id=w1，revision=1，状态=active）',
+      '目标：修导航',
+      '这件工作的状态以本行为准；更早的摘要、日志和长期记忆只是历史背景，不能据此说它已完成或取消。',
+    ].join('\n');
+    const built = await builder.build(agent, task, { turnBrief: brief });
+    const texts = builtTexts(built);
+    const summaryIndex = texts.findIndex((text) => text.includes('登录页导航已经全部完成并交付'));
+    const briefIndex = texts.findIndex((text) => text.includes('【当前工作】'));
+    assert.ok(summaryIndex >= 0, '旧摘要仍在上下文里（当背景）');
+    assert.ok(briefIndex > summaryIndex, '权威工作事实必须排在旧摘要之后，不让旧记忆先入为主');
+    assert.match(texts[summaryIndex]!, /历史资料，不是新的授权/);
+    assert.match(texts[briefIndex]!, /状态=active/);
+  });
+
+  it('消息带着所属工作落盘，下一轮上下文说得出它属于哪件工作；旧记忆改不动工作状态', async () => {
+    const tmp = await tempDataDir('work-message-source');
+    const provider = new FakeProvider({ auto: () => FakeProvider.text('还在做') });
+    const runtime = new AgentRuntime({
+      dataDir: tmp.dir,
+      tools: [],
+      createProvider: () => provider,
+      defaultModel: 'fake',
+      knownModels: ['fake'],
+      budget: DEFAULT_BUDGET,
+      memoryExtraction: false,
+    });
+    try {
+      const agent = await runtime.registry.create({ name: '接活的同事' });
+      await runtime.send(agent.id, '帮我修一下登录页的导航');
+      const work = await runtime.works.openWorkOf(agent.id);
+      assert.ok(work, '布置任务后应有工作');
+      const first = (await runtime.messages.list(agent.id)).find((message) => message.role === 'user');
+      assert.equal(first?.workId, work!.id, '消息要记住它属于哪件工作');
+
+      // 旧记忆声称这件工作早就做完了
+      await runtime.memory.write({
+        scope: 'self',
+        ownerId: agent.id,
+        tier: 'log',
+        text: '登录页导航已经全部完成并交付',
+      });
+      await runtime.send(agent.id, '继续', { workId: work!.id });
+      const call = provider.calls.at(-1)!;
+      const brief = call.find(
+        (message) => typeof message.content === 'string' && message.content.includes('【当前工作】'),
+      );
+      const briefText = typeof brief?.content === 'string' ? brief.content : '';
+      assert.match(briefText, new RegExp(`id=${work!.id}`));
+      assert.match(briefText, /状态=active/, 'brief 说的是 WorkItem 的当前状态');
+      assert.match(briefText, /更早的摘要、日志和长期记忆只是历史背景/);
+      assert.ok(
+        call.some(
+          (message) =>
+            typeof message.content === 'string' && message.content.includes(`[工作 ${work!.id}]`),
+        ),
+        '上一轮那句作为历史进上下文时要带上所属工作',
+      );
+      assert.equal((await runtime.works.get(work!.id))?.status, 'active', '记忆不能反过来改工作状态');
+      assert.notEqual(
+        (await runtime.works.get(work!.id))?.progressSummary,
+        '登录页导航已经全部完成并交付',
+      );
+    } finally {
+      await runtime.close();
+      await tmp.cleanup();
+    }
   });
 });
 

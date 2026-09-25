@@ -1,4 +1,4 @@
-import { IconCube, IconPlug, IconPlus, IconSparkles } from '../../icons';
+import { IconCube, IconPlug, IconPlus, IconSparkles, IconTool } from '../../icons';
 import { Field } from './Field.js';
 import type { ModelSettingsController } from './use-model-settings.js';
 
@@ -43,6 +43,25 @@ export function ProviderList({ settings }: { settings: ModelSettingsController }
                   <IconCube style={{ width: 16, height: 16 }} />
                 </span>
                 <span className="provider-item-name">通用偏好</span>
+              </span>
+            </button>
+          </div>
+
+          <div className="provider-group-divider" />
+
+          <div className="provider-group">
+            <div className="provider-group-title">能力与工具</div>
+            <button
+              type="button"
+              className={`provider-item-row ${settings.activeTab === 'agent-tools' ? 'selected' : ''}`}
+              aria-current={settings.activeTab === 'agent-tools'}
+              onClick={() => settings.setActiveTab('agent-tools')}
+            >
+              <span className="provider-item-left">
+                <span className="provider-item-icon">
+                  <IconTool style={{ width: 16, height: 16 }} />
+                </span>
+                <span className="provider-item-name">工具装卸</span>
               </span>
             </button>
           </div>

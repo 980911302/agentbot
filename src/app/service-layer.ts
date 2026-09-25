@@ -36,6 +36,7 @@ export function createRuntimeServices(
   const { events, locks, pendingStops } = shared;
   const {
     registry,
+    profiles,
     control,
     activation,
     effects,
@@ -138,6 +139,7 @@ export function createRuntimeServices(
   // 工作台：智能体在对话里替用户改工作台（建同事、建群、拉人、代群发言）
   const workbench = new Workbench({
     registry,
+    profiles,
     rooms,
     messages,
     // 新建同事务必登记 enabled，否则重启后会被迁移逻辑当成旧智能体暂停

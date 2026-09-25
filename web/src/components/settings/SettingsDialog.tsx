@@ -2,6 +2,7 @@ import { IconClose } from '../../icons';
 import type { ThemePreference } from '../../theme';
 import { usePresence } from '../../motion';
 import { useModalKeys } from '../ui/useModalKeys.js';
+import { AgentToolsSection } from './AgentToolsSection.js';
 import { GeneralSection } from './GeneralSection.js';
 import { ModelForm } from './ModelForm.js';
 import { ProviderForm } from './ProviderForm.js';
@@ -75,6 +76,8 @@ export function SettingsDialog({
               onTheme={onTheme}
               onOwnerName={onOwnerName}
             />
+          ) : settings.activeTab === 'agent-tools' ? (
+            <AgentToolsSection />
           ) : settings.selectedProvider ? (
             <ProviderForm settings={settings} />
           ) : (

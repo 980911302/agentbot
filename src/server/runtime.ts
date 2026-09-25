@@ -3,6 +3,8 @@ import type { createDelegationWaitBridge } from './runtime/delegation-wait-bridg
 import type { createWaitCoordinator } from './runtime/wait-coordinator.js';
 import type { createRoomGateway } from './runtime/room-gateway-service.js';
 import type { createMessageAcceptance } from './runtime/message-acceptance-service.js';
+import type { createWorkerResultDelivery } from './runtime/worker-result-service.js';
+import type { WorkerManager } from '../tools/services/worker-manager.js';
 import type { createControlViews } from './runtime/control-view-service.js';
 import type { WaitRequest } from './runtime/send-to-agent-service.js';
 import { ActivationCoordinator } from './runtime/activation-coordinator.js';
@@ -31,6 +33,7 @@ import type {
 } from '../agent/types.js';
 import { AgentLoop } from '../agent/agent-loop.js';
 import { AgentRegistry } from '../agent/registry.js';
+import { AgentProfileService } from '../agent/profile-service.js';
 import { Workbench } from '../workbench/service.js';
 import { InteractionBroker } from '../interaction/broker.js';
 import { SecretStore } from '../secret/store.js';
@@ -133,6 +136,8 @@ interface TurnInput {
  */
 export class AgentRuntime {
   readonly registry: AgentRegistry;
+  /** 资料唯一写入口（E5.1）：路由与工具都经它改 name/title/description/instructions/头像 */
+  readonly profiles: AgentProfileService;
   readonly messages: MessageStore;
   /** 工作服务（E4.1）：WorkItem 的唯一状态转换入口 */
   readonly works: WorkService;
@@ -194,6 +199,10 @@ export class AgentRuntime {
   readonly roomFlowService: RoomFlowService;
   readonly roomFlowScheduler: RoomFlowScheduler;
   readonly roomFlowRouter: RoomFlowRouter;
+  /** 后台工人的持久账本与收尾投递（E4.5）：启动扫描要能补送上次进程没送出的结果 */
+  private readonly workerManager: WorkerManager;
+  /** 工人收尾投递（E4.5，OPT-03 从门面搬出） */
+  private readonly workerResults: ReturnType<typeof createWorkerResultDelivery>;
   /** 消息受理与回合派发（OPT-03 从门面搬出） */
   private readonly acceptance: ReturnType<typeof createMessageAcceptance>;
   /** 群收发与群流程门面（OPT-03 从门面搬出） */
@@ -222,6 +231,7 @@ export class AgentRuntime {
         isBusy: (agentId) => this.isBusy(agentId),
         watchInbox: (agentId) => this.inboxScheduler.watch(agentId),
         acceptMessage: (agentId, text, messageOptions) => this.acceptMessage(agentId, text, messageOptions),
+        deliverWorkerResult: (worker) => this.workerResults.deliverWorkerResult(worker),
         drainInbox: (agentId, drainOptions) => this.drainInbox(agentId, drainOptions),
         runTurn: (agentId, task, turn, turnOptions) => this.runTurn(agentId, task, turn, turnOptions),
         membersOf: (roomId) => this.membersOf(roomId),
@@ -250,6 +260,7 @@ export class AgentRuntime {
     this.chatRuns = deps.chatRuns;
     this.ledger = deps.ledger;
     this.registry = deps.registry;
+    this.profiles = deps.profiles;
     this.control = deps.control;
     this.activation = deps.activation;
     this.effects = deps.effects;
@@ -288,6 +299,8 @@ export class AgentRuntime {
     this.tools = deps.tools;
     this.inboxScheduler = deps.inboxScheduler;
     this.waitTimer = deps.waitTimer;
+    this.workerManager = deps.workerManager;
+    this.workerResults = deps.workerResults;
     this.acceptance = deps.acceptance;
     this.roomGateway = deps.roomGateway;
     this.controlViews = deps.controlViews;
@@ -711,6 +724,10 @@ export class AgentRuntime {
     await this.migrateExistingAgents();
     await this.projector.recover().catch(() => 0);
     await this.roomFlowService.recoverOutbox().catch(() => 0);
+    // 工人收尾投递补送（E4.5）：上次进程收尾了却没送回去的结果信在这里补上。
+    // 投递层按指纹幂等，所以重复补送不会让派工者收到两封一样的信。
+    const workerResults = await this.workerManager.deliverPendingResults().catch(() => 0);
+    if (workerResults > 0) console.log(`启动扫描：补送 ${workerResults} 条工人收尾结果`);
     const unresolvedInvocations: StartupReport['unresolvedInvocations'] = [];
     for (const record of await this.toolLedger.unfinished()) {
       if (record.status !== 'started') {

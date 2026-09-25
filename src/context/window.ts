@@ -4,12 +4,72 @@ import { estimateTokens, truncateToTokens } from './budget.js';
 import { IMAGE_CONTEXT_RESERVE } from '../shared/contracts/input-image.js';
 
 export const RESPONSE_RESERVE = 8192;
+/** 工具 schema 最多占可用输入预算的比例：schema 再大也不能把任务和原文挤光。 */
+export const SCHEMA_BUDGET_SHARE = 0.25;
 const NOTICE = '[较早的工具记录已按上下文预算缩短/移出；原文件和持久消息仍保留。不要把未显示内容当成不存在，需要时定点重读。]';
+
+/**
+ * 可用输入预算：留 15% 波动余量，再扣掉输出预留（E4.6）。
+ * builder 的分配器与这里共用同一个算法，避免两处各留一套安全余量、互相打架。
+ */
+export function contextAvailable(total: number): number {
+  return Math.floor(total * 0.85) - RESPONSE_RESERVE;
+}
+
+/** 工具 schema 的估算成本（含请求包装开销），与消息成本同口径。 */
+export function toolSchemaCost(tools: ToolSchema[]): number {
+  return estimateTokens(JSON.stringify(tools)) + 128;
+}
+
+/**
+ * 工具 schema 降级（E4.6）：身份、工具、工作、记忆、原文、输出预留共用一份预算。
+ *
+ * schema 描述是**说明文字**，超出份额时按比例截断不会改变任务意思；
+ * 工具名、参数结构、类型与枚举一律保留（截掉的只有 description/title 这类文字）。
+ * 降级后仍放不下时，由 fitContextWindow 明确报错，绝不静默发出超限请求。
+ */
+export function fitToolSchemas(tools: ToolSchema[], total = 60000): ToolSchema[] {
+  if (!tools.length) return tools;
+  const cap = Math.max(512, Math.floor(contextAvailable(total) * SCHEMA_BUDGET_SHARE));
+  if (toolSchemaCost(tools) <= cap) return tools;
+  const perTool = Math.max(64, Math.floor((cap - 128) / tools.length));
+  let credits = 1;
+  let shrunk = tools.map((tool) => shrinkSchema(tool, perTool));
+  while (toolSchemaCost(shrunk) > cap && credits > 1 / 64) {
+    credits /= 2;
+    shrunk = tools.map((tool) => shrinkSchema(tool, Math.max(16, Math.floor(perTool * credits))));
+  }
+  return shrunk;
+}
+
+/** 只截描述性文字；type/required/enum/属性名是结构，动它就等于改契约。 */
+function shrinkSchema(tool: ToolSchema, tokens: number): ToolSchema {
+  const textShare = Math.max(8, Math.floor(tokens / 8));
+  const walk = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(walk);
+    if (value && typeof value === 'object') {
+      return Object.fromEntries(
+        Object.entries(value as Record<string, unknown>).map(([key, item]) => [
+          key,
+          key === 'description' || key === 'title'
+            ? truncateToTokens(typeof item === 'string' ? item : String(item), textShare)
+            : walk(item),
+        ]),
+      );
+    }
+    return value;
+  };
+  return {
+    ...tool,
+    description: truncateToTokens(tool.description, tokens),
+    parameters: walk(tool.parameters) as ToolSchema['parameters'],
+  };
+}
 
 /** 每次请求前执行，不改持久历史；把 schema、消息包装、输出预留一起计入。 */
 export function fitContextWindow(input: LLMMessage[], tools: ToolSchema[], total = 60000, taskContent?: string | null, protectedContents: readonly string[] = []): LLMMessage[] {
-  const available = Math.floor(total * 0.85) - RESPONSE_RESERVE;
-  const schemaCost = estimateTokens(JSON.stringify(tools)) + 128;
+  const available = contextAvailable(total);
+  const schemaCost = toolSchemaCost(tools);
   const cost = (messages: LLMMessage[]) => schemaCost + estimateTokens(JSON.stringify(messages))
     + messages.reduce((sum, message) => sum + (message.images?.length ?? 0) * IMAGE_CONTEXT_RESERVE, 0);
   const groups: LLMMessage[][] = [];

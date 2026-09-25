@@ -2,6 +2,7 @@ import { AgentService } from '../server/runtime/agent-service.js';
 import { RunExecutor } from '../server/runtime/run-executor.js';
 import { InboxScheduler } from '../server/runtime/inbox-scheduler.js';
 import { effectiveToolNames } from '../tools/capabilities.js';
+import { workerManagerOf } from '../tools/services/worker-manager.js';
 import { createTaskTools } from '../tools/builtin/task.js';
 import { createReadToolOutputTool } from '../tools/builtin/tool-output.js';
 import { createManageRoomFlowTool } from '../tools/builtin/manage-room-flow.js';
@@ -158,8 +159,15 @@ export function createExecutionLayer(
       outputs: toolOutputs,
       // E8.4：后台工人登记进停机清单
       background: options.background,
+      // ── E4.5 新增（都追加在参数表末尾，避免与并行分支撞在同一段插入）──
+      // 工人是为派工者手头那件工作执行的（E4.1）；没有正在进行的工作就不关联
+      workOf: async (ownerId) => (await works.openWorkOf(ownerId))?.id,
+      // 工人收尾投递（E4.5）：结果作为一封信送回派工者，走既有 inbox/Delivery 链路
+      onWorkerSettled: (worker) => host.deliverWorkerResult(worker),
     }),
   ];
+  // 工人账本（E4.5）：启动扫描要能补送上次进程没送出的收尾结果
+  const workerManager = workerManagerOf(tools);
   // 新同事默认拿到全部工具——包括工作台那一组
   registry.setDefaultToolNames(tools.map((tool) => tool.name));
   const inboxScheduler = new InboxScheduler({
@@ -181,6 +189,7 @@ export function createExecutionLayer(
     agentService,
     executor,
     tools,
+    workerManager,
     inboxScheduler,
     waitTimer,
   };

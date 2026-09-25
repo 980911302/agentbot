@@ -48,7 +48,11 @@ export interface AgentRecord {
   /** 显式工具清单（含空清单）不得在启动时重新授权。 */
   toolPolicy?: 'default' | 'explicit';
   color: string;
-  /** 头像；一期只支持 emoji / 短字符 */
+  /**
+   * 头像（E5.1）：上传的图片存成数据目录头像目录的资源引用 `avatars/<文件名>`，
+   * 界面经 `GET /api/agents/:id/avatar` 读；历史数据里可能是 emoji / 绝对路径，原样保留。
+   * 空串是「明确清空」的结果，与 undefined（从未设置）不同。
+   */
   avatar?: string;
   /** 侧边栏分组 id */
   section?: string;

@@ -6,6 +6,7 @@ import { RuntimeControlStore } from '../storage/runtime-control-store.js';
 import { RoomFlowStore } from '../storage/room-flow-store.js';
 import { ProtocolRegistry, SequentialTurnProtocol } from '../server/runtime/room-flow-protocols.js';
 import { AgentRegistry } from '../agent/registry.js';
+import { AgentProfileService } from '../agent/profile-service.js';
 import { AgentInbox } from '../agent/inbox.js';
 import { CorrespondenceStore } from '../storage/correspondence-store.js';
 import { CompactionStore } from '../memory/compact.js';
@@ -38,6 +39,8 @@ export function createRuntimeStorage(options: AgentRuntimeOptions, events: Event
   const chatRuns = new ChatRunCoordinator(options.dataDir, events);
   const ledger: RunLedger = new JsonRunLedger(options.dataDir);
   const registry = new AgentRegistry(options.dataDir, []);
+  // 资料唯一写入口（E5.1）：路由与工具都经它改 name/title/description/instructions/头像
+  const profiles = new AgentProfileService(registry, options.dataDir);
   const control = RuntimeControlStore.openSync(options.dataDir, {
     // 接近软上限时告警：真撞上去 transact 会直接拒绝，同事之间的投递就失败了
     onNearLimit: (bytes, limit) => {
@@ -90,6 +93,7 @@ export function createRuntimeStorage(options: AgentRuntimeOptions, events: Event
     chatRuns,
     ledger,
     registry,
+    profiles,
     control,
     activation,
     effects,

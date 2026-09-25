@@ -5,6 +5,7 @@ import type { RunExecutor } from './run-executor.js';
 import type { WorkWait } from '../../work/wait.js';
 import type { AcceptedRun, SendOptions, SendResult, TurnResult } from './types.js';
 import type { WaitRequest } from './send-to-agent-service.js';
+import type { Worker } from '../../tools/services/worker-manager.js';
 
 /**
  * 装配期登记的「回调门面」接缝（OPT-03）。
@@ -59,4 +60,6 @@ export interface RuntimeHost {
     letter: { id: string; fromAgentId: string; text: string; correlationId?: string },
   ): Promise<string | undefined>;
   sweepDueWaits(now?: number): Promise<{ satisfied: number; expired: number }>;
+  /** 工人收尾（E4.5）：结果作为一封信送回派工者（实现见 runtime/worker-result-service.ts） */
+  deliverWorkerResult(worker: Worker): Promise<void>;
 }

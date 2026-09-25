@@ -19,7 +19,7 @@ import { operationKeyOf, replayPolicyOf } from '../tools/policy.js';
 import { type ToolContext, type TurnState } from '../tools/tool.js';
 import { hasReservedOriginPrefix } from '../shared/contracts/delivery-contract.js';
 import { isPastDeliveryRecap, looksLikeUnverifiedRoomDeliveryClaim } from '../server/runtime/reply-finalizer.js';
-import { fitContextWindow } from '../context/window.js';
+import { fitContextWindow, fitToolSchemas } from '../context/window.js';
 import { clipOutput, limitsFor, MAX_TOOL_BATCH, MAX_TOOL_CALLS_PER_TURN, MAX_TOOL_CHARS_PER_TURN } from '../tools/limits.js';
 import { resultMetadata, toolError, type ToolResult } from '../tools/result.js';
 import type { TaskProgressStore } from '../storage/task-progress.js';
@@ -76,7 +76,8 @@ export class AgentLoop {
     const persistText = this.deps.persistAssistantText !== false;
     const conversation: LLMMessage[] = [...built.messages];
     const usedTools: string[] = [];
-    const schemas = registry.getSchemas();
+    // E4.6：工具 schema 与消息共用同一份窗口预算，超大的 schema 先降级再进来。
+    const schemas = fitToolSchemas(registry.getSchemas(), built.stats?.budgetTokens || 60000);
     const taskContent = conversation.findLast(message => message.role === 'user')?.content;
     const resumeEvidence = [...(built.protectedContents ?? []), ...(this.deps.progress ? conversation.filter(message => message.role === 'user' && message.content?.startsWith('任务恢复快照')).map(message => message.content!) : [])];
     const turnState: TurnState = this.deps.toolContext?.turnState ?? { workbench: { agentsCreated: 0, roomsCreated: 0 } };

@@ -207,7 +207,7 @@ describe('工人与记忆边界', () => {
   });
   it('多项目必须指定归属，不能静默写错本子；project slug 不可穿越路径', async () => {
     let writes = 0;
-    const registry = ToolRegistry.from(createUpdateStateTools({ memory: { write: async () => { writes++; return {}; } } as never, updateAgent: async () => undefined }));
+    const registry = ToolRegistry.from(createUpdateStateTools({ memory: { write: async () => { writes++; return {}; } } as never, updateProfile: async () => undefined }));
     const call = (args: unknown) => registry.execute({ id: 'm', name: 'update_state', arguments: JSON.stringify(args) }, { ...context(), projectIds: ['a', 'b'] });
     assert.match(await call({ target: 'memory', action: 'write', scope: 'project', fact: '这条必须归项目' }), /^Error:/);
     assert.match(await call({ target: 'project', action: 'join', project: '../other' }), /slug/);

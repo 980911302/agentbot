@@ -47,6 +47,11 @@ export interface Message {
   source?: 'user' | 'room' | 'agent';
   /** 真实发送者，与模型 role 分离；旧消息缺省按 source 保守展示。 */
   sender?: import('./message-identity.js').MessageActor;
+  /**
+   * 这条消息属于哪件工作（架构 §4.5）。
+   * 只作来源标注：工作是否完成/取消一律以 WorkItem 为准，不按消息或旧记忆反推。
+   */
+  workId?: string;
   /** 关联原始来信；UI 使用往来记录，避免将模型输入再显示一次。 */
   correspondenceIds?: string[];
   /** 客户端幂等键（E3.2：重复提交返回原消息） */

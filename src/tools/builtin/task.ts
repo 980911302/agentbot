@@ -23,6 +23,8 @@ export function createTaskTools(input: {
   ownerAuthority?: (ownerId: string) => Promise<import('../tool.js').ExecutionAuthority | undefined>;
   maxIterations?: number;
   maxWorkers?: number;
+  /** 同一个智能体能同时跑几个工人（E4.5）；缺省 3，且不超过 maxWorkers */
+  maxWorkersPerAgent?: number;
   /** 工具执行账本（E3.5）：工人的工具调用同样要留核对依据 */
   invocations?: import('../../storage/ports.js').ToolInvocationPort;
   dataDir?: string;
@@ -30,9 +32,16 @@ export function createTaskTools(input: {
   outputs?: import('../services/tool-output-store.js').ToolOutputStore;
   /** E8.4：后台进程登记簿（停机时统一终止工人并写检查点） */
   background?: import('../services/background-processes.js').BackgroundProcesses;
+  /** 派工者手头那件工作（E4.1）：工人状态里记下「为哪件工作执行」 */
+  workOf?: (ownerId: string) => Promise<string | undefined>;
+  /**
+   * 工人收尾回调（E4.5）：运行时在这里把结果作为信件送回派工者
+   * （走既有 inbox/Delivery 可靠投递链，不另造一套）。
+   */
+  onWorkerSettled?: (worker: import('../services/worker-manager.js').Worker) => Promise<void>;
   /** TodoWrite 落步后回写「手头工作」的步骤（E4.1）；不传则不记录 */
   onTodoWrite?: (agentId: string, todos: TodoItem[]) => Promise<void>;
-}) {
+}): import('../tool.js').Tool<any>[] {
   const manager = new WorkerManager({
     provider: input.provider,
     providerFor: input.providerFor,
@@ -41,17 +50,28 @@ export function createTaskTools(input: {
     workerTools: input.workerTools,
     maxIterations: input.maxIterations,
     maxWorkers: input.maxWorkers,
+    maxWorkersPerAgent: input.maxWorkersPerAgent,
     invocations: input.invocations,
     dataDir: input.dataDir,
     progress: input.progress,
     outputs: input.outputs,
     background: input.background,
+    ...(input.workOf ? { workOf: input.workOf } : {}),
+    ...(input.onWorkerSettled ? { onSettled: input.onWorkerSettled } : {}),
   });
   const todos = new TodoStore(input.dataDir);
 
   const format = (worker: import('../services/worker-manager.js').Worker): string => {
     const elapsed = Math.round(((worker.endedAt ?? Date.now()) - worker.startedAt) / 1000);
-    const head = `worker_id: ${worker.id}\n任务：${worker.description}\n状态：${worker.status}（${elapsed}s）${worker.stopReason ? '\n停止原因：' + worker.stopReason : ''}${worker.taskId ? '\ntask_id: ' + worker.taskId : ''}${worker.status === 'done' ? '\n工人已答复，不代表独立验收通过。' : worker.status === 'running' ? '' : '\n尚未完成；先核对现场，再用 MessageSubagent 明确续跑。'}`;
+    // 取消关系（E4.5）：谁让工人停的、因为什么，重启后仍答得出来
+    const cancel = worker.cancel
+      ? `\n取消来源：${{ stop_command: '停止令', parent_turn_aborted: '派工者回合被中止', timeout: '运行超时' }[worker.cancel.by]}`
+      : '';
+    const corrections = worker.corrections?.length
+      ? `\n纠偏记录：${worker.corrections.filter((item) => item.consumed).length}/${worker.corrections.length} 条已被消费`
+      : '';
+    const work = worker.workId ? `\n关联工作：${worker.workId}` : '';
+    const head = `worker_id: ${worker.id}\n任务：${worker.description}\n状态：${worker.status}（${elapsed}s）${worker.stopReason ? '\n停止原因：' + worker.stopReason : ''}${cancel}${corrections}${work}${worker.taskId ? '\ntask_id: ' + worker.taskId : ''}${worker.status === 'done' ? '\n工人已答复，不代表独立验收通过。' : worker.status === 'running' ? '' : worker.status === 'interrupted' ? '\n上次进程在它运行时中断；可能有半截产物，先核对再用 MessageSubagent 续跑。' : '\n尚未完成；先核对现场，再用 MessageSubagent 明确续跑。'}`;
     const tail = worker.error
       ? `\n错误：${worker.error}`
       : worker.output
@@ -115,10 +135,24 @@ export function createTaskTools(input: {
       const prompt = args.prompt?.trim();
       if (!description || !prompt) throw new Error('description 和 prompt 都不能为空');
 
-      const worker = manager.spawn(description, prompt, context.agentId, context.authority);
+      // E4.5：上次进程中断的那个工人还在（同一描述、同一派工者）就复用它，
+      // 而不是再开一个——否则重启后重派会在看板上留下两条几乎一样的工人记录。
+      const resumed = manager.interruptedMatching(description, context.agentId);
+      const workId = await manager.workOf(context.agentId);
+      const worker =
+        resumed ??
+        manager.spawn(description, prompt, context.agentId, context.authority, {
+          chainId: context.authorization?.chainId,
+          chainDepth: context.agentChainDepth,
+          ...(workId ? { workId } : {}),
+        });
+      if (resumed) {
+        resumed.prompt = prompt;
+        manager.pushMessage(resumed.id, prompt);
+      }
       // 记账：停止令要能杀掉这个工人（见 docs/架构设计.md「插话、停止和等待」）
-      context.turnState?.registerJob?.(() => manager.kill(worker.id), `worker:${worker.id.slice(0, 8)}`);
-      const stop = () => manager.kill(worker.id);
+      context.turnState?.registerJob?.(() => manager.kill(worker.id, 'stop_command'), `worker:${worker.id.slice(0, 8)}`);
+      const stop = () => manager.kill(worker.id, 'parent_turn_aborted', '派工者回合被中止');
       context.signal?.addEventListener('abort', stop, { once: true });
       const driving = manager.drive(worker).finally(() => context.signal?.removeEventListener('abort', stop));
 
@@ -126,7 +160,7 @@ export function createTaskTools(input: {
         void driving.catch(() => undefined);
         return {
           ...outcome(worker),
-          content: `工人已开工。\nworker_id: ${worker.id}\n用 CheckSubagent 看进度，MessageSubagent 塞话纠偏，StopSubagent 杀掉。`,
+          content: `工人已开工。\nworker_id: ${worker.id}\n用 CheckSubagent 看进度，MessageSubagent 塞话纠偏，StopSubagent 杀掉。${resumed ? '\n（这次是接着上次中断的那个工人续跑）' : ''}`,
         };
       }
       let timer: NodeJS.Timeout | undefined;
@@ -162,11 +196,15 @@ export function createTaskTools(input: {
         if (all.length === 0) return '还没有派过工人。';
         const offset = args.offset ?? 0,
           limit = args.limit ?? 20;
+        // 重启后第一次不带 id 来查：先如实说清上次进程留下几个中断的工人（E4.5）
+        const recovery = manager.recoveryNote();
         return (
           all
             .slice(offset, offset + limit)
             .map((worker) => `${worker.id} [${worker.status}] ${worker.description}`)
-            .join('\n') + (offset + limit < all.length ? `\nnext_offset=${offset + limit}` : '')
+            .join('\n') +
+          (offset + limit < all.length ? `\nnext_offset=${offset + limit}` : '') +
+          (recovery ? `\n\n${recovery}` : '')
         );
       }
       const worker = manager.get(args.subagent_id);
@@ -191,13 +229,14 @@ export function createTaskTools(input: {
       if (manager.get(args.subagent_id)?.ownerId !== context.agentId)
         throw new Error('找不到自己派出的 worker_id');
       const wasRunning = manager.isRunning(args.subagent_id);
-      if (!wasRunning && manager.runningCount() >= manager.maxWorkers)
+      // 续跑也要过并发两个维度（全局 + 按智能体）；否则「收尾后再塞话」会绕过限额
+      if (!wasRunning && !manager.canStart(context.agentId))
         throw new Error('工人并发已满，请先等已有工人收尾');
       manager.pushMessage(args.subagent_id, args.message?.trim() ?? '');
       if (!wasRunning) {
         const worker = manager.get(args.subagent_id);
         if (worker) {
-          const stop = () => manager.kill(worker.id);
+          const stop = () => manager.kill(worker.id, 'parent_turn_aborted', '派工者回合被中止');
           context.turnState?.registerJob?.(stop, `worker:${worker.id.slice(0, 8)}`);
           context.signal?.addEventListener('abort', stop, { once: true });
           void manager
@@ -304,5 +343,7 @@ export function createTaskTools(input: {
     },
   });
 
-  return [task, check, message, stop, todoWrite];
+  // 把 manager 挂在 Task 工具对象上（不是数组上）：运行时要靠它做启动恢复
+  // （补送收尾结果、给模型中断提示），但返回的仍然是普通的 Tool[]，调用方不需要解包。
+  return [Object.assign(task, { workerManager: manager }), check, message, stop, todoWrite];
 }

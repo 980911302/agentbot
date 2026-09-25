@@ -356,11 +356,14 @@ it('UpdateAgent 按名字也能找到目标；没有要改的字段时不落盘�
   try {
     const { Workbench } = await import('../src/workbench/service.js');
     const { AgentRegistry } = await import('../src/agent/registry.js');
+    const { AgentProfileService } = await import('../src/agent/profile-service.js');
     const { MessageStore } = await import('../src/store/messages.js');
     const { RoomStore } = await import('../src/room/store.js');
+    const { tinyPngDataUrl } = await import('./fakes/avatar-fixture.js');
     const registry = new AgentRegistry(env.dir);
     const workbench = new Workbench({
       registry,
+      profiles: new AgentProfileService(registry, env.dir),
       rooms: new RoomStore(env.dir),
       messages: new MessageStore(env.dir),
       enrollAgent: async () => undefined,
@@ -381,8 +384,8 @@ it('UpdateAgent 按名字也能找到目标；没有要改的字段时不落盘�
     assert.equal((await registry.get(created.id))!.updatedAt, before!.updatedAt);
 
     // 3) 非 name/instructions 的字段（avatar/color）也算「有要改的」，不能被空判据吞掉
-    const withAvatar = await workbench.updateAgent(created.id, { avatar: '🛠' });
-    assert.equal(withAvatar.avatar, '🛠');
+    const withAvatar = await workbench.updateAgent(created.id, { avatar: { dataUrl: tinyPngDataUrl() } });
+    assert.match(withAvatar.avatar ?? '', /^avatars\//);
     const withColor = await workbench.updateAgent(created.id, { color: '#123456' });
     assert.equal(withColor.color, '#123456');
 
