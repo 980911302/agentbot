@@ -109,11 +109,23 @@ export class Workbench {
    * 改同事资料。合并写入：没传的字段保持原值，空字符串不会把资料抹空。
    * 允许改别人（规格第 1 节），但不允许读别人的私聊与记忆。
    */
-  async updateAgent(targetId: string, patch: AgentPatch): Promise<AgentRecord> {
-    const target = await this.deps.registry.get(targetId);
-    if (!target) throw new WorkbenchError(`找不到 id 为 ${targetId} 的同事`);
+  /**
+   * 改同事的名字/职责。工具描述承诺「也可以给一个已存在的名字」，所以这里先按 id
+   * 找、找不到再按名字找（CreateAgent 已保证名字唯一，按名字匹配不会歧义）。
+   * 另外：一个字段都没给时直接返回，不落盘——registry.update 无论有没有改动都会刷新
+   * updatedAt，而列表按 updatedAt 倒序，空调用会静默改动侧栏排序（E5.8）。
+   */
+  async updateAgent(targetIdOrName: string, patch: AgentPatch): Promise<AgentRecord> {
+    const byId = await this.deps.registry.get(targetIdOrName);
+    const target = byId ?? (await this.deps.registry.findByName(targetIdOrName.trim()));
+    if (!target) throw new WorkbenchError(`找不到 id 或名字为 ${targetIdOrName} 的同事`);
 
-    const updated = await this.deps.registry.update(targetId, patch);
+    // 不能枚举字段名判断「要不要改」：avatar/color/hidden/projectIds 等都要算数，
+    // 只挑 name/instructions/title 会把合法的头像、配色更新静默吞掉。
+    const nothingToChange = Object.values(patch).every((value) => value === undefined);
+    if (nothingToChange) return target;
+
+    const updated = await this.deps.registry.update(target.id, patch);
     if (!updated) throw new WorkbenchError(`更新「${target.name}」失败`);
     return updated;
   }
