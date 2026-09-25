@@ -272,12 +272,14 @@ CSS 里写不了这个常量，改一处要同步另一处，两边都有注释�
 
 `scripts/check-ui-tokens.mjs`（已接入 `scripts/ci.mjs`）扫描：
 
-- `web/src/styles/02~08` 全部样式表；
+- `web/src/styles/02~09` 全部样式表（含 `09-ui.css`）；
 - `web/src` 下 tsx/ts 的内联样式。
 
-报错规则：十六进制颜色、`rgba()/hsla()` 字面量、数字 z-index（0/1 除外）、已废除的兼容别名（`--panel`/`--raised`/`--sunken`/`--fg*`/`--line*`/`--bubble-*`/`--composer-*`/`--card*`/`--surface`/`--pill-blue`/`--code-*` 等，UI-01 起全仓清除）。
+报错规则：十六进制颜色、`rgba()/hsla()` 字面量、数字 z-index（0/1 除外）、已废除的兼容别名（`--panel`/`--raised`/`--sunken`/`--fg*`/`--line*`/`--bubble-*`/`--composer-*`/`--card*`/`--surface`/`--pill-blue`/`--code-*` 等，UI-01 起全仓清除）、未定义令牌；样式表里字重不在 400/500/600（§2.1）。
 
-白名单：身份色 11 色 + 默认身份色 `#b89b6a` 的十六进制；`BotFace.tsx` 等头像插画的固定墨色；`z-index: 0/1` 的组件内局部堆叠。
+字号 / 圆角（渐进落地）：样式表里写死 `font-size: Npx` 或 `border-radius: Npx`（3px 以上）要换成 `--fs-*` / `--r-*`。消息区、侧栏、顶栏、输入条、交互卡（02/03/04/05/08/09）已清零，再写死就报错；右侧面板与弹窗（`06-panels.css`、`07-dialog.css`）还没迁完，在脚本的 `TYPE_WARN_ONLY_FILES` 里只打印警告和剩余数量。迁完一个文件就把它从名单删掉。
+
+白名单：身份色 11 色 + 默认身份色 `#b89b6a` 的十六进制（以及 `LivingAvatar.tsx` 里的旧默认古金取值）；`BotFace.tsx` 等头像插画的固定墨色；`z-index: 0/1` 的组件内局部堆叠；行内写了 `/* ui-tokens-allow: 理由 */` 的字号/圆角（必须写理由，目前只有群头像「+N」角标的 9px）。
 
 新写法只引用语义令牌；确需新令牌时先改本规范与 `01-tokens.css`（深浅两套），再引用。
 

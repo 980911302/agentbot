@@ -52,8 +52,8 @@
 }
 
 .chat-header-title {
-  font-size: 16px;
-  font-weight: 640;
+  font-size: var(--fs-lg);
+  font-weight: 600;
   color: var(--text);
   margin: 0;
   line-height: 1.25;
@@ -67,7 +67,7 @@
   align-items: center;
   padding: 1px 7px;
   border-radius: var(--r-full);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   background: var(--accent-weak);
   color: var(--accent-text);
@@ -78,7 +78,7 @@
 }
 
 .chat-header-subtitle {
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--text-tertiary);
   line-height: 1.2;
 }
@@ -120,7 +120,7 @@
 }
 
 .header-member-more {
-  font-size: 10.5px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--text-secondary);
   margin-left: 5px;
@@ -137,7 +137,7 @@
   place-items: center;
   width: 30px;
   height: 30px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   color: var(--text-tertiary);
   transition: color 140ms ease, background 140ms ease;
 }
@@ -213,7 +213,7 @@
 .correspondence-enter {
   flex: none;
   color: var(--text-tertiary);
-  font-size: 14px;
+  font-size: var(--fs-base);
   line-height: 1;
 }
 
@@ -277,7 +277,7 @@
   min-width: 180px;
   padding: 6px;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--r-md);
   background: var(--bg-elevated);
   box-shadow: var(--shadow-lg);
 }
@@ -289,7 +289,7 @@
   gap: 8px;
   width: 100%;
   padding: 6px 8px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   text-align: left;
 }
 
@@ -299,14 +299,14 @@
 
 .correspondence-open-hint {
   margin-left: auto;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-tertiary);
 }
 
 .correspondence-header-agent strong {
   overflow: hidden;
   color: var(--text);
-  font-size: 14px;
+  font-size: var(--fs-base);
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -315,11 +315,11 @@
 .correspondence-swap {
   flex: none;
   color: var(--text-tertiary);
-  font-size: 15px;
+  font-size: var(--fs-md);
 }
 
 .correspondence-back {
-  font-size: 18px;
+  font-size: var(--fs-xl);
   line-height: 1;
 }
 
@@ -354,7 +354,7 @@
   border-radius: 0;
   background: transparent;
   color: var(--text-tertiary);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   text-align: center;
   line-height: 1.45;
 }
@@ -381,13 +381,13 @@
 }
 
 .correspondence-entry-heading strong {
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   font-weight: 600;
 }
 
 .correspondence-entry-heading time {
   color: var(--text-tertiary);
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 
 .correspondence-panel > footer {
@@ -401,7 +401,7 @@
   border-top: 1px solid var(--border);
   background: var(--bg);
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 .correspondence-panel > footer .btn {
@@ -472,7 +472,7 @@
   padding: 7px 11px;
   border-radius: var(--r-full);
   color: var(--accent-text);
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   white-space: nowrap;
   transition: background var(--dur-fast) var(--ease);
@@ -494,7 +494,7 @@
   place-items: center;
   border-radius: 50%;
   color: var(--text-tertiary);
-  font-size: 18px;
+  font-size: var(--fs-xl);
   line-height: 1;
   transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
 }
@@ -595,7 +595,7 @@
 
 .user-header {
   color: var(--text-tertiary);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   margin-bottom: 4px;
 }
 
@@ -603,7 +603,7 @@
   background: var(--ai-user-bubble);
   border: 1px solid var(--accent-border);
   color: var(--ai-user-bubble-text);
-  border-radius: 18px;
+  border-radius: var(--r-lg);
   box-shadow: none;
   padding: 10px 16px;
 }
@@ -635,7 +635,7 @@ button.msg-sender-name:hover {
 }
 
 .msg-origin-tag {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-tertiary);
   font-weight: 500;
 }
@@ -690,7 +690,7 @@ button.msg-sender-name:hover {
 }
 
 .assistant-header {
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   margin-bottom: 4px;
   letter-spacing: 0.01em;
@@ -706,7 +706,7 @@ button.msg-sender-name:hover {
 .bot-avatar.composite-avatar {
   position: relative;
   overflow: hidden;
-  border-radius: 11px;
+  border-radius: var(--r-md);
   display: grid;
   place-items: center;
   background: var(--bg-elevated);
@@ -729,12 +729,12 @@ button.msg-sender-name:hover {
   min-width: 14px;
   height: 14px;
   padding: 0 3px;
-  border-radius: 99px;
+  border-radius: var(--r-full);
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   color: var(--text-secondary);
-  font-size: 9px;
-  font-weight: 700;
+  font-size: 9px; /* ui-tokens-allow: 14px 小角标里的「+N」，--fs-xs 放不下 */
+  font-weight: 600;
   display: grid;
   place-items: center;
   z-index: var(--z-header);
@@ -776,14 +776,14 @@ button.msg-sender-name:hover {
 .rich-h2,
 .rich-h3 {
   margin: 6px 0 2px;
-  font-weight: 650;
+  font-weight: 600;
   color: var(--text);
   line-height: 1.35;
 }
 
-.rich-h1 { font-size: 17px; }
-.rich-h2 { font-size: 15.5px; }
-.rich-h3 { font-size: 14.5px; }
+.rich-h1 { font-size: var(--fs-xl); }
+.rich-h2 { font-size: var(--fs-lg); }
+.rich-h3 { font-size: var(--fs-md); }
 
 .rich-list {
   margin: 2px 0 2px 20px;
@@ -864,7 +864,7 @@ button.msg-sender-name:hover {
 
 .rich-inline-code {
   font-family: var(--mono);
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   background: var(--bg-subtle);
   color: var(--text);
   padding: 2px 6px;
@@ -892,14 +892,14 @@ button.msg-sender-name:hover {
 
 .code-block-lang {
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-weight: 500;
   color: var(--text-tertiary);
   text-transform: lowercase;
 }
 
 .code-copy-btn {
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--text-secondary);
   padding: 2px 8px;
   border-radius: var(--r-xs);
@@ -921,7 +921,7 @@ button.msg-sender-name:hover {
   padding: 12px 14px;
   overflow-x: auto;
   font-family: var(--mono);
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   line-height: 1.65;
   color: var(--text-code);
 }
@@ -951,7 +951,7 @@ button.msg-sender-name:hover {
   justify-content: space-between;
   gap: var(--sp-4);
   padding: 8px 12px;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   background: transparent;
   color: var(--text);
   text-align: left;
@@ -1008,7 +1008,7 @@ button.msg-sender-name:hover {
 }
 
 .tool-card-badge {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   padding: 2px 7px;
   border-radius: var(--r-full);
   background: var(--bg-input);
@@ -1060,7 +1060,7 @@ button.msg-sender-name:hover {
 }
 
 .tool-section-label {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--text-tertiary);
   text-transform: uppercase;
@@ -1068,7 +1068,7 @@ button.msg-sender-name:hover {
 }
 
 .tool-copy-btn {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-tertiary);
   padding: 1px 6px;
   border-radius: var(--r-xs);
@@ -1086,11 +1086,11 @@ button.msg-sender-name:hover {
 .tool-code-pre {
   margin: 0;
   padding: 8px 10px;
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   background: var(--bg-code);
   border: 1px solid var(--border);
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   line-height: 1.55;
   color: var(--text-code);
   overflow-x: auto;
@@ -1116,7 +1116,7 @@ button.msg-sender-name:hover {
   max-width: 480px;
   background: var(--bg-elevated);
   border: 1px solid var(--border-strong);
-  border-radius: 12px;
+  border-radius: var(--r-md);
   box-shadow: var(--shadow-lg);
   overflow: hidden;
   z-index: var(--z-dropdown);
@@ -1125,7 +1125,7 @@ button.msg-sender-name:hover {
 
 .mention-header {
   padding: 8px 12px;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--text-tertiary);
   border-bottom: 1px solid var(--divider);
@@ -1146,7 +1146,7 @@ button.msg-sender-name:hover {
   align-items: center;
   gap: 10px;
   padding: 7px 10px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   width: 100%;
   text-align: left;
   transition: background var(--dur-fast);
@@ -1159,13 +1159,13 @@ button.msg-sender-name:hover {
 
 .mention-name {
   flex: 1;
-  font-size: 13px;
+  font-size: var(--fs-base);
   font-weight: 500;
   color: var(--text);
 }
 
 .mention-tag {
-  font-size: 10.5px;
+  font-size: var(--fs-xs);
   padding: 1px 6px;
   border-radius: var(--r-xs);
   background: var(--accent-weak);
@@ -1205,11 +1205,11 @@ button.msg-sender-name:hover {
   align-items: center;
   gap: 5px;
   padding: 3px 8px;
-  border-radius: 6px;
+  border-radius: var(--r-xs);
   background: var(--accent-weak);
   color: var(--accent-text);
   border: 1px solid var(--accent-border);
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   align-self: center;
   flex-shrink: 0;
@@ -1329,12 +1329,12 @@ button.msg-sender-name:hover {
 }
 
 .menu-row-title {
-  font-size: 13px;
+  font-size: var(--fs-base);
   font-weight: 500;
 }
 
 .menu-row-hint {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-tertiary);
 }
 
@@ -1399,8 +1399,8 @@ button.msg-sender-name:hover {
   border-radius: var(--r-full);
   background: var(--bg-subtle);
   color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 550;
+  font-size: var(--fs-sm);
+  font-weight: 500;
   line-height: 1.2;
   cursor: pointer;
   transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
@@ -1433,7 +1433,7 @@ button.msg-sender-name:hover {
   padding: 6px 16px;
   background: var(--bg-card);
   border-bottom: 1px solid var(--border);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   gap: 12px;
   z-index: var(--z-header);
   transition: background var(--dur-fast) var(--ease);
@@ -1458,13 +1458,13 @@ button.msg-sender-name:hover {
   background: var(--accent-faint);
   color: var(--accent-text);
   font-weight: 500;
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 
 .room-flow-status {
   padding: 1px 6px;
   border-radius: var(--r-full);
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 
 .room-flow-status.status-active {
@@ -1494,7 +1494,7 @@ button.msg-sender-name:hover {
   border: 1px solid var(--border);
   background: var(--bg-card);
   color: var(--text);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   cursor: pointer;
   transition: all var(--dur-fast);
 }
@@ -1693,7 +1693,7 @@ button.msg-sender-name:hover {
 
 .tool-call-group-title {
   color: var(--text);
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   font-weight: 600;
 }
 
@@ -1701,7 +1701,7 @@ button.msg-sender-name:hover {
   margin-left: auto;
   padding-left: var(--sp-4);
   color: var(--text-tertiary);
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   white-space: nowrap;
 }
 
@@ -1736,7 +1736,7 @@ button.msg-sender-name:hover {
   border: 1px solid var(--warn-border);
   background: var(--warn-weak);
   color: var(--warn-text);
-  font-size: 10px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   line-height: 16px;
 }
