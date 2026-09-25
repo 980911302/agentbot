@@ -31,6 +31,8 @@ interface ChatViewProps {
   onOpenProfile?: () => void;
   /** 群顶栏成员叠放点击：打开成员面板（规范 5.6） */
   onOpenMembers?: () => void;
+  /** 顶栏菜单按钮：单栏档开合侧栏抽屉（UI-09） */
+  onToggleSidebar?: () => void;
   /** 错误消息的重试（重新发送原话） */
   onRetry?: (text: string, clientMessageId?: string) => void;
   /** 用户消息「重新编辑」：只把原文填回输入框，不改发送逻辑 */
@@ -72,6 +74,7 @@ export function ChatView({
   onToggleInfo,
   onOpenProfile,
   onOpenMembers,
+  onToggleSidebar,
   onRetry,
   onEditMessage,
   notices,
@@ -249,6 +252,15 @@ export function ChatView({
     <div className={`main-chat-container${isGroup ? ' is-group' : ''}`}>
       <header className="chat-top-header">
         <div className="chat-header-left">
+          <button
+            type="button"
+            className="chat-header-icon-btn sidebar-toggle"
+            aria-label="打开侧边栏"
+            title="打开侧边栏"
+            onClick={onToggleSidebar}
+          >
+            <IconSidebar size={17} />
+          </button>
           {peer ? (
             <div className="correspondence-header-pair">
               <span className="correspondence-header-agent">

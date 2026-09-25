@@ -18,23 +18,14 @@
   grid-template-columns: var(--sidebar-w) minmax(360px, 1fr) var(--panel-w);
 }
 
-@media (max-width: 1120px) {
-  .app.with-screen {
-    --panel-w: min(340px, 34vw);
-    grid-template-columns: var(--sidebar-w) minmax(0, 1fr) var(--panel-w);
-  }
-}
+/* ── 响应式断点（UI-09，唯一出处见 web/src/features/chat/layout-view.ts，
+   约定记录在 docs/主题与CSS.md）─────────────────────────────
+   ≥1280  wide    三栏
+   1024+   medium  两栏 + 右侧面板覆盖层
+   768+    narrow  两栏 + 侧栏自动迷你 + 面板覆盖层
+   <768    compact 单栏 + 侧栏抽屉 */
 
-@media (max-width: 920px) {
-  .app.with-screen {
-    --panel-w: min(320px, 42vw);
-    grid-template-columns: minmax(70px, var(--sidebar-w)) minmax(0, 1fr) var(--panel-w);
-  }
-}
-
-/* UI-06：<1280 且右侧面板打开时，面板变覆盖层（带遮罩）。
-   断点值 1280 为注释约定（CSS 变量不能用于 media query），
-   统一断点见 docs/主题与CSS.md 与 UI-09。 */
+/* 1024–1279：两栏，右侧面板让位成覆盖层（带遮罩，UI-06） */
 @media (max-width: 1279px) {
   .app.with-screen {
     position: relative;
@@ -65,12 +56,21 @@
   }
 }
 
-@media (max-width: 740px) {
+/* 768–1023 的侧栏自动迷你 72px 没有媒体查询：宽度由
+   App.tsx 按 layout-view.ts 的档位算好，交给 .app-sidebar.mini 那套
+   样式（04-sidebar.css），避免同一份迷你外观写两遍。 */
+
+/* <768：单栏。侧栏变左侧抽屉（样式在 04-sidebar.css，那个文件才拥有 .app-sidebar），
+   右侧面板贴边满高。抽屉宽度 280 与 .drawer-open 都由 App.tsx 按档位给。 */
+@media (max-width: 767px) {
+  /* 抽屉脱离网格浮在聊天上，网格只留一列——必须连 .with-screen 一起压掉，
+     否则 1024–1279 那条两栏规则（选择器权重更高）会留下一条空列 */
+  .app,
   .app.with-screen {
-    position: relative;
-    grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
   }
 
+  /* 右侧面板在单栏档也贴边满高（z-index 沿用 1279 那条的 --z-nested，要压住遮罩） */
   .app.with-screen .drawer {
     position: fixed;
     top: 0;
@@ -78,7 +78,6 @@
     bottom: 0;
     width: min(380px, 88vw);
     box-shadow: var(--shadow-lg);
-z-index: var(--z-panel)
   }
 }
 
@@ -614,7 +613,7 @@ box-shadow: var(--shadow-info);
   margin-bottom: 20px;
 }
 
-@media (max-width: 768px) {
+@media (max-width: 767px) {
   .chat-welcome__prompts {
     grid-template-columns: 1fr;
     gap: 10px;

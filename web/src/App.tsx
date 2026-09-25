@@ -4,6 +4,7 @@ import { BotScreen } from './components/BotScreen';
 import { ChatView } from './components/ChatView';
 import { useShortcuts } from './hooks/use-shortcuts';
 import { clampPanelWidth, loadPanelWidth, panelLayoutKind, savePanelWidth, type PanelWidthStore } from './features/chat/panel-view';
+import { sidebarAutoMini, sidebarIsDrawer } from './features/chat/layout-view';
 import { Composer } from './components/Composer';
 import { SettingsDialog } from './components/SettingsDialog';
 import { ChatWelcome } from './components/ChatWelcome';
@@ -135,6 +136,8 @@ export default function App() {
   }, []);
   /** 抽屉卸载前先播完退出动画 */
   const drawerPresence = usePresence(screenOpen);
+  /** 单栏档侧栏抽屉开合（UI-09）：顶栏菜单按钮 / Esc 控制 */
+  const [sidebarDrawerOpen, setSidebarDrawerOpen] = useState(false);
   /** 面板形态：<1280 时是覆盖层（带遮罩、Esc 关闭，规范 5.10）。
       跟随窗口宽度——拖窗口跨过 1280 时形态要跟着变。 */
   const [viewportWidth, setViewportWidth] = useState(() => (typeof window === 'undefined' ? 1440 : window.innerWidth));
@@ -199,18 +202,29 @@ export default function App() {
     return 260;
   });
   const [isResizing, setIsResizing] = useState(false);
+  // 响应式档位（UI-09）：窄档侧栏强制迷你 72px，单栏档侧栏变抽屉（宽 280，覆盖在聊天上）。
+  // 迷你/抽屉都只改「渲染宽度」，用户拖出来的宽度仍留在 sidebarWidth 里，窗口变宽就还原。
+  const drawerSidebar = sidebarIsDrawer(viewportWidth);
+  const renderedSidebarWidth = drawerSidebar ? 280 : sidebarAutoMini(viewportWidth) ? 72 : sidebarWidth;
+  /** 侧栏占的网格宽度：抽屉档它脱离网格（fixed 覆盖层），不留列 */
+  const sidebarGridWidth = drawerSidebar ? 0 : renderedSidebarWidth;
+  useEffect(() => {
+    // 离开单栏档就收起侧栏抽屉：抽屉只属于 <768
+    if (!drawerSidebar) setSidebarDrawerOpen(false);
+  }, [drawerSidebar]);
   const prevBusyRef = useRef(false);
 
   // 全局快捷键（UI-10）：⌘K 搜索、⌘, 设置、⌘\\ 右侧面板、⌘⇧I 资料页、Esc 关最上层浮层
   const dismissTopmostOverlay = useCallback(() => {
-    // 从上往下关：确认框 → 改名 → 新建 → 设置 → 右键菜单之外的浮层（抽屉）
+    // 从上往下关：确认框 → 改名 → 新建 → 设置 → 侧栏抽屉 → 右侧抽屉
+    if (sidebarDrawerOpen) { setSidebarDrawerOpen(false); return; }
     if (pendingDelete) { setPendingDelete(null); return; }
     if (renamingChannel) { setRenamingChannel(null); return; }
     if (editingBot) { setEditingBot(null); return; }
     if (newBotOpen) { setNewBotOpen(false); return; }
     if (settingsOpen) { setSettingsOpen(false); return; }
     if (drawerPresence.mounted && !screenFull) { setScreenOpen(false); return; }
-  }, [pendingDelete, renamingChannel, editingBot, newBotOpen, settingsOpen, drawerPresence.mounted, screenFull]);
+  }, [sidebarDrawerOpen, pendingDelete, renamingChannel, editingBot, newBotOpen, settingsOpen, drawerPresence.mounted, screenFull]);
 
   useShortcuts({
     onFocusSearch: () => window.dispatchEvent(new CustomEvent('agentbot:focus-search')),
@@ -705,8 +719,8 @@ export default function App() {
   return (
     <ToastProvider>
     <div
-      className={`app${drawerPresence.mounted && !screenFull ? ' with-screen' : ''}${panelLayout === 'overlay' ? ' panel-overlay' : ''}${isResizing ? ' resizing' : ''}`}
-      style={{ '--sidebar-w': `${sidebarWidth}px`, '--panel-w-dyn': `${panelWidth}px` } as React.CSSProperties}
+      className={`app${drawerPresence.mounted && !screenFull ? ' with-screen' : ''}${panelLayout === 'overlay' ? ' panel-overlay' : ''}${sidebarDrawerOpen ? ' drawer-open' : ''}${isResizing ? ' resizing' : ''}`}
+      style={{ '--sidebar-w': `${sidebarGridWidth}px`, '--panel-w-dyn': `${panelWidth}px` } as React.CSSProperties}
     >
       {/* 1. 左侧导航栏 */}
       <Sidebar
@@ -715,6 +729,8 @@ export default function App() {
         onSelect={(id) => {
           // 忙碌也能自由查看别的频道：事件仍会写进发起发送的那个频道
           setActiveChannelId(id);
+          // 单栏档选完就收起抽屉，别让它继续盖着聊天（UI-09）
+          if (drawerSidebar) setSidebarDrawerOpen(false);
         }}
         onNew={() => setNewBotOpen(true)}
         onOpenProfile={() => {
@@ -740,8 +756,10 @@ export default function App() {
           setRenamingChannel(channel);
         }}
         ownerName={ownerName}
-        width={sidebarWidth}
+        width={renderedSidebarWidth}
         onResize={(w) => {
+          // 迷你档与抽屉档的宽度由档位决定，拖动不写持久态（否则窗口变宽会跳回拖出来的值）
+          if (drawerSidebar || sidebarAutoMini(viewportWidth)) return;
           setSidebarWidth(w);
           localStorage.setItem('agentbot.sidebarWidth', String(w));
         }}
@@ -782,6 +800,7 @@ export default function App() {
               setScreenOpen(true);
             }
           }}
+          onToggleSidebar={() => setSidebarDrawerOpen((open) => !open)}
           onOpenMembers={() => {
             if (screenOpen && drawerTab === 'members') {
               setScreenOpen(false);

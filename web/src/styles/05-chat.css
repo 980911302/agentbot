@@ -130,6 +130,18 @@ z-index: var(--z-header);
   background: var(--bg-hover);
 }
 
+/* 顶栏菜单按钮：仅单栏档（<768）显示，其余档隐藏。
+   断点值与唯一出处见 web/src/features/chat/layout-view.ts 与 docs/主题与CSS.md（UI-09）。 */
+.sidebar-toggle {
+  display: none;
+}
+
+@media (max-width: 767px) {
+  .sidebar-toggle {
+    display: grid;
+  }
+}
+
 /* ── Agent-to-agent correspondence ────────────────────────── */
 .correspondence-line {
   position: relative;
@@ -418,7 +430,8 @@ z-index: var(--z-dropdown);
   background: var(--bg-hover);
 }
 
-@media (max-width: 720px) {
+/* <768：往来条贴边（旧 720 断点并入 UI-09 统一档位） */
+@media (max-width: 767px) {
   .correspondence-line {
     max-width: 100%;
   }

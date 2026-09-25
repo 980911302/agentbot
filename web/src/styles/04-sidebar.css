@@ -535,3 +535,34 @@ border-top: 1px solid var(--divider);
   width: 32px;
   height: 32px;
 }
+
+/* ── 单栏档（<768）：侧栏变左侧抽屉（UI-09）────────────────────
+   放在本文件而不是 03-layout.css：同为 `.app-sidebar` 选择器时后导入的文件
+   胜出，写在布局文件里会被上面的 position/z-index 直接盖掉。
+   宽度 280、`.drawer-open` 都由 App.tsx 按 layout-view.ts 的档位给；
+   断点约定见 docs/主题与CSS.md。 */
+@media (max-width: 767px) {
+  .app-sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    max-width: 86vw;
+    transform: translateX(-101%);
+    /* visibility 让收起的抽屉离开 Tab 顺序与读屏，不是只挪出可视区 */
+    visibility: hidden;
+    transition: transform var(--dur-base) var(--ease), visibility var(--dur-base) var(--ease);
+    box-shadow: var(--shadow-lg);
+    z-index: var(--z-modal);
+  }
+
+  .app.drawer-open .app-sidebar {
+    transform: translateX(0);
+    visibility: visible;
+  }
+
+  /* 抽屉宽度由档位定，拖拽手柄没有意义 */
+  .app-sidebar .sidebar-resizer {
+    display: none;
+  }
+}

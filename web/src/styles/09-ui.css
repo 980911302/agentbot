@@ -122,7 +122,7 @@
 /* ── 窄屏全屏（UI 设计规范 5.11：<768px 弹窗全屏） ──────────────────
    贴边、宽高满窗、去掉圆角与遮罩内边距；操作条仍吸底，主体自己滚。
    断点值写成注释约定：768（见 UI-09 统一断点任务）。 */
-@media (max-width: 768px) {
+@media (max-width: 767px) {
   .ui-modal-scrim {
     padding: 0;
     place-items: stretch;

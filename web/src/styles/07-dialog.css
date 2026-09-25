@@ -1189,7 +1189,7 @@ background: var(--scrim-strong);
    以及设置弹窗的 .provider-settings-scrim/window。
    贴边满窗、去圆角与遮罩内边距；操作条仍吸底，主体自己滚。
    断点值写成注释约定：768（见 UI-09 统一断点任务）。 */
-@media (max-width: 768px) {
+@media (max-width: 767px) {
   .scrim,
   .provider-settings-scrim {
     padding: 0;

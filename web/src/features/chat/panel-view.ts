@@ -3,14 +3,16 @@
  * 宽度限制与持久化、常驻/覆盖层判定。
  *
  * 断点：≥1280 三栏常驻；<1280 面板让位变覆盖层（带遮罩、Esc 关闭）。
- * 断点值写成注释约定——CSS 变量不能用于 media query，改动需同步
- * docs/主题与CSS.md（UI-09 统一断点任务）。
+ * 1280 的值只从 layout-view.ts 取（UI-09 起断点唯一出处），CSS 里不能
+ * 用变量写媒体查询，改动需同步 docs/主题与CSS.md。
  */
+
+import { BREAKPOINT_TABLET } from './layout-view.js';
 
 export const PANEL_MIN_WIDTH = 320;
 export const PANEL_MAX_WIDTH = 480;
 export const PANEL_DEFAULT_WIDTH = 340;
-export const PANEL_OVERLAY_BREAKPOINT = 1280;
+export const PANEL_OVERLAY_BREAKPOINT = BREAKPOINT_TABLET;
 export const PANEL_WIDTH_KEY = 'agentbot.panelWidth';
 
 /** 只依赖两个方法的存储抽象，便于 node:test 与 try/catch 包裹的 localStorage 共用 */
