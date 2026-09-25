@@ -1332,7 +1332,7 @@ background: var(--scrim-strong);
   flex: 0 0 auto;
 }
 
-@media (max-width: 1023px) {
+@media (max-width: 1279px) {
   .agent-tool-row {
     flex-direction: column;
     gap: var(--sp-2);

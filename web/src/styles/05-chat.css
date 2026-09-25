@@ -20,7 +20,16 @@
   background: color-mix(in srgb, var(--bg) 88%, transparent);
   backdrop-filter: blur(12px);
   flex-shrink: 0;
-z-index: var(--z-header);
+  z-index: var(--z-header);
+  /* 桌面端隐藏标题栏后，顶栏空白处可拖动窗口（与侧栏头、面板头同一写法） */
+  -webkit-app-region: drag;
+}
+
+/* 顶栏里能点的东西都要排除在拖动区外，否则点击会被当成拖窗 */
+.chat-top-header button,
+.chat-top-header [role='button'],
+.chat-top-header a {
+  -webkit-app-region: no-drag;
 }
 
 .chat-header-left {
@@ -524,7 +533,7 @@ z-index: var(--z-dropdown);
   color: var(--text);
 }
 
-@media (max-width: 600px) {
+@media (max-width: 767px) {
   .floating-unread-pill {
     top: 60px;
     max-width: calc(100% - 24px);
