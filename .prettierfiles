@@ -68,3 +68,4 @@ test/fakes/avatar-fixture.ts
 test/agent-profile.test.ts
 test/settings-tool-selection.test.ts
 test/unread-view.test.ts
+test/theme.test.ts

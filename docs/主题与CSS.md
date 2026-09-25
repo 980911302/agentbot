@@ -25,7 +25,8 @@
 三种偏好：`dark` | `light` | `system`。真正画到屏幕上只有 `dark` 和 `light`。
 
 ```
-localStorage['agentbot.theme'] = 'light' | 'dark'   // 没有键 = 现在的代码当 dark
+localStorage['agentbot.theme'] = 'light' | 'dark' | 'system'   // 没有键或值不认识 = 浅色（theme.ts 的 DEFAULT_THEME_PREFERENCE）
+// 'system'：按 prefers-color-scheme 画 dark/light，系统切换时实时跟随
 html[data-theme='dark'|'light']
 html.style.colorScheme = 同上
 ```
