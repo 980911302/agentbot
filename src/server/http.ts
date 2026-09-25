@@ -10,6 +10,8 @@ import { OpenAIProvider } from '../llm/openai-provider.js';
 import type { LLMProvider } from '../llm/provider.js';
 import { AgentRuntime } from './runtime.js';
 import { DataDirLock } from '../storage/instance-lock.js';
+import { runShutdownSequence, type ShutdownReport } from './lifecycle.js';
+import { BackgroundProcesses } from '../tools/services/background-processes.js';
 import { SEED_AGENTS, SEED_ROOMS } from './seed.js';
 import { createAgentTools } from './tools.js';
 import { json, readJson, serveStatic, checkRequest } from './transport/index.js';
@@ -48,7 +50,8 @@ export interface AgentServerHandle {
   port: number;
   url: string;
   runtime: AgentRuntime;
-  close: () => Promise<void>;
+  /** 优雅停机（E8.4）：幂等，返回停机顺序台账；见 docs/架构设计.md §7.4 */
+  close: () => Promise<ShutdownReport>;
 }
 
 export async function createAgentServer(options: AgentServerOptions = {}): Promise<AgentServerHandle> {
@@ -82,6 +85,8 @@ export async function createAgentServer(options: AgentServerOptions = {}): Promi
   await settings.load();
   const broker = new InteractionBroker();
   const secrets = new SecretStore(dataDir);
+  // E8.4：后台进程（常驻 Shell / 后台工人）共用一张停机登记表
+  const background = new BackgroundProcesses();
   const { tools, bind } = createAgentTools({
     rootDir,
     dataDir,
@@ -89,6 +94,7 @@ export async function createAgentServer(options: AgentServerOptions = {}): Promi
     secrets,
     broker,
     web: config.web,
+    background,
   });
 
   const runtime = new AgentRuntime({
@@ -118,6 +124,7 @@ export async function createAgentServer(options: AgentServerOptions = {}): Promi
     broker,
     secrets,
     modelConfigStore,
+    background,
   });
 
   // DI：工具需要的运行时回调在 runtime 建好后立即绑定（无模块级全局可变状态）
@@ -204,21 +211,38 @@ export async function createAgentServer(options: AgentServerOptions = {}): Promi
   const address = server.address();
   const port = typeof address === 'object' && address !== null ? address.port : requestedPort;
 
+  // E8.4 停机顺序的唯一实现（幂等）：停新工作 → 写检查点 → 终止后台进程 → 关存储 → 放锁。
+  // 顺序与分母都在 src/server/lifecycle.ts，这里只提供各步的真实动作。
+  let closing: Promise<ShutdownReport> | undefined;
+  const close = (): Promise<ShutdownReport> =>
+    (closing ??= runShutdownSequence({
+      reason: 'close',
+      dataDir,
+      background,
+      // 检查点要记的是真实状态，不是常量
+      acceptingNewWork: () => server.listening,
+      stopAcceptingNewWork: async () => {
+        runtime.beginShutdown();
+        await new Promise<void>((done) => {
+          // 先断开已有连接（含 /api/events 订阅），再停止接受新连接
+          server.closeAllConnections();
+          server.close(() => done());
+        });
+      },
+      closeStorage: async () => {
+        await runtime.close();
+        await runtime.messages.close();
+      },
+      releaseLock: () => lock.release(),
+      lockSnapshot: () => lock.peek(),
+    }));
+
   return {
     server,
     port,
     url: `http://${host === '0.0.0.0' ? '127.0.0.1' : host}:${port}/`,
     runtime,
-    close: async () => {
-      await runtime.close();
-      return new Promise<void>((done) => {
-        server.closeAllConnections();
-        server.close(() => {
-          // 退出前放掉单实例锁（E3.6）：不放的话下次启动要等进程被判定为死掉
-          void lock.release().finally(done);
-        });
-      });
-    },
+    close,
   };
 }
 

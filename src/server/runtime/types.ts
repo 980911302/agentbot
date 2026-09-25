@@ -17,6 +17,7 @@ import type {
   WorkWaitRepositoryPort,
 } from '../../storage/ports.js';
 import type { RecoveryPlan } from '../../tools/policy.js';
+import type { BackgroundProcesses } from '../../tools/services/background-processes.js';
 import type { Tool } from '../../tools/tool.js';
 
 /** 种子智能体（首次启动时落进注册表） */
@@ -72,6 +73,8 @@ export interface AgentRuntimeOptions {
   deliveryMaxAttempts?: number;
   /** 失败退避基数（毫秒），第 n 次等待 base * 2^(n-1)（E3.3） */
   deliveryBaseDelayMs?: number;
+  /** 后台进程登记簿（E8.4）：后台工人登记进来，停机时统一终止并写检查点 */
+  background?: BackgroundProcesses;
 }
 
 export interface SendOptions {

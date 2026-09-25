@@ -8,6 +8,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import { dirname, join } from 'node:path';
 import { TaskProgressStore } from '../../storage/task-progress.js';
 import { ToolOutputStore } from './tool-output-store.js';
+import type { BackgroundProcesses } from './background-processes.js';
 import type { StopReason } from '../../shared/contracts/sse.js';
 
 /**
@@ -100,6 +101,8 @@ export class WorkerManager {
       progress?: TaskProgressStore;
       outputs?: ToolOutputStore;
       maxRuntimeMs?: number;
+      /** E8.4：后台进程登记簿（停机时统一终止并写检查点） */
+      background?: BackgroundProcesses;
     },
   ) {
     this.progress = deps.progress ?? (deps.dataDir ? new TaskProgressStore(deps.dataDir) : undefined);
@@ -201,6 +204,13 @@ export class WorkerManager {
     const jobs = new Set<() => void>();
     const stop = () => { controller.abort(); for (const kill of jobs) kill(); };
     this.kills.set(worker.id, stop);
+    // E8.4：登记进停机清单；本次 drive 收尾时注销
+    const untrack = this.deps.background?.track({
+      kind: 'worker',
+      id: worker.id,
+      label: worker.description,
+      kill: () => stop(),
+    });
     let timedOut = false;
     const timer = setTimeout(() => { timedOut = true; stop(); }, Math.min(this.deps.maxRuntimeMs ?? 10 * 60 * 1000, 10 * 60 * 1000));
     timer.unref();
@@ -296,6 +306,7 @@ export class WorkerManager {
     } finally {
       clearTimeout(timer);
       for (const kill of jobs) kill();
+      untrack?.();
       this.active.delete(worker.id);
       this.kills.delete(worker.id);
       worker.endedAt = Date.now();

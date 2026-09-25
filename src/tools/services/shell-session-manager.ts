@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { childEnvironment } from './child-environment.js';
 import { ToolOutputStore } from './tool-output-store.js';
+import type { BackgroundProcesses } from './background-processes.js';
 import type { ToolResult } from '../../shared/contracts/tool-result.js';
 
 /**
@@ -34,10 +35,13 @@ export interface ShellProcess {
 export class ShellSessionManager {
   private readonly shells = new Map<string, ShellProcess>();
   private readonly maxOutputChars: number;
+  /** E8.4：后台进程登记簿（停机时统一终止；不传就没有停机清单） */
+  private readonly background?: BackgroundProcesses;
   private outputs?: ToolOutputStore;
 
-  constructor(options: { maxOutputChars?: number } = {}) {
+  constructor(options: { maxOutputChars?: number; background?: BackgroundProcesses } = {}) {
     this.maxOutputChars = options.maxOutputChars ?? 8000;
+    this.background = options.background;
   }
 
   start(
@@ -83,6 +87,13 @@ export class ShellSessionManager {
       },
       startedAt: Date.now(),
     };
+    // E8.4：登记进停机清单；进程退出时注销（停机时按这份清单终止并写检查点）
+    const untrack = this.background?.track({
+      kind: 'shell',
+      id,
+      label: command.slice(0, 120),
+      kill: () => shell.kill('cancelled'),
+    });
     const append = (chunk: string) => {
       shell.outputEnd += chunk.length;
       shell.output = (shell.output + chunk).slice(-65536);
@@ -106,6 +117,7 @@ export class ShellSessionManager {
       shell.code = code;
       if (shell.state === 'running') shell.state = 'exited';
       if (signal) shell.signal = signal;
+      untrack?.();
       try { outputs.finish(id, { id, state: shell.state, exitCode: code, ...(signal ? { signal } : {}) }); }
       catch (error) { shell.logError = `完整日志收尾失败：${error instanceof Error ? error.message : String(error)}`; shell.state = 'failed'; }
       clearTimeout(timer);

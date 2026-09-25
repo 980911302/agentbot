@@ -42,3 +42,10 @@ src/work/delegation-store.ts
 src/work/delegation-service.ts
 test/delegation-stop.test.ts
 test/work-view.test.ts
+src/storage/instance-lock.ts
+src/storage/process-identity.ts
+src/server/lifecycle.ts
+src/tools/services/background-processes.ts
+test/process-identity.test.ts
+test/instance-lock-identity.test.ts
+test/lifecycle-shutdown.test.ts

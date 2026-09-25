@@ -3,6 +3,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { resolve } from 'node:path';
 import { defineTool } from '../tool.js';
 import { ShellSessionManager } from '../services/shell-session-manager.js';
+import type { BackgroundProcesses } from '../services/background-processes.js';
 import {
   sensitivePaths,
   shellCommandSensitiveHit,
@@ -21,8 +22,12 @@ import type { ToolResult } from '../result.js';
 
 const SYNC_WAIT_CAP_MS = 60_000;
 
-export function createShellTools(rootDir = process.cwd(), paths: SensitivePaths = sensitivePaths(rootDir)) {
-  const manager = new ShellSessionManager();
+export function createShellTools(
+  rootDir = process.cwd(),
+  paths: SensitivePaths = sensitivePaths(rootDir),
+  background?: BackgroundProcesses,
+) {
+  const manager = new ShellSessionManager({ background });
 
   const summarize = (shell: ReturnType<ShellSessionManager['start']>, offset?: number): ToolResult => {
     const status = shell.done

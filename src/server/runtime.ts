@@ -201,6 +201,8 @@ export class AgentRuntime {
   private readonly runExecutions = new Map<string, Promise<SendResult>>();
   /** 到点扫描兜底定时器（E4.3）；unref 不拉着进程 */
   private waitTimer?: NodeJS.Timeout;
+  /** 是否已经进入停机（E8.4）：beginShutdown 幂等 */
+  private shutdownStarted = false;
 
   constructor(readonly options: AgentRuntimeOptions) {
     this.dataDir = options.dataDir;
@@ -550,6 +552,8 @@ export class AgentRuntime {
         dataDir: this.options.dataDir,
         progress: this.taskProgress,
         outputs: this.toolOutputs,
+        // E8.4：后台工人登记进停机清单
+        background: this.options.background,
       }),
     ];
     // 新同事默认拿到全部工具——包括工作台那一组
@@ -570,9 +574,24 @@ export class AgentRuntime {
   }
 
   async close(): Promise<void> {
-    if (this.waitTimer) clearInterval(this.waitTimer);
-    this.inboxScheduler.close();
+    this.beginShutdown();
     await Promise.all([this.executor.close(), this.inboxProcessor.close()]);
+  }
+
+  /**
+   * 停机第一步（E8.4）：停止接新工作。
+   * 只停调度与兜底定时器，不动存储、不碰后台进程——那两步各由停机顺序里的
+   * terminate_background / close_storage 负责（见 src/server/lifecycle.ts）。
+   * 幂等：close() 也会调用它，重复调用不产生副作用。
+   */
+  beginShutdown(): void {
+    if (this.waitTimer) {
+      clearInterval(this.waitTimer);
+      this.waitTimer = undefined;
+    }
+    if (this.shutdownStarted) return;
+    this.shutdownStarted = true;
+    this.inboxScheduler.close();
   }
 
   // ── 智能体 ──────────────────────────────────────────

@@ -13,6 +13,11 @@ export class MessageStore implements MessageRepositoryPort {
     return this.log.append(message.agentId, message);
   }
 
+  /** 停机用（E8.4）：等在飞的对话线写入落盘（放锁前保证数据已持久） */
+  close(): Promise<void> {
+    return this.log.close();
+  }
+
   async appendIfAbsent(message: Message): Promise<boolean> {
     // 只读视图：不做整条线拷贝
     const existing = (await this.log.view(message.agentId)).find((item) => item.id === message.id);

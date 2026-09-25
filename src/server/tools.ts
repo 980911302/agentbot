@@ -7,6 +7,7 @@ import { createUpdateStateTools } from '../tools/builtin/update-state.js';
 import { createMemoryTools } from '../tools/builtin/memory.js';
 import { createWebTools } from '../tools/builtin/web.js';
 import { ArtifactService } from '../tools/services/artifact-service.js';
+import type { BackgroundProcesses } from '../tools/services/background-processes.js';
 import type { InteractionBroker } from '../interaction/broker.js';
 import type { MemoryStore } from '../memory/store.js';
 import type { SecretStore } from '../secret/store.js';
@@ -48,6 +49,8 @@ export interface AgentToolOptions {
   broker: InteractionBroker;
   /** 是否启用联网工具（默认启用） */
   web?: boolean;
+  /** 后台进程登记簿（E8.4）：常驻 Shell 登记进来，停机时统一终止 */
+  background?: BackgroundProcesses;
 }
 
 /**
@@ -77,7 +80,7 @@ export function createAgentTools(options: AgentToolOptions): {
 
   const tools: Tool<any>[] = [
     createReadToolOutputTool(),
-    ...createShellTools(options.rootDir, paths),
+    ...createShellTools(options.rootDir, paths, options.background),
     ...createFileTools(options.rootDir, paths),
     createSendToUserTool({
       rootDir: options.rootDir,

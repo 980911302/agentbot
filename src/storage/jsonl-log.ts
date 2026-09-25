@@ -83,6 +83,17 @@ export class JsonlLog<T> {
     });
   }
 
+  /**
+   * 停机用（E8.4）：等在飞的写入落盘，然后丢掉缓存。
+   * 这里刻意**不**在关闭后拒绝写入：停机窗口里宁可多写一份，也不能把数据吞掉。
+   * 它保证的是「close() 返回时，此前的写入都已经落到磁盘」——放锁前的最后一道落盘。
+   */
+  async close(): Promise<void> {
+    await Promise.allSettled([...this.mutations.values()]);
+    this.cache.clear();
+    this.touched.clear();
+  }
+
   private file(key: string): string {
     return join(this.dir, `${key}.jsonl`);
   }

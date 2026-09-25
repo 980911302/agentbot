@@ -8,6 +8,7 @@ import { AgentInbox } from '../src/agent/inbox.js';
 import { AgentRuntime } from '../src/server/runtime.js';
 import { DEFAULT_BUDGET } from '../src/context/budget.js';
 import { DataDirLock, InstanceLockError } from '../src/storage/instance-lock.js';
+import { probeProcessIdentity } from '../src/storage/process-identity.js';
 import { InMemoryRunLedger } from '../src/storage/run-ledger.js';
 import { defineTool } from '../src/tools/tool.js';
 import { FakeProvider } from './fakes/fake-provider.js';
@@ -84,6 +85,108 @@ describe('数据目录单实例锁（E3.6）', () => {
       await first.release();
       assert.equal(first.peek(), undefined);
     } finally {
+      await env.cleanup();
+    }
+  });
+
+  it('锁文件记下持有者的进程身份（E8.4）：pid + 取得时间 + 启动时刻 + 命令行', async () => {
+    const env = await tempDataDir('instance-lock-identity');
+    try {
+      const lock = new DataDirLock(env.dir);
+      const info = await lock.acquire();
+      assert.equal(info.pid, process.pid);
+      assert.ok(typeof info.startedAt === 'number');
+      // 本机有 ps/PowerShell 时，身份必须写进锁文件；没有时允许缺（判定会保守处理）
+      const onDisk = JSON.parse(readFileSync(join(env.dir, 'agentbot.lock'), 'utf8')) as {
+        processStartedAt?: number;
+        command?: string;
+      };
+      const probe = probeProcessIdentity(process.pid);
+      if (probe.supported && probe.fingerprint) {
+        assert.equal(onDisk.processStartedAt, probe.fingerprint.startedAt);
+        assert.equal(onDisk.command, probe.fingerprint.command);
+      }
+      await lock.release();
+    } finally {
+      await env.cleanup();
+    }
+  });
+
+  it('SIGTERM 优雅停机（E8.4）：锁被释放、后台 Shell 与工人被清理、停机顺序完整', async () => {
+    const env = await tempDataDir('graceful-shutdown');
+    const fixture = fileURLToPath(new URL('./fixtures/graceful-shutdown.ts', import.meta.url));
+    const child = spawn(process.execPath, ['--import', 'tsx', fixture, env.dir], {
+      cwd: process.cwd(),
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const shellPidFrom = (output: string): number => Number(/child=(\d+)/.exec(output)?.[1] ?? 0);
+    const alive = (pid: number): boolean => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    try {
+      let output = '';
+      child.stdout.on('data', (chunk) => {
+        output += String(chunk);
+      });
+      await waitFor(() => output.includes('READY'), '夹具起服务并起了后台进程', 30_000);
+
+      const url = /url=(\S+)/.exec(output)?.[1];
+      const shellPid = shellPidFrom(output);
+      const workerId = /worker=(\S+)/.exec(output)?.[1];
+      assert.ok(url && shellPid > 0 && workerId, `夹具输出应带 url/child/worker：${output}`);
+
+      // 停机之前：服务在接活、锁是子进程的、后台 shell 进程活着
+      assert.equal((await fetch(`${url!.replace(/\/$/, '')}/api/health`)).status, 200);
+      assert.equal(new DataDirLock(env.dir).peek()?.pid, child.pid);
+      assert.equal(alive(shellPid), true);
+
+      child.kill('SIGTERM');
+      const code = await new Promise<number | null>((resolve) => child.once('exit', resolve));
+      assert.equal(code, 0, 'SIGTERM 后应以 0 退出');
+
+      // ① 锁被释放（不许留成陈旧记录让下次启动干等）
+      assert.equal(new DataDirLock(env.dir).peek(), undefined, '停机必须放掉单实例锁');
+
+      // ② 后台进程被清理：Shell 的进程组不再有那个 pid，工人被标成 cancelled
+      await waitFor(() => !alive(shellPid), '后台 Shell 进程被清理');
+      const workers = JSON.parse(
+        readFileSync(join(env.dir, 'tasks', 'workers.json'), 'utf8'),
+      ) as { workers: Array<{ id: string; status: string }> };
+      assert.equal(
+        workers.workers.find((worker) => worker.id === workerId)?.status,
+        'cancelled',
+        '后台工人停机时应被终止（不是留着重启后当 interrupted 复活）',
+      );
+
+      // ③ 停机顺序：台账五步按序，检查点在终止之前、且记下真实状态
+      const steps = readFileSync(join(env.dir, 'lifecycle', 'shutdown-steps.jsonl'), 'utf8')
+        .trim()
+        .split('\n')
+        .map((line) => (JSON.parse(line) as { step: string }).step);
+      assert.deepEqual(steps, [
+        'stop_accepting',
+        'checkpoint',
+        'terminate_background',
+        'close_storage',
+        'release_lock',
+      ]);
+      const checkpoint = JSON.parse(readFileSync(join(env.dir, 'lifecycle', 'shutdown.json'), 'utf8')) as {
+        acceptingNewWork: boolean;
+        background: Array<{ kind: string }>;
+      };
+      assert.equal(checkpoint.acceptingNewWork, false, '写检查点时应已停止接新工作');
+      assert.equal(checkpoint.background.length, 2, '检查点要记下终止之前的两个后台进程');
+
+      // ④ 停止接新工作是真实发生的：监听已经关掉
+      await assert.rejects(fetch(`${url!.replace(/\/$/, '')}/api/health`));
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
       await env.cleanup();
     }
   });

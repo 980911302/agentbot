@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { DEFAULT_PORT, MissingApiKeyError } from '../config.js';
 import { InstanceLockError } from '../storage/instance-lock.js';
 import { createAgentServer } from './http.js';
+import { installShutdownHandlers } from './lifecycle.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const packageRoot = resolve(here, '..', '..');
@@ -34,8 +35,5 @@ if (staticDir) {
   console.log('UI bundle not found in web/dist. Use the Vite dev server or run `npm run web:build`.');
 }
 
-for (const signal of ['SIGINT', 'SIGTERM'] as const) {
-  process.on(signal, () => {
-    handle.close().finally(() => process.exit(0));
-  });
-}
+// E8.4：SIGINT/SIGTERM 走统一停机顺序（停新工作 → 检查点 → 终止后台进程 → 关存储 → 放锁）
+installShutdownHandlers(handle);

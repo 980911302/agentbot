@@ -28,6 +28,8 @@ export function createTaskTools(input: {
   dataDir?: string;
   progress?: import('../../storage/task-progress.js').TaskProgressStore;
   outputs?: import('../services/tool-output-store.js').ToolOutputStore;
+  /** E8.4：后台进程登记簿（停机时统一终止工人并写检查点） */
+  background?: import('../services/background-processes.js').BackgroundProcesses;
   /** TodoWrite 落步后回写「手头工作」的步骤（E4.1）；不传则不记录 */
   onTodoWrite?: (agentId: string, todos: TodoItem[]) => Promise<void>;
 }) {
@@ -43,6 +45,7 @@ export function createTaskTools(input: {
     dataDir: input.dataDir,
     progress: input.progress,
     outputs: input.outputs,
+    background: input.background,
   });
   const todos = new TodoStore(input.dataDir);
 
