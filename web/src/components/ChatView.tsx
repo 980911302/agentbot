@@ -478,9 +478,17 @@ export function ChatView({
       >
         {/* aria-live：新消息到达时朗读给屏幕阅读器（UI-10）。
             polite 不打断当前朗读；role=log 表明这是追加型内容。 */}
-        <div className="chat-message-list swap" key={channelKey} role="log" aria-live="polite" aria-relevant="additions">
+        <div
+          className="chat-message-list swap"
+          key={channelKey}
+          role="log"
+          aria-live="polite"
+          aria-relevant="additions"
+          aria-busy={loading || undefined}
+        >
+          {/* 骨架只是视觉占位：不再嵌一层 aria-live，忙碌由外层 log 的 aria-busy 表达 */}
           {loading ? (
-            <div className="chat-loading" aria-busy="true" aria-live="polite">
+            <div className="chat-loading" aria-hidden="true">
               {[0, 1, 2].map((row) => (
                 <div className={`chat-loading-row${row % 2 === 1 ? ' mine' : ''}`} key={row}>
                   <div className="skeleton chat-loading-avatar" />
@@ -553,8 +561,9 @@ export function ChatView({
               ))
             : null}
 
+          {/* 流式中的气泡每来一段增量都会改文本：对读屏隐藏，完成后落成正式消息再朗读一次 */}
           {busy && !isGroup && liveText ? (
-            <div className="msg-row dm-agent streaming-indicator">
+            <div className="msg-row dm-agent streaming-indicator" aria-hidden="true">
               <div className="msg-avatar-col">
                 <BotAvatar
                   name={bot?.name || '助手'}
@@ -578,15 +587,18 @@ export function ChatView({
         </div>
       </div>
 
+      {/* 忙碌提示：思考中的头像 + 一行「名字 正在…」+ 三个 .dot-pulse（规范 §3 / §8），不做假气泡 */}
       {busy && !isGroup && !liveText ? (
         <div className="chat-status-line" role="status" aria-live="polite" title={actionHint ?? undefined}>
-          <BotAvatar name={bot?.name || '助手'} color={bot?.color || '#b89b6a'} size={28} agentId={bot?.id} status="thinking" />
-          <span className="chat-status-copy">
+          <BotAvatar name={bot?.name || '助手'} color={bot?.color || '#b89b6a'} size={24} agentId={bot?.id} status="thinking" />
+          <span className="chat-status-text">
             <span className="chat-status-name">{bot?.name || '助手'}</span>
-            <span className="chat-status-message">
-              {bot?.activity ? `正在${bot.activity}` : '正在组织回复'}
-              <span className="chat-status-dots" aria-hidden="true"><i /><i /><i /></span>
-            </span>
+            {bot?.activity ? `正在${bot.activity}` : '正在组织回复'}
+          </span>
+          <span className="chat-status-dots" aria-hidden="true">
+            <span className="dot-pulse" />
+            <span className="dot-pulse" />
+            <span className="dot-pulse" />
           </span>
         </div>
       ) : null}
