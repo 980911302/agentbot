@@ -6,7 +6,7 @@ import { useShortcuts } from './hooks/use-shortcuts';
 import { clampPanelWidth, loadPanelWidth, panelLayoutKind, savePanelWidth, type PanelWidthStore } from './features/chat/panel-view';
 import { sidebarAutoMini, sidebarIsDrawer } from './features/chat/layout-view';
 import { Composer } from './components/Composer';
-import { SettingsDialog } from './components/SettingsDialog';
+import { SettingsDialog } from './components/settings';
 import { ChatWelcome } from './components/ChatWelcome';
 import { CreateDialog } from './components/CreateDialog';
 import { saveAvatarShape, type AvatarShape } from './components/LivingAvatar';
@@ -994,8 +994,6 @@ export default function App() {
         open={settingsOpen}
         openSection={settingsSection}
         theme={preference}
-        model={model}
-        models={models}
         endpoint={endpoint}
         toolCount={tools.length}
         ownerName={ownerName}

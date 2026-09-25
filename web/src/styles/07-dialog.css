@@ -739,37 +739,105 @@ z-index: var(--z-header);
   color: var(--text-secondary);
 }
 
-.theme-segmented-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
-  width: 270px;
+/* ── 表单字段规范（UI-08）：标签在上、说明在下、必填标记、错误态 ───── */
+.provider-field-required {
+  margin-left: var(--sp-2);
+  padding: 0 5px;
+  border-radius: var(--r-xs);
+  background: var(--accent-weak);
+  color: var(--accent-text);
+  font-size: 10.5px;
+  font-weight: 600;
 }
 
-.theme-segmented-btn {
-  padding: 7px 10px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--bg-hover);
-  color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 500;
+.provider-field-hint {
+  margin-top: 5px;
+  font-size: var(--fs-sm);
+  line-height: 18px;
+  color: var(--text-tertiary);
+}
+
+.provider-field-error {
+  margin-top: 5px;
+  font-size: var(--fs-sm);
+  line-height: 18px;
+  color: var(--danger-text);
+}
+
+.provider-field-group.has-error .provider-text-input,
+.provider-field-group.has-error .provider-select {
+  border-color: var(--danger);
+}
+
+.provider-key-mask {
+  font-family: var(--mono);
+  font-size: 11.5px;
+}
+
+.provider-check-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
   cursor: pointer;
-  transition: all 0.15s ease;
-  text-align: center;
-}
-
-.theme-segmented-btn:hover {
-  background: var(--bg-active);
+  font-size: 13px;
+  font-weight: 500;
   color: var(--text);
 }
 
-.theme-segmented-btn.active {
-  background: var(--accent-strong);
-color: var(--on-accent);
-  border-color: var(--accent);
-  box-shadow: 0 1px 4px var(--accent-weak);
+.provider-check-row .muted {
+  font-weight: 400;
+  color: var(--text-secondary);
+}
+
+.provider-models-empty {
+  padding: var(--sp-5);
+  color: var(--text-tertiary);
+  font-size: var(--fs-sm);
+  text-align: center;
+}
+
+.provider-save-hint {
+  font-size: var(--fs-sm);
+  color: var(--text-tertiary);
+}
+
+.provider-empty-tip {
+  padding: var(--sp-9);
+  text-align: center;
+  color: var(--text-tertiary);
+}
+
+/* 设置行的控件槽（UI-08）：控制列宽，不再写行内样式 */
+.settings-row-control {
+  display: flex;
+  align-items: center;
+}
+
+.settings-row-control .provider-text-input {
+  width: 220px;
+}
+
+.settings-row-inline {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+
+.settings-mono-value {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--text);
+}
+
+.settings-accent-value {
+  font-size: 13px;
   font-weight: 600;
+  color: var(--accent-text);
+}
+
+.settings-row.divided {
+  border-top: 1px solid var(--divider);
+  padding-top: var(--sp-4);
 }
 
 /* Header with Provider Name, Edit, Toggle Pill, and Delete */

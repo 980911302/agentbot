@@ -1,10 +1,24 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+
+/** UI-08 起设置页拆成 web/src/components/settings/ 目录，源码断言针对整目录 */
+function readSettingsSources(): string {
+  const dir = join(ROOT, 'web/src/components/settings');
+  return readdirSync(dir)
+    .filter((name) => /\.tsx?$/.test(name))
+    .sort()
+    .map((name) => readFileSync(join(dir, name), 'utf8'))
+    .join('\n');
+}
+
+function readSettingsFile(name: string): string {
+  return readFileSync(join(ROOT, 'web/src/components/settings', name), 'utf8');
+}
 import {
   faceStateFromStatus,
   groupCompositeFaces,
@@ -148,19 +162,16 @@ describe('groupCompositeFaces', () => {
 
 describe('zcode model settings chrome', () => {
   it('general prefs has no 全局活跃模型 and no Chat vs Reasoner catalog', () => {
-    const src = readFileSync(join(ROOT, 'web/src/components/SettingsDialog.tsx'), 'utf8');
+    const src = readSettingsFile('GeneralSection.tsx');
     assert.equal(src.includes('全局活跃模型'), false);
-    const generalBlock = src.slice(
-      src.indexOf('通用偏好'),
-      src.indexOf('selectedProvider ?'),
-    );
+    const generalBlock = src;
     assert.equal(generalBlock.includes('Chat'), false);
     assert.equal(generalBlock.includes('Reasoner'), false);
     assert.equal(/settings-section-title">默认模型/.test(src), false);
   });
 
   it('model settings keeps provider list, API key, enable, add provider and add model', () => {
-    const src = readFileSync(join(ROOT, 'web/src/components/SettingsDialog.tsx'), 'utf8');
+    const src = readSettingsSources();
     assert.match(src, /模型设置/);
     assert.match(src, /添加服务商/);
     assert.match(src, /添加模型/);
@@ -184,7 +195,7 @@ describe('zcode model settings chrome', () => {
     assert.equal(src.includes('composer-thinking-trigger'), false);
     assert.equal(src.includes('thinkingLevel'), false);
     assert.equal(src.includes('onThinkingChange'), false);
-    const settings = readFileSync(join(ROOT, 'web/src/components/SettingsDialog.tsx'), 'utf8');
+    const settings = readSettingsFile('ModelForm.tsx');
     assert.match(settings, /思考等级/);
   });
 });
@@ -239,7 +250,7 @@ describe('presence motion chrome', () => {
     const chatCss = readFileSync(join(ROOT, 'web/src/styles/05-chat.css'), 'utf8');
     const item = readFileSync(join(ROOT, 'web/src/components/MessageItem.tsx'), 'utf8');
     const living = readFileSync(join(ROOT, 'web/src/components/LivingAvatar.tsx'), 'utf8');
-    const settings = readFileSync(join(ROOT, 'web/src/components/SettingsDialog.tsx'), 'utf8');
+    const settings = readSettingsFile('SettingsDialog.tsx');
 
     assert.match(item, /messageEnterKind/);
     assert.match(item, /enter-\$\{enter\}/);
