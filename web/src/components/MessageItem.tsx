@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { RichText, stripThinkingBlocks } from '../markdown';
 import { formatMessageTime } from '../format';
 import { messageEnterKind, timelineLayoutKind } from '../features/chat/ui-chrome';
@@ -66,7 +66,27 @@ export function MessageItem({
   const pauseTag = isGroup && !isUser && member ? memberPauseTag(member) : null;
   const layout = timelineLayoutKind({ isGroup, role: message.role });
   const enter = messageEnterKind({ isGroup, role: message.role });
-  const rowClass = `msg-row ${layout} enter-${enter}${compact ? ' compact' : ''}`;
+  const rowClass = `msg-row ${layout} enter-${enter}${isUser ? ' from-user' : ''}${compact ? ' compact' : ''}`;
+  const freshAssistant = notice && !isUser && Number.isFinite(Date.parse(message.createdAt))
+    && Date.now() - Date.parse(message.createdAt) < 8_000;
+  const [visibleContent, setVisibleContent] = useState<string | null>(() => freshAssistant ? '' : null);
+
+  useEffect(() => {
+    if (!freshAssistant) return;
+    const characters = Array.from(message.content);
+    let index = 0;
+    setVisibleContent('');
+    const timer = window.setInterval(() => {
+      index = Math.min(index + 1, characters.length);
+      if (index >= characters.length) {
+        window.clearInterval(timer);
+        setVisibleContent(null);
+      } else {
+        setVisibleContent(characters.slice(0, index).join(''));
+      }
+    }, 20);
+    return () => window.clearInterval(timer);
+  }, [freshAssistant, message.content, message.id]);
 
   const copy = () => {
     void navigator.clipboard.writeText(stripThinkingBlocks(message.content)).then(() => {
@@ -99,17 +119,21 @@ export function MessageItem({
 
   // 只有工具调用的消息没有正文：别画一个空气泡，工具卡自己会说话。
   // 错误消息统一在这里画一个警示图标（正文不再拼 ⚠️），图标带 aria-label 让读屏先读「出错」。
+  const visibleMessage = visibleContent === null ? message : { ...message, content: visibleContent };
+  const typeCaret = visibleContent !== null ? <span className="type-caret" aria-hidden="true" /> : null;
   const text = message.content.trim() ? (
     message.error ? (
-      <div className={`msg-bubble-box ${layout} error`}>
+      <div className={`msg-bubble-box ${layout} error${visibleContent !== null ? ' typing' : ''}`}>
         <IconAlert size={16} className="msg-error-icon" role="img" aria-label="出错" />
         <div className="msg-error-body">
-          <BubbleContent message={message} memberNames={memberNames} />
+          <BubbleContent message={visibleMessage} memberNames={memberNames} />
+          {typeCaret}
         </div>
       </div>
     ) : (
-      <div className={`msg-bubble-box ${layout}`}>
-        <BubbleContent message={message} memberNames={memberNames} />
+      <div className={`msg-bubble-box ${layout}${visibleContent !== null ? ' typing' : ''}`}>
+        <BubbleContent message={visibleMessage} memberNames={memberNames} />
+        {typeCaret}
       </div>
     )
   ) : null;
@@ -146,7 +170,7 @@ export function MessageItem({
   if (compact) {
     return (
       <div className={rowClass}>
-        <div className={`msg-content-col ${layout === 'dm-user' ? 'user-content' : 'assistant-content'}`}>
+        <div className={`msg-content-col ${isUser ? 'user-content' : 'assistant-content'}`}>
           {text}
           {toolCards}
           {actions}
@@ -194,10 +218,10 @@ export function MessageItem({
 
   return (
     <div className={rowClass}>
-      <div className="msg-avatar-col">{face}</div>
-      <div className="msg-content-col assistant-content">
+      <div className={`msg-avatar-col${isUser && isGroup ? ' group-user-avatar' : ''}`}>{face}</div>
+      <div className={`msg-content-col ${isUser ? 'user-content group-user-content' : 'assistant-content'}`}>
         <div
-          className="msg-sender-header assistant-header"
+          className={`msg-sender-header assistant-header${isUser && isGroup ? ' group-user-header' : ''}`}
           style={isUser ? undefined : { color: member?.color || senderColor }}
         >
           <button

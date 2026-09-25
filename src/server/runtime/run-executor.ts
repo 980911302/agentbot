@@ -481,8 +481,8 @@ export class RunExecutor {
         messages: this.deps.messages,
         maxIterations: this.deps.maxIterations,
         onEvent: options.onEvent,
-        // 普通正文增量不直接外露：响应结束后才能判断这一轮是否调用过统一出口。
-        // 完全没使用 SendToUser 时，最终正文仍会作为兼容兜底交付。
+        // 正文增量可能在出口校验前包含未验证声明或最终会转成工具调用，不能提前透给聊天区。
+        // 先保留模型草稿隔离；前端只渲染通过出口校验并落盘的完整消息。
         onDelta: undefined,
         signal,
         toolsOverride: registry,

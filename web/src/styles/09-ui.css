@@ -60,7 +60,22 @@
   padding: var(--sp-8);
   background: var(--scrim);
   backdrop-filter: blur(8px);
-  animation: fade var(--dur-fast) var(--ease);
+}
+
+.ui-modal-scrim.enter,
+.ui-modal-scrim.exit {
+  opacity: 0;
+}
+
+.ui-modal-scrim.enter-active {
+  opacity: 1;
+  transition: opacity var(--dur-base) var(--ease);
+}
+
+.ui-modal-scrim.exit-active {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-base) var(--ease);
 }
 
 .ui-modal {
@@ -73,7 +88,23 @@
   overflow: hidden;
   background: var(--bg-sidebar);
   box-shadow: var(--shadow-lg);
-  animation: fade var(--dur-base) var(--ease);
+  transition: opacity var(--dur-slow) var(--ease), transform var(--dur-slow) var(--ease);
+}
+
+.ui-modal-scrim.enter .ui-modal,
+.ui-modal-scrim.exit .ui-modal {
+  opacity: 0;
+  transform: scale(0.94) translateY(10px);
+}
+
+.ui-modal-scrim.enter-active .ui-modal {
+  opacity: 1;
+  transform: none;
+}
+
+.ui-modal-scrim.exit-active .ui-modal {
+  opacity: 0;
+  transform: scale(0.98) translateY(8px);
 }
 
 .ui-modal.s {

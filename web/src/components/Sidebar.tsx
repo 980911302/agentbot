@@ -56,7 +56,20 @@ interface MenuState {
 }
 
 const MENU_WIDTH = 200;
-const MENU_HEIGHT = 168;
+const MENU_HEIGHT = 208;
+const PINNED_STORAGE_KEY = 'agentbot.pinnedChannels';
+
+const readPinnedChannels = (): string[] => {
+  try {
+    const raw = window.localStorage.getItem(PINNED_STORAGE_KEY);
+    const parsed: unknown = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed)
+      ? [...new Set(parsed.filter((id): id is string => typeof id === 'string'))]
+      : [];
+  } catch {
+    return [];
+  }
+};
 
 const readSectionState = (): SidebarSectionState => {
   try {
@@ -90,6 +103,9 @@ export function Sidebar({
   /** 搜索结果的键盘游标（-1 = 无选中）；⌘K 聚焦后上下键移动、Enter 打开 */
   const [cursor, setCursor] = useState(-1);
   const [collapsed, setCollapsed] = useState<SidebarSectionState>(readSectionState);
+  const [pinnedIds, setPinnedIds] = useState<string[]>(readPinnedChannels);
+  const [draggingChannelId, setDraggingChannelId] = useState<string | null>(null);
+  const [pinDropActive, setPinDropActive] = useState(false);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
@@ -105,6 +121,20 @@ export function Sidebar({
       // 存不下就不存，折叠状态只在本次会话有效
     }
   }, [collapsed]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(PINNED_STORAGE_KEY, JSON.stringify(pinnedIds));
+    } catch {
+      // 置顶偏好只保存在本机；存储不可用时仍可在当前会话里置顶。
+    }
+  }, [pinnedIds]);
+
+  useEffect(() => {
+    if (channels.length === 0) return;
+    const availableAgents = new Set(channels.filter((channel) => channel.kind !== 'room').map((channel) => channel.id));
+    setPinnedIds((current) => current.filter((id) => availableAgents.has(id)));
+  }, [channels]);
 
   // ⌘K / Ctrl+K 聚焦搜索。迷你模式下输入框是隐藏的，先展开，等宽度变化
   // 提交后（下一个 effect）再聚焦——不用 requestAnimationFrame：窗口被遮挡时
@@ -129,9 +159,21 @@ export function Sidebar({
   }, [isMini]);
 
   const keyword = query.trim();
-  const sections = useMemo(() => sidebarSections(channels, collapsed, keyword), [channels, collapsed, keyword]);
+  const pinnedChannels = useMemo(() => {
+    if (keyword || isMini) return [];
+    return pinnedIds
+      .map((id) => channels.find((channel) => channel.id === id))
+      .filter((channel): channel is ChannelItem => Boolean(channel && channel.kind !== 'room'));
+  }, [channels, isMini, keyword, pinnedIds]);
+  const sections = useMemo(() => {
+    const visibleChannels = keyword || isMini
+      ? channels
+      : channels.filter((channel) => !pinnedIds.includes(channel.id));
+    return sidebarSections(visibleChannels, collapsed, keyword);
+  }, [channels, collapsed, isMini, keyword, pinnedIds]);
   const flat = useMemo(() => sections.flatMap(section => section.channels), [sections]);
   const visibleCount = flat.length;
+  const hasVisibleChannels = visibleCount > 0 || pinnedChannels.length > 0;
   const effectiveCursor = cursor >= 0 && cursor < visibleCount ? cursor : -1;
 
   // 换一批结果就回到无选中，避免游标指向看不见的行
@@ -232,6 +274,108 @@ export function Sidebar({
     setCollapsed(current => ({ ...current, [id]: !current[id] }));
   }, [keyword]);
 
+  const togglePinned = useCallback((id: string) => {
+    setPinnedIds((current) => current.includes(id)
+      ? current.filter((item) => item !== id)
+      : [id, ...current]);
+  }, []);
+
+  const dropToPin = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const id = event.dataTransfer.getData('text/plain') || draggingChannelId;
+    if (id && channels.some((channel) => channel.id === id && channel.kind !== 'room')) {
+      setPinnedIds((current) => [id, ...current.filter((item) => item !== id)]);
+    }
+    setPinDropActive(false);
+    setDraggingChannelId(null);
+  };
+
+  const renderChannel = (channel: ChannelItem, pinned = false) => {
+    const index = flat.indexOf(channel);
+    const isActive = channel.id === activeId;
+    const dot = channelStatusDot(channel);
+    const isGroup = channel.isGroup || channel.kind === 'room';
+    return (
+      <div
+        key={channel.id}
+        role="button"
+        tabIndex={0}
+        draggable={!isGroup}
+        className={`channel-item${isActive ? ' active' : ''}${index === effectiveCursor ? ' cursor' : ''}${pinned ? ' pinned-channel-item' : ''}${draggingChannelId === channel.id ? ' dragging' : ''}`}
+        onDragStart={(event) => {
+          if (isGroup) return;
+          event.dataTransfer.effectAllowed = 'move';
+          event.dataTransfer.setData('text/plain', channel.id);
+          setDraggingChannelId(channel.id);
+          setPinDropActive(true);
+        }}
+        onDragEnd={() => {
+          setDraggingChannelId(null);
+          setPinDropActive(false);
+        }}
+        onMouseMove={() => {
+          if (keyword && index >= 0 && index !== effectiveCursor) setCursor(index);
+        }}
+        onClick={() => openChannel(channel)}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          const maxX = window.innerWidth - MENU_WIDTH - 8;
+          const maxY = window.innerHeight - MENU_HEIGHT - 8;
+          setMenu({
+            x: Math.min(event.clientX, Math.max(8, maxX)),
+            y: Math.min(event.clientY, Math.max(8, maxY)),
+            channel,
+          });
+        }}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            onSelect(channel.id);
+          } else if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+            event.preventDefault();
+            const bounds = event.currentTarget.getBoundingClientRect();
+            setMenu({ x: bounds.left + 8, y: bounds.bottom, channel });
+          }
+        }}
+      >
+        <div
+          className={`channel-avatar-wrapper${channel.status === 'working' ? ' working' : ''}`}
+          title={channel.status === 'working' ? '正在干活' : undefined}
+        >
+          <BotAvatar
+            name={channel.name}
+            color={channel.color || '#b89b6a'}
+            size={pinned ? 108 : 64}
+            status={channel.status}
+            agentId={channel.id}
+            isGroup={isGroup}
+            members={channel.members}
+          />
+          {dot.kind ? (
+            <span className={`channel-status-dot ${dot.kind}`} title={dot.title} aria-label={dot.title} role="img" />
+          ) : null}
+        </div>
+
+        <div className="channel-info-wrapper">
+          <div className="channel-title-row">
+            <div className="channel-name-box">
+              <span className="channel-title">{channel.name}</span>
+              {isGroup ? <span className="channel-tag group">群</span> : null}
+            </div>
+            {!pinned ? <span className="channel-time">{channel.time}</span> : null}
+            {channel.unread ? <span className="channel-unread-dot" title={`${channel.unread} 条未读`} aria-label={`${channel.unread} 条未读`} role="img" /> : null}
+          </div>
+          {pinned && channel.role ? <span className="channel-tag pinned-role">{channel.role}</span> : null}
+          {!pinned ? (
+            <div className="channel-snippet-row">
+              <span className="channel-snippet">{channel.lastMessage}</span>
+            </div>
+          ) : null}
+        </div>
+      </div>
+    );
+  };
+
   return (
     <aside className={`app-sidebar${isMini ? ' mini' : ''}`} style={{ width }}>
       {/* 1. 顶栏区域：macOS 原生红绿灯占位（保持左上角干净不显示标题） + Plus Action */}
@@ -284,110 +428,58 @@ export function Sidebar({
 
       {/* 3. Channels / Bots / Sessions List：同事与群分两段，各段可折叠 */}
       <div className="sidebar-channel-list" ref={listRef}>
-        {visibleCount === 0 ? (
+        {!keyword && !isMini && (pinnedChannels.length === 0 || draggingChannelId) ? (
+          <div
+            className={`sidebar-pin-drop${pinDropActive ? ' active' : ''}${draggingChannelId ? ' dragging-target' : ''}`}
+            onDragOver={(event) => {
+              event.preventDefault();
+              event.dataTransfer.dropEffect = 'move';
+              setPinDropActive(true);
+            }}
+            onDragLeave={() => setPinDropActive(false)}
+            onDrop={dropToPin}
+          >
+            <span className="sidebar-pin-drop-icon">＋</span>
+            <span>拖到此处置顶</span>
+          </div>
+        ) : null}
+        {!hasVisibleChannels ? (
           <div className="sidebar-empty">
             <span className="sidebar-empty-icon">{keyword ? '🔍' : '🤖'}</span>
             <span className="sidebar-empty-title">{keyword ? '没有叫这个名字的智能体或群' : '暂无智能体'}</span>
             <span className="sidebar-empty-hint">{keyword ? '换个名字试试' : '点击上方 + 开始创建'}</span>
           </div>
         ) : (
-          sections.map((section) => (
-            <section key={section.id} className="sidebar-section">
-              <button
-                type="button"
-                className="sidebar-section-head"
-                aria-expanded={!section.collapsed}
-                aria-controls={`sidebar-section-${section.id}`}
-                onClick={() => toggleSection(section.id)}
-              >
-                <IconChevronRight
-                  size={12}
-                  className={`sidebar-section-chevron${section.collapsed ? '' : ' open'}`}
-                />
-                <span className="sidebar-section-title">{section.title}</span>
-                <span className="sidebar-section-count">{section.channels.length}</span>
-              </button>
-              {/* 折叠只藏内容不藏段头：段头是唯一的展开入口（验收打回点） */}
-              {section.collapsed ? null : (
-                <div className="sidebar-section-body" id={`sidebar-section-${section.id}`}>
-                  {section.channels.map((channel) => {
-                  const index = flat.indexOf(channel);
-                  const isActive = channel.id === activeId;
-                  const dot = channelStatusDot(channel);
-                  return (
-                    <div
-                      key={channel.id}
-                      role="button"
-                      tabIndex={0}
-                      className={`channel-item${isActive ? ' active' : ''}${index === effectiveCursor ? ' cursor' : ''}`}
-                      onMouseMove={() => {
-                        if (index >= 0 && index !== effectiveCursor) setCursor(index);
-                      }}
-                      onClick={() => openChannel(channel)}
-                      onContextMenu={(event) => {
-                        event.preventDefault();
-                        const maxX = window.innerWidth - MENU_WIDTH - 8;
-                        const maxY = window.innerHeight - MENU_HEIGHT - 8;
-                        setMenu({
-                          x: Math.min(event.clientX, Math.max(8, maxX)),
-                          y: Math.min(event.clientY, Math.max(8, maxY)),
-                          channel,
-                        });
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' || e.key === ' ') {
-                          e.preventDefault();
-                          onSelect(channel.id);
-                        }
-                      }}
-                    >
-                      <div
-                        className={`channel-avatar-wrapper${channel.status === 'working' ? ' working' : ''}`}
-                        title={channel.status === 'working' ? '正在干活' : undefined}
-                      >
-                        <BotAvatar
-                          name={channel.name}
-                          color={channel.color || '#b89b6a'}
-                          size={36}
-                          status={channel.status}
-                          agentId={channel.id}
-                          isGroup={channel.isGroup || channel.kind === 'room'}
-                          members={channel.members}
-                        />
-                        {dot.kind ? (
-                          <span className={`channel-status-dot ${dot.kind}`} title={dot.title} aria-label={dot.title} role="img" />
-                        ) : null}
-                      </div>
-
-                      <div className="channel-info-wrapper">
-                        <div className="channel-title-row">
-                          <div className="channel-name-box">
-                            <span className="channel-title">{channel.name}</span>
-                            {channel.isGroup ? (
-                              <span className="channel-tag group">群</span>
-                            ) : null}
-                          </div>
-                          <span className="channel-time">{channel.time}</span>
-                          {channel.unread ? (
-                            <span
-                              className="channel-unread-dot"
-                              title={`${channel.unread} 条未读`}
-                              role="img"
-                              aria-label={`${channel.unread} 条未读`}
-                            />
-                          ) : null}
-                        </div>
-                        <div className="channel-snippet-row">
-                          <span className="channel-snippet">{channel.lastMessage}</span>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-                </div>
-              )}
-            </section>
-          ))
+          <>
+            {pinnedChannels.length > 0 ? (
+              <section className="sidebar-pinned-section" aria-label="置顶智能体">
+                {pinnedChannels.map((channel) => renderChannel(channel, true))}
+              </section>
+            ) : null}
+            {sections.map((section) => (
+              <section key={section.id} className="sidebar-section">
+                <button
+                  type="button"
+                  className="sidebar-section-head"
+                  aria-expanded={!section.collapsed}
+                  aria-controls={`sidebar-section-${section.id}`}
+                  onClick={() => toggleSection(section.id)}
+                >
+                  <IconChevronRight
+                    size={12}
+                    className={`sidebar-section-chevron${section.collapsed ? '' : ' open'}`}
+                  />
+                  <span className="sidebar-section-title">{section.title}</span>
+                  <span className="sidebar-section-count">{section.channels.length}</span>
+                </button>
+                {section.collapsed ? null : (
+                  <div className="sidebar-section-body" id={`sidebar-section-${section.id}`}>
+                    {section.channels.map((channel) => renderChannel(channel))}
+                  </div>
+                )}
+              </section>
+            ))}
+          </>
         )}
       </div>
 
@@ -452,6 +544,16 @@ export function Sidebar({
             <span className="ui-menu-head-kind">{menu.channel.isGroup ? '群' : '智能体'}</span>
           </div>
           <div className="ui-menu-sep" />
+          {menu.channel.kind !== 'room' ? (
+            <MenuItem
+              onSelect={() => {
+                togglePinned(menu.channel.id);
+                closeMenu();
+              }}
+            >
+              <span>{pinnedIds.includes(menu.channel.id) ? '取消置顶' : '置顶到常用'}</span>
+            </MenuItem>
+          ) : null}
           {menu.channel.isGroup ? (
             <MenuItem
               onSelect={() => {
@@ -492,4 +594,3 @@ export function Sidebar({
     </aside>
   );
 }
-

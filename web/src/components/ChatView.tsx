@@ -587,18 +587,13 @@ export function ChatView({
         </div>
       </div>
 
-      {/* 忙碌提示：思考中的头像 + 一行「名字 正在…」+ 三个 .dot-pulse（规范 §3 / §8），不做假气泡 */}
+      {/* 忙碌提示：思考中的头像 + 一行「名字 正在…」，不做假气泡 */}
       {busy && !isGroup && !liveText ? (
         <div className="chat-status-line" role="status" aria-live="polite" title={actionHint ?? undefined}>
           <BotAvatar name={bot?.name || '助手'} color={bot?.color || '#b89b6a'} size={24} agentId={bot?.id} status="thinking" />
           <span className="chat-status-text">
             <span className="chat-status-name">{bot?.name || '助手'}</span>
             {bot?.activity ? `正在${bot.activity}` : '正在组织回复'}
-          </span>
-          <span className="chat-status-dots" aria-hidden="true">
-            <span className="dot-pulse" />
-            <span className="dot-pulse" />
-            <span className="dot-pulse" />
           </span>
         </div>
       ) : null}

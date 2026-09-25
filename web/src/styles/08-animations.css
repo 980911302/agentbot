@@ -63,6 +63,10 @@
   animation: msg-rise var(--dur-base) var(--ease);
 }
 
+.msg-row.group-stream.enter-rise {
+  animation: msg-rise 300ms cubic-bezier(0.2, 0.75, 0.25, 1);
+}
+
 /* 思考气泡三个点 */
 .dot-pulse {
   width: 6px;
@@ -150,13 +154,13 @@
 
 .provider-settings-scrim.enter-active {
   opacity: 1;
-  transition: opacity var(--dur-slow) var(--ease);
+  transition: opacity var(--dur-base) var(--ease);
 }
 
 .provider-settings-scrim.exit-active {
   opacity: 0;
   pointer-events: none;
-  transition: opacity var(--dur-slow) var(--ease);
+  transition: opacity var(--dur-base) var(--ease);
 }
 
 .provider-settings-scrim.enter .provider-settings-window,

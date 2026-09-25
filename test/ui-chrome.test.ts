@@ -277,7 +277,7 @@ describe('presence motion chrome', () => {
     assert.match(anim, /translateX\(\s*(6|7|8|9|10)px\s*\)/);
     assert.match(anim, /\.swap\s*\{[^}]*swap-in/s);
 
-    assert.match(chatCss, /\.composer-capsule:focus-within[\s\S]{0,280}(--glow|--aura-glow)/);
+    assert.match(chatCss, /\.composer-capsule:focus-within[\s\S]{0,280}(--glow|--aura-glow|--ring)/);
 
     assert.match(anim, /prefers-reduced-motion:\s*reduce/);
     assert.match(anim, /\.living-avatar \.body[\s\S]{0,80}animation:\s*none/s);

@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from 'react';
+import { usePresence } from '../../motion';
 import { useModalKeys } from './useModalKeys.js';
 
 export interface ModalProps {
@@ -20,12 +21,13 @@ export interface ModalProps {
  * `@media (max-width: 768px)` 段，与旧 `.scrim`/`.dialog` 路径同一套。
  */
 export function Modal({ open, onClose, title, size = 'm', children, actions }: ModalProps) {
+  const presence = usePresence(open);
   const dialogRef = useModalKeys({ open, onClose, id: `ui-modal-${title}` });
-  if (!open) return null;
+  if (!presence.mounted) return null;
   const titleId = `ui-modal-title-${title}`;
   return (
     <div
-      className="ui-modal-scrim"
+      className={`ui-modal-scrim ${presence.state}`}
       role="presentation"
       onMouseDown={(event) => event.target === event.currentTarget && onClose()}
     >

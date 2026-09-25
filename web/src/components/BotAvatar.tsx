@@ -1,6 +1,7 @@
 import { faceStateFromStatus, groupCompositeFaces } from '../features/chat/ui-chrome';
 import {
   LivingAvatar,
+  defaultAgentAvatarColor,
   loadAvatarShape,
   resolveAvatarColorFromHex,
   type AvatarColor,
@@ -37,6 +38,13 @@ export function resolveAvatarColor(color?: string): AvatarColor {
   return resolveAvatarColorFromHex(color);
 }
 
+function identityAvatarColor(color: string | undefined, identity: string | undefined): AvatarColor {
+  const resolved = resolveAvatarColor(color);
+  const normalized = color?.toLowerCase();
+  const isLegacyDefault = !color || ['#b89b6a', '#93784a', '#ad8a54', '#b8924e', '#8a5a32'].includes(normalized ?? '');
+  return identity && isLegacyDefault ? defaultAgentAvatarColor(identity) : resolved;
+}
+
 export function BotAvatar({
   name = '',
   color = '#b89b6a',
@@ -65,7 +73,7 @@ export function BotAvatar({
         title={label}
       >
         {faces.length === 0 ? (
-          <LivingAvatar shape="squircle" color={resolveAvatarColor(color)} state="idle" size={size} frozen title={label} />
+          <LivingAvatar shape="squircle" color={identityAvatarColor(color, name || agentId)} state="idle" size={size} frozen title={label} />
         ) : (
           faces.map((member, index) => {
             const working = faceStateFromStatus(member.status) === 'working'
@@ -78,8 +86,8 @@ export function BotAvatar({
                 title={member.name}
               >
                 <LivingAvatar
-                  shape={loadAvatarShape(member.id)}
-                  color={resolveAvatarColor(member.color)}
+                  shape={loadAvatarShape(member.id || member.name)}
+                  color={identityAvatarColor(member.color, member.name || member.id)}
                   state={faceStateFromStatus(member.status)}
                   size={faceSize}
                   title={member.name}
@@ -94,8 +102,9 @@ export function BotAvatar({
     );
   }
 
-  const activeColor = avatarColor || resolveAvatarColor(color);
-  const activeShape: AvatarShape = shape || loadAvatarShape(agentId);
+  const identity = agentId || name;
+  const activeColor = avatarColor || identityAvatarColor(color, name || agentId);
+  const activeShape: AvatarShape = shape || loadAvatarShape(identity);
   const activeState = faceStateFromStatus(status);
 
   return (

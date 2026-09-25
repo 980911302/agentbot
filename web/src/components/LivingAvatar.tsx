@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 export const AVATAR_SHAPES = [
   "blob",
@@ -77,6 +77,28 @@ export const AVATAR_COLOR_HEX: Record<AvatarColor, string> = {
 const COLORS = AVATAR_COLOR_HEX;
 
 const SHAPE_STORAGE_PREFIX = 'agentbot.avatarShape.';
+const DEFAULT_AGENT_COLORS: AvatarColor[] = ['red', 'magenta', 'orange', 'yellow', 'blue', 'cyan', 'green', 'violet', 'brown'];
+
+function stableAvatarIndex(identity: string, count: number): number {
+  let hash = 2166136261;
+  for (let i = 0; i < identity.length; i += 1) {
+    hash ^= identity.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0) % count;
+}
+
+export function defaultAgentAvatarColor(identity?: string): AvatarColor {
+  if (!identity) return 'brown';
+  const score = [...identity].reduce((total, character, index) => total + character.codePointAt(0)! * (index + 1), 0);
+  return DEFAULT_AGENT_COLORS[score % DEFAULT_AGENT_COLORS.length] || 'brown';
+}
+
+export function defaultAgentAvatarShape(identity?: string): AvatarShape {
+  if (!identity) return 'squircle';
+  const defaults: AvatarShape[] = ['hex', 'wedge', 'blob', 'shield', 'pebble', 'squircle'];
+  return defaults[stableAvatarIndex(identity, defaults.length)] || 'squircle';
+}
 
 export function resolveAvatarColorFromHex(color?: string): AvatarColor {
   if (!color) return 'brown';
@@ -91,20 +113,34 @@ export function resolveAvatarColorFromHex(color?: string): AvatarColor {
   if (c.includes('ef4444') || c.includes('f87171') || c.includes('red') || c.includes('e24b4b')) return 'red';
   if (c.includes('ec4899') || c.includes('d946a6') || c.includes('magenta')) return 'magenta';
   if (c.includes('8b93a7') || c.includes('gray') || c.includes('1b1d22') || c.includes('black')) return c.includes('1b1d22') || c.includes('black') ? 'black' : 'gray';
+  if (/^#[0-9a-f]{6}$/i.test(c)) {
+    const rgb = [1, 3, 5].map((offset) => Number.parseInt(c.slice(offset, offset + 2), 16));
+    return AVATAR_COLORS.reduce((nearest, candidate) => {
+      const hex = AVATAR_COLOR_HEX[candidate];
+      const candidateRgb = [1, 3, 5].map((offset) => Number.parseInt(hex.slice(offset, offset + 2), 16));
+      const distance = rgb.reduce((sum, value, index) => sum + (value - candidateRgb[index]!) ** 2, 0);
+      const nearestHex = AVATAR_COLOR_HEX[nearest];
+      const nearestRgb = [1, 3, 5].map((offset) => Number.parseInt(nearestHex.slice(offset, offset + 2), 16));
+      const nearestDistance = rgb.reduce((sum, value, index) => sum + (value - nearestRgb[index]!) ** 2, 0);
+      return distance < nearestDistance ? candidate : nearest;
+    }, 'brown' as AvatarColor);
+  }
   if (c.includes('8a5a32') || c.includes('b89b6a') || c.includes('93784a') || c.includes('ad8a54') || c.includes('b8924e') || c.includes('brown')) return 'brown';
   return 'brown';
 }
 
 export function loadAvatarShape(agentId?: string): AvatarShape {
-  if (!agentId || typeof localStorage === 'undefined') return 'squircle';
-  const raw = localStorage.getItem(`${SHAPE_STORAGE_PREFIX}${agentId}`);
+  if (!agentId) return 'squircle';
+  const raw = typeof localStorage === 'undefined' ? null : localStorage.getItem(`${SHAPE_STORAGE_PREFIX}${agentId}`);
+  if (raw === 'squircle') return defaultAgentAvatarShape(agentId);
+  if (raw === 'squircle:custom') return 'squircle';
   if (raw && (AVATAR_SHAPES as readonly string[]).includes(raw)) return raw as AvatarShape;
-  return 'squircle';
+  return defaultAgentAvatarShape(agentId);
 }
 
 export function saveAvatarShape(agentId: string, shape: AvatarShape): void {
   if (typeof localStorage === 'undefined') return;
-  localStorage.setItem(`${SHAPE_STORAGE_PREFIX}${agentId}`, shape);
+  localStorage.setItem(`${SHAPE_STORAGE_PREFIX}${agentId}`, shape === 'squircle' ? 'squircle:custom' : shape);
 }
 
 function usePrefersReducedMotion(): boolean {
@@ -118,14 +154,6 @@ function usePrefersReducedMotion(): boolean {
     return () => media.removeEventListener('change', onChange);
   }, []);
   return reduced;
-}
-
-function eyeFill(hex: string): string {
-  const n = hex.replace("#", "");
-  const r = parseInt(n.slice(0, 2), 16);
-  const g = parseInt(n.slice(2, 4), 16);
-  const b = parseInt(n.slice(4, 6), 16);
-  return r * 0.3 + g * 0.5 + b * 0.2 > 160 ? "#2a2418" : "#f4efe4";
 }
 
 export function LivingAvatar({
@@ -150,7 +178,7 @@ export function LivingAvatar({
   notice?: boolean;
 }) {
   const fill = COLORS[color];
-  const eyes = useMemo(() => eyeFill(fill), [fill]);
+  const eyes = "#151515";
   const reduced = usePrefersReducedMotion();
   const still = frozen || reduced;
 
@@ -183,7 +211,7 @@ export function LivingAvatar({
         .living-avatar[data-state="paused"] .body { animation: none; filter: grayscale(60%); transform-origin: 32px 36px; }
         .living-avatar[data-state="paused"] .eyes { animation: none; transform: scaleY(0.18); transform-origin: 32px 28px; }
         .living-avatar[data-state="paused"] .wrap { animation: none; }
-        .living-avatar[data-state="done"] .eyes { animation: la-happy 1.6s ease-in-out infinite; transform-origin: 32px 28px; }
+        .living-avatar[data-state="done"] .eyes { animation: la-happy 1.2s ease-out 1; transform-origin: 32px 28px; }
         .living-avatar[data-notice="true"] .wrap { animation: la-notice 0.32s var(--ease, cubic-bezier(0.16, 1, 0.3, 1)) 1; transform-origin: 32px 32px; }
         @keyframes la-notice { 0% { filter: brightness(1); } 40% { filter: brightness(1.45); } 100% { filter: brightness(1); } }
         @keyframes la-breathe { 0%,100% { transform: scale(1,1); } 50% { transform: scale(1.045, 0.97); } }

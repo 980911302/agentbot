@@ -210,9 +210,17 @@ export class ChatEngine {
           this.changed();
           return true;
         }
-        if (event.type === 'delta' && entry.runId)
-          this.live.set(entry.runId, (this.live.get(entry.runId) ?? '') + event.text);
+        if (event.type === 'delta' && entry.runId) {
+          if (event.text.length === 0) this.live.delete(entry.runId);
+          else this.live.set(entry.runId, (this.live.get(entry.runId) ?? '') + event.text);
+        }
         if (event.type === 'final' && entry.runId) this.live.delete(entry.runId);
+        if (
+          event.type === 'message' &&
+          entry.runId &&
+          event.message.role === 'assistant' &&
+          event.message.content.type === 'tool_calls'
+        ) this.live.delete(entry.runId);
         if (event.type === 'message' || event.type === 'correspondence') {
           this.histories = {
             ...this.histories,

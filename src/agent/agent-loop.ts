@@ -114,10 +114,13 @@ export class AgentLoop {
       this.ensureActive();
       const invalid = response.finishReason === 'length' || response.toolCalls.length > MAX_TOOL_BATCH || response.toolCalls.some(call => call.arguments.length > limitsFor(call.name).input);
       if (invalid) {
+        this.deps.onDelta?.('');
         if (++rejectedResponses > 2) throw new Error('模型连续返回超限或被截断的内容；该批工具未执行。请拆分文件/任务后重试');
         conversation.push({ role: 'user', content: '上一批响应超过长度/工具数量上限，工具均未执行。请缩短回答；每批最多 8 个工具；Read 指定范围，Write/Edit 分小块写入，禁止一次输出整个大型文件。' });
         continue;
       }
+      // 正文片段只是临时显示；模型决定使用工具后，先收起草稿，再显示执行过程。
+      if (response.toolCalls.length > 0) this.deps.onDelta?.('');
       if (usedTools.length + response.toolCalls.length > MAX_TOOL_CALLS_PER_TURN) {
         limitReason = `${MAX_TOOL_CALLS_PER_TURN} 次工具调用上限（最后一批未执行）`;
         toolLimit = true;
@@ -132,8 +135,10 @@ export class AgentLoop {
         const forgedOrigin = hasReservedOriginPrefix(text);
         if (forgedOrigin) {
           if (++rejectedDeliveryClaims > 2) {
+            this.deps.onDelta?.('');
             throw new Error('模型连续使用保留来源标签；本轮已停止');
           }
+          this.deps.onDelta?.('');
           if (text) conversation.push({ role: 'assistant', content: text });
           conversation.push({ role: 'system', content: '上一条使用了平台保留的来源标签，不能作为正文交付。需要外发时调用 SendToAgent；来源和投递状态只认工具回执。' });
           continue;
@@ -154,6 +159,7 @@ export class AgentLoop {
         looksLikeUnverifiedRoomDeliveryClaim(text) && !isPastDeliveryRecap(text);
       if (unverifiedClaim && unverifiedClaimStrikes < 2) {
         unverifiedClaimStrikes += 1;
+        this.deps.onDelta?.('');
         conversation.push({ role: 'assistant', content: text });
         conversation.push({ role: 'system', content: '没有本轮投递回执，不能把自由正文说成已经发群。如果要现在发，请调用 SendToAgent；如果是指之前的回合，请明确写成过去的总结。' });
         continue;

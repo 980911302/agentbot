@@ -31,7 +31,7 @@ export function faceStateFromStatus(status?: string | null): AvatarState {
   return 'idle';
 }
 
-/** 1:1 两列；群是说话人流，不画私聊气泡墙。 */
+/** 1:1 两列；群按发言人顺序呈现，共用消息卡片样式。 */
 export function timelineLayoutKind(input: {
   isGroup: boolean;
   role: 'user' | 'assistant';
