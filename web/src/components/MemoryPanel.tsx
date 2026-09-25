@@ -165,7 +165,7 @@ export function MemoryPanel({ agentId, agentName, refreshToken, onClose }: Memor
                   </option>
                 ))}
               </select>
-              <button type="button" className="btn primary small" onClick={() => void submit()}>
+              <button type="button" className="btn primary sm" onClick={() => void submit()}>
                 记住
               </button>
             </div>

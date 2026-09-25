@@ -420,11 +420,6 @@ button.tier-pill:hover {
   cursor: not-allowed;
 }
 
-.btn.small {
-  padding: 5px 12px;
-  font-size: 12px;
-}
-
 .memory-bucket {
   display: flex;
   flex-direction: column;

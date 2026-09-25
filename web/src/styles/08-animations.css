@@ -390,11 +390,28 @@
   letter-spacing: 0.08em;
 }
 
-.interaction-other .btn.primary.small {
+.interaction-other .btn.primary.sm {
   display: grid;
   place-items: center;
   min-width: 44px;
+  height: auto;
   padding: 8px 12px;
+}
+
+/* 提交后：选中的那一项保持高亮（其余置灰），并在下方回显一行「已选：…」 */
+.interaction-option.selected:disabled {
+  opacity: 1;
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.interaction-answered {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin: 0;
+  color: var(--ok-text);
+  font-size: var(--fs-sm);
 }
 
 .interaction-foot {
