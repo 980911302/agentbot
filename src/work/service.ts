@@ -1,13 +1,16 @@
 import { randomUUID } from 'node:crypto';
 import type { WorkRepositoryPort } from '../storage/ports.js';
 import {
-  classifyUserMessage,
+  clarificationQuestion,
   isOpenWork,
   isTerminalWork,
+  linkUserMessage,
   pickOpenWork,
   titleFrom,
+  type WorkCandidate,
   type WorkItem,
   type WorkOriginChannel,
+  type WorkRelation,
   type WorkStep,
   type WorkStatus,
 } from './item.js';
@@ -42,10 +45,22 @@ export interface AcceptInput {
 }
 
 export interface AcceptResult {
-  /** 建了工作或接到已有工作才有值 */
   work: WorkItem;
-  /** new = 新建；continued = 接到已有工作 */
+  /** new = 新建；continued = 接到已有工作（含修订） */
   kind: 'new' | 'continued';
+  /** 这一句与工作的关系（E4.2）：continue / revise / new_work */
+  relation: WorkRelation;
+  /** 修订时被改掉的原目标（写进日志便于复盘） */
+  revisedFrom?: string;
+}
+
+/** 含糊：不猜，也不改动任何工作；由调用方在回合里短问用户（E4.2） */
+export interface ClarifyResult {
+  kind: 'clarify';
+  relation: 'ambiguous';
+  candidates: WorkCandidate[];
+  /** 给模型的建议问句（进 brief） */
+  question: string;
 }
 
 export interface WorkServiceDeps {
@@ -63,52 +78,93 @@ export class WorkService {
    * 受理一条用户消息：是工作就建或续，是闲聊就返回 null。
    * 绝不抛「不是工作」的错——闲聊是正常情况。
    */
-  async acceptUserMessage(input: AcceptInput): Promise<AcceptResult | null> {
-    if (classifyUserMessage(input.text) !== 'work') return null;
+  async acceptUserMessage(input: AcceptInput): Promise<AcceptResult | ClarifyResult | null> {
     const at = this.now(input.now);
-    const existing = await this.openWorkOf(input.agentId);
     const title = titleFrom(input.text);
+    const openWorks = (await this.deps.repository.listByAgent(input.agentId)).filter((item) =>
+      isOpenWork(item.status),
+    );
+    const decision = linkUserMessage(input.text, openWorks);
 
-    if (existing) {
-      // 接上已有工作：目标不变，把这次的要求作为新的下一步与进展记录下来；
-      // 同一件事被追加要求时只推进 revision，不覆盖原目标（架构 §3 的第 3 条行为）。
-      const updated: WorkItem = {
-        ...existing,
-        status: existing.status === 'ready' ? 'active' : existing.status,
-        progressSummary: title,
-        nextAction: title,
-        revision: existing.revision + 1,
-        updatedAt: at,
+    if (decision.relation === 'chat') return null;
+    if (decision.relation === 'ambiguous') {
+      // 不瞎猜：不改动任何工作，把候选交给调用方在回合里短问（设计 §5 第 5 条）
+      return {
+        kind: 'clarify',
+        relation: 'ambiguous',
+        candidates: decision.candidates ?? [],
+        question: clarificationQuestion(decision.candidates ?? [], input.text),
       };
-      const ok = await this.deps.repository.update(updated, existing.revision);
-      if (!ok) throw new WorkError('工作已被其他执行改动，请重新读取后再更新', 'WORK_REVISION_CONFLICT');
-      await this.appendStep({
-        workId: existing.id,
-        title,
-        status: 'in_progress',
-        note: '用户补充了新要求',
-        now: at,
-      });
-      return { work: updated, kind: 'continued' };
     }
 
-    const work: WorkItem = {
-      id: randomUUID(),
-      ownerAgentId: input.agentId,
-      originMessageId: input.messageId,
-      originChannel: input.channel,
-      title,
-      objective: input.text.trim(),
-      acceptance: [],
-      status: 'active',
-      progressSummary: '刚接下，尚未开工',
-      revision: 1,
-      artifactIds: [],
-      createdAt: at,
+    if (decision.relation === 'new_work') {
+      const work: WorkItem = {
+        id: randomUUID(),
+        ownerAgentId: input.agentId,
+        originMessageId: input.messageId,
+        originChannel: input.channel,
+        title,
+        objective: input.text.trim(),
+        acceptance: [],
+        status: 'active',
+        progressSummary: '刚接下，尚未开工',
+        revision: 1,
+        artifactIds: [],
+        createdAt: at,
+        updatedAt: at,
+      };
+      await this.deps.repository.save(work);
+      return { work, kind: 'new', relation: 'new_work' };
+    }
+
+    // continue / revise 都要有一件明确的工作可接
+    const target = decision.workId
+      ? openWorks.find((item) => item.id === decision.workId)
+      : pickOpenWork(openWorks);
+    if (!target) throw new WorkError('找不到要接的工作（可能刚被收尾）', 'WORK_NOT_FOUND');
+
+    if (decision.relation === 'revise') {
+      // 修订：目标被改写、版本 +1，原目标留在 revisedFrom 便于复盘（设计 §5「修订」段）
+      const revised: WorkItem = {
+        ...target,
+        status: target.status === 'ready' ? 'active' : target.status,
+        objective: input.text.trim(),
+        progressSummary: `范围改为：${title}`,
+        nextAction: title,
+        revision: target.revision + 1,
+        updatedAt: at,
+      };
+      const ok = await this.deps.repository.update(revised, target.revision);
+      if (!ok) throw new WorkError('工作已被其他执行改动，请重新读取后再更新', 'WORK_REVISION_CONFLICT');
+      await this.appendStep({
+        workId: target.id,
+        title,
+        status: 'in_progress',
+        note: `修订目标（原：${target.objective}）`,
+        now: at,
+      });
+      return { work: revised, kind: 'continued', relation: 'revise', revisedFrom: target.objective };
+    }
+
+    // continue：目标不变，把这次的要求作为新的下一步与进展（E4.1 行为）
+    const updated: WorkItem = {
+      ...target,
+      status: target.status === 'ready' ? 'active' : target.status,
+      progressSummary: title,
+      nextAction: title,
+      revision: target.revision + 1,
       updatedAt: at,
     };
-    await this.deps.repository.save(work);
-    return { work, kind: 'new' };
+    const ok = await this.deps.repository.update(updated, target.revision);
+    if (!ok) throw new WorkError('工作已被其他执行改动，请重新读取后再更新', 'WORK_REVISION_CONFLICT');
+    await this.appendStep({
+      workId: target.id,
+      title,
+      status: 'in_progress',
+      note: '用户补充了新要求',
+      now: at,
+    });
+    return { work: updated, kind: 'continued', relation: 'continue' };
   }
 
   /** 该同事当前「手头那件」未完成的工作（最近更新的优先） */

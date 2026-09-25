@@ -52,7 +52,7 @@ import { buildAgentBrief, buildRoomBrief, decideRoomPosts } from '../room/turn.j
 import type { RoomMessage, RoomEvent, RoomEventHandler, RoundOutcome, RoundStatus } from '../room/types.js';
 import { ROOM_MAX_RUNS_PER_MEMBER, ROOM_POST_LIMIT_PER_TURN } from '../room/types.js';
 import { MessageStore } from '../store/messages.js';
-import { WorkService } from '../work/service.js';
+import { WorkService, type AcceptResult, type ClarifyResult } from '../work/service.js';
 import { JsonWorkRepository } from '../work/store.js';
 import { resolveProjectOwner } from '../tools/builtin/memory.js';
 import { ToolRegistry } from '../tools/registry.js';
@@ -869,6 +869,8 @@ export class AgentRuntime {
     );
     const opts = this.chatRuns.bind(run, options);
 
+    /** 这条消息与工作的关联（E4.1/E4.2）：进 brief，并作为收尾写回进度的依据 */
+    let workLink: WorkLinkOutcome | null = null;
     const task: Message = {
       id: run.messageId!,
       runId: run.runId,
@@ -886,21 +888,22 @@ export class AgentRuntime {
         await this.messages.append(task);
         opts.onEvent?.({ type: 'message', message: task });
         this.stopCoordinator.voidPendingInteractions(agentId, opts.onEvent);
-        // E4.1：托付一件事就记成工作（闲聊返回 null）。这是旁路记录，
-        // 不改发送/执行/停止语义；失败也不能让这条消息发不出去。
+        // E4.1/E4.2：把这条消息关联到工作（新建 / 接着 / 修订；闲聊返回 null；
+        // 含糊返回候选，交给回合短问）。旁路记录，不改发送/执行/停止语义；
+        // 失败也不能让这条消息发不出去。
         if (!stop) {
-          await this.works
-            .acceptUserMessage({
+          try {
+            workLink = await this.works.acceptUserMessage({
               agentId,
               channel: { kind: 'dm', id: agentId },
               messageId: task.id,
               text,
-            })
-            .catch((error: unknown) => {
-              console.warn(
-                `工作记录失败（不影响本次回合）：${error instanceof Error ? error.message : String(error)}`,
-              );
             });
+          } catch (error) {
+            console.warn(
+              `工作记录失败（不影响本次回合）：${error instanceof Error ? error.message : String(error)}`,
+            );
+          }
         }
       } catch (error) {
         await this.chatRuns.fail(run.runId, error);
@@ -908,6 +911,8 @@ export class AgentRuntime {
       }
     }
 
+    // 工作关联进 brief：让模型知道「这句是接着哪件工作」，含糊时明确要求先短问
+    const workBrief = this.workLinkBrief(workLink);
     const executeOnce = async (): Promise<SendResult> => {
       if (!isActiveChatRun(this.chatRuns.get(run.runId)!)) return this.duplicateRun(agentId, task, options);
       this.executor.cancelMaintenance(agentId);
@@ -937,11 +942,22 @@ export class AgentRuntime {
         return this.runTurn(
           agentId,
           task,
-          { skipPersist: true, resumeTaskId },
+          { skipPersist: true, resumeTaskId, ...(workBrief ? { brief: workBrief } : {}) },
           { ...opts, authorization: decision.ticket },
-        );
+        ).then(async (result) => {
+          await this.recordWorkProgress(workLink, result);
+          return result;
+        });
       }
-      return this.runTurn(agentId, task, { skipPersist: true, resumeTaskId }, opts);
+      return this.runTurn(
+        agentId,
+        task,
+        { skipPersist: true, resumeTaskId, ...(workBrief ? { brief: workBrief } : {}) },
+        opts,
+      ).then(async (result) => {
+        await this.recordWorkProgress(workLink, result);
+        return result;
+      });
     };
     let inflight = this.runExecutions.get(run.runId);
     if (!inflight) {
@@ -1400,6 +1416,56 @@ export class AgentRuntime {
   }
 
   /**
+   * 回合结束后把进展写回工作（E4.2）。
+   *
+   * 关键约束（设计 §5「修订」段）：**旧 Run 的状态提交必须检查 revision**——
+   * 这里用受理时记下的 revision 做条件更新；如果回合跑的过程中用户又改了范围
+   * （revision 已推进），这次写回会被拒绝，直接让出、绝不覆盖新目标。
+   * 写回失败只记日志：账目问题不能让回合结果失败。
+   */
+  private async recordWorkProgress(link: WorkLinkOutcome | null, result: TurnResult): Promise<void> {
+    if (!link || link.kind === 'clarify' || !link.work) return;
+    const summary = (result.content ?? '').trim().replace(/\s+/g, ' ').slice(0, 200);
+    if (!summary) return;
+    try {
+      await this.works.update(
+        link.work.id,
+        { progressSummary: summary },
+        { expectedRevision: link.work.revision },
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      // 版本冲突是预期内的（用户中途改了范围，本次执行让出）
+      console.warn(`工作进度未写回（${link.work.id}）：${message}`);
+    }
+  }
+
+  /**
+   * 工作关联写进回合 brief（E4.1/E4.2）：告诉模型这句在接着哪件工作；
+   * 含糊时明确要求先用 SendToUser widget 短问，不瞎猜（设计 §5 第 5 条）。
+   * 没有关联（闲聊）时不加任何文字，上下文与以前完全一样。
+   */
+  private workLinkBrief(link: WorkLinkOutcome | null): string {
+    if (!link) return '';
+    if (link.kind === 'clarify') {
+      return `【工作关联】${link.question}`;
+    }
+    if (!link.work) return '';
+    const relation =
+      link.relation === 'revise'
+        ? `这是对当前工作的**修订**：目标已改写为「${link.work.objective}」，按新目标做，旧目标的执行不再有效`
+        : link.relation === 'new_work'
+          ? '这是**新开的一件工作**'
+          : '这是**接着当前工作**的补充';
+    return [
+      `【当前工作】${link.work.title}（id=${link.work.id}，revision=${link.work.revision}）`,
+      `目标：${link.work.objective}`,
+      relation,
+      '收尾时如实说明交付了什么；不要只凭一句话就把工作说成完成。',
+    ].join('\n');
+  }
+
+  /**
    * 生效的主人名（E5.7）：有 SettingsStore 就以它为准，否则回落到构造时的配置。
    * 群消息、工作台代发、幂等指纹都走这里，保证 CLI / 界面 / 后台是同一个名字。
    */
@@ -1510,5 +1576,8 @@ export class AgentRuntime {
     return this.executor.runTurn(agentId, task, turn, options);
   }
 }
+
+/** 受理一条消息后拿到的工作关联结果（E4.1/E4.2）；闲聊为 null */
+type WorkLinkOutcome = AcceptResult | ClarifyResult;
 
 export type { AgentEvent, RoomEvent, RoundOutcome };

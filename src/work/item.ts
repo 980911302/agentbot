@@ -66,9 +66,12 @@ export function isTerminalWork(status: WorkStatus): boolean {
  * 最近更新的排前面——新消息优先接最近那件，与用户说话的习惯一致。
  */
 export function pickOpenWork<T extends { status: WorkStatus; updatedAt: number }>(items: T[]): T | undefined {
-  return items
-    .filter((item) => isOpenWork(item.status))
-    .sort((left, right) => right.updatedAt - left.updatedAt)[0];
+  return mostRecent(items.filter((item) => isOpenWork(item.status)));
+}
+
+/** 最近更新的一件（调用方已经筛过状态时用这个） */
+export function mostRecent<T extends { updatedAt: number }>(items: T[]): T | undefined {
+  return [...items].sort((left, right) => right.updatedAt - left.updatedAt)[0];
 }
 
 // ── 任务 / 闲聊判定 ────────────────────────────────────────────────
@@ -162,4 +165,114 @@ export function titleFrom(text: string): string {
       ?.trim() ?? '';
   const base = firstLine || text.trim();
   return base.length > 60 ? `${base.slice(0, 59)}…` : base;
+}
+
+// ── 新消息与已有工作的关联判定（E4.2，设计见 docs/架构设计.md §5） ──────────
+
+export type WorkRelation = 'continue' | 'revise' | 'new_work' | 'chat' | 'ambiguous';
+
+export interface WorkCandidate {
+  id: string;
+  title: string;
+}
+
+export interface WorkLinkDecision {
+  relation: WorkRelation;
+  /** continue / revise 指向哪件工作 */
+  workId?: string;
+  /** ambiguous 时的候选（交给模型短问用户） */
+  candidates?: WorkCandidate[];
+  /** 判定依据，写进日志/交付记录便于复盘 */
+  reason: string;
+}
+
+/** 明确「这是另一件事」的措辞 */
+const NEW_WORK_MARKERS = ['另外', '顺便', '还有个', '再一个', '新任务', '再帮我', '另一件', '换个事'];
+/** 修订：在原有目标上收窄/改口 */
+const REVISE_MARKERS = [
+  '只测',
+  '只做',
+  '只跑',
+  '只改',
+  '先把',
+  '改成',
+  '改为',
+  '换成',
+  '调整为',
+  '修订',
+  '缩小到',
+  '限定',
+  '别再',
+  '不要做',
+  '不做',
+  '先只',
+  '范围改',
+  '改成只',
+];
+/** 继续：指向已经开着的那件 */
+const CONTINUE_MARKERS = ['继续', '接着', '然后', '下一步', '刚才', '上次', '进展', '怎么样了', '做到哪'];
+/** 模糊指代：有多件工作时不足以判断指哪件 */
+const VAGUE_REFERENCES = ['它', '那个', '这件', '那件', '这个', '刚才说的'];
+
+function hasAny(text: string, markers: string[]): boolean {
+  const lowered = text.toLowerCase();
+  return markers.some((marker) => lowered.includes(marker.toLowerCase()));
+}
+
+/**
+ * 把一条用户消息关联到工作（E4.2）。
+ *
+ * 优先级（设计文档 §5 第 3、5 条）：闲聊 → 全新 → 明确新事 → 修订 → 继续 →
+ * 「多件且含糊」则交给人 → 默认接着最近那件（E4.1 行为）。
+ * 含糊时不猜：返回候选，由调用方在回合里短问用户。
+ */
+export function linkUserMessage(
+  text: string,
+  openWorks: Array<{ id: string; title: string; updatedAt: number }>,
+): WorkLinkDecision {
+  // 顺序要紧：含糊的指代句往往很短（「继续弄那个」只有 5 个字），
+  // 若先过 classifyUserMessage 的长度门槛就会被判成闲聊，再也走不到关联判定。
+  // 所以「明确指向已有工作」的标志词优先，闲聊只在没有任何标志词时才认。
+  const hasLinkMarker =
+    hasAny(text, CONTINUE_MARKERS) || hasAny(text, REVISE_MARKERS) || hasAny(text, NEW_WORK_MARKERS);
+  if (classifyUserMessage(text) === 'chat' && !hasLinkMarker) {
+    return { relation: 'chat', reason: '问候/致谢/应答/纯提问，不涉及工作' };
+  }
+  if (openWorks.length === 0) {
+    return { relation: 'new_work', reason: '当前没有未完成的工作' };
+  }
+
+  const recent = mostRecent(openWorks)!;
+  if (hasAny(text, NEW_WORK_MARKERS)) {
+    return { relation: 'new_work', reason: '出现「另外/顺便」这类新事标志词' };
+  }
+
+  const candidates: WorkCandidate[] = openWorks.map((item) => ({ id: item.id, title: item.title }));
+
+  if (hasAny(text, REVISE_MARKERS)) {
+    // 多件且只说「它/那个」：可能改错对象，交给用户确认
+    if (openWorks.length > 1 && hasAny(text, VAGUE_REFERENCES)) {
+      return { relation: 'ambiguous', candidates, reason: '有修订意图但指代不明，且有多件未完成工作' };
+    }
+    return { relation: 'revise', workId: recent.id, reason: '在已有目标上收窄或改口' };
+  }
+
+  if (hasAny(text, CONTINUE_MARKERS)) {
+    if (openWorks.length > 1 && hasAny(text, VAGUE_REFERENCES)) {
+      return { relation: 'ambiguous', candidates, reason: '有继续意图但指代不明，且有多件未完成工作' };
+    }
+    return { relation: 'continue', workId: recent.id, reason: '接着已有工作说' };
+  }
+
+  // 没给任何线索，但有多件未完成工作：不瞎猜
+  if (openWorks.length > 1) {
+    return { relation: 'ambiguous', candidates, reason: '有多件未完成工作，这条消息看不出接哪件' };
+  }
+  return { relation: 'continue', workId: recent.id, reason: '只有一件未完成工作，默认接着它' };
+}
+
+/** 含糊时给模型的问句（进 brief，让模型用 SendToUser widget 短问） */
+export function clarificationQuestion(candidates: WorkCandidate[], text: string): string {
+  const list = candidates.map((item, index) => `${index + 1}. ${item.title}`).join('；');
+  return `这条消息（「${titleFrom(text)}」）可能接着下面某件工作，但看不太出来是哪件：${list}。先用 SendToUser 的 widget 问用户一句「这条是接着哪件」，选项用各件工作的标题，别自己猜。`;
 }
