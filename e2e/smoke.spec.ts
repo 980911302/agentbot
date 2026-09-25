@@ -137,3 +137,57 @@ test('控制数据损坏：状态条给出修复入口，修复后同事变为�
     child.kill('SIGTERM');
   }
 });
+
+/**
+ * UI-06 打回点：资料「保存 / 撤销」条必须吸底。
+ * 上一轮只断言了「条子存在」，没断言「在视口内」，于是条子被父级滚动容器带出视口也过关了。
+ * 这里改断几何：条子底边要贴住抽屉底边、整体在视口内、且内容滚动后位置不变。
+ */
+test('资料吸底保存条：在视口内且恒贴抽屉底边，内容滚动不影响它', async ({ page }) => {
+  await page.goto('/');
+  await page.locator('.channel-item', { hasText: '普通私聊' }).first().click();
+  await page.getByRole('button', { name: '侧边栏与屏幕' }).click();
+  await page.locator('.drawer-tab', { hasText: '资料' }).first().click();
+
+  await page.locator('#bot-profile-title').fill('吸底断言');
+  const bar = page.locator('.profile-save-bar');
+  await expect(bar).toBeVisible();
+
+  const geometry = async () =>
+    page.evaluate(() => {
+      const barEl = document.querySelector('.profile-save-bar')!;
+      const drawer = document.querySelector('.bot-profile-drawer')!;
+      const body = document.querySelector('.profile-drawer-body')!;
+      const rb = barEl.getBoundingClientRect();
+      const rd = drawer.getBoundingClientRect();
+      const rbody = body.getBoundingClientRect();
+      return {
+        barTop: rb.top,
+        barBottom: rb.bottom,
+        drawerBottom: rd.bottom,
+        viewportH: window.innerHeight,
+        canScroll: body.scrollHeight > body.clientHeight + 1,
+        // 抽屉自身的溢出量：>0 说明滚动落在了抽屉上（正是打回前的结构）
+        drawerOverflow: drawer.scrollHeight - drawer.clientHeight,
+        bodyBottom: rbody.bottom,
+      };
+    });
+
+  const before = await geometry();
+  expect(before.barBottom).toBeLessThanOrEqual(before.viewportH + 1);
+  expect(Math.abs(before.barBottom - before.drawerBottom)).toBeLessThanOrEqual(1);
+  // 滚动必须收在内容区：抽屉自己不该有可滚动的溢出，内容区底边也不该压到条子上
+  expect(before.drawerOverflow).toBeLessThanOrEqual(1);
+  expect(before.bodyBottom).toBeLessThanOrEqual(before.barTop + 1);
+
+  if (before.canScroll) {
+    await page.evaluate(() => {
+      document.querySelector('.profile-drawer-body')!.scrollTop = 1e6;
+    });
+    const after = await geometry();
+    expect(Math.abs(after.barBottom - before.barBottom)).toBeLessThanOrEqual(1);
+  }
+
+  await page.getByRole('button', { name: '保存' }).click();
+  await expect(bar).toBeHidden();
+});

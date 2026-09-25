@@ -7,7 +7,7 @@
   background: var(--bg-sidebar);
   border-left: 1px solid var(--border);
   overflow: hidden;
-z-index: var(--z-panel);
+  z-index: var(--z-panel);
 }
 
 /* 左缘拖拽手柄：320–480（UI-06）。悬停出现一条强调边 */
@@ -18,7 +18,7 @@ z-index: var(--z-panel);
   bottom: 0;
   width: 6px;
   cursor: col-resize;
-z-index: var(--z-nested);
+  z-index: var(--z-nested);
   transition: background var(--dur-fast) var(--ease);
 }
 
@@ -53,7 +53,9 @@ z-index: var(--z-nested);
   font-size: 12.5px;
   color: var(--text-secondary);
   font-weight: 500;
-  transition: background var(--dur-fast), color var(--dur-fast);
+  transition:
+    background var(--dur-fast),
+    color var(--dur-fast);
   -webkit-app-region: no-drag;
 }
 
@@ -86,7 +88,7 @@ z-index: var(--z-nested);
 .screen.fullscreen {
   position: fixed;
   inset: 0;
-z-index: var(--z-modal);
+  z-index: var(--z-modal);
   background: var(--bg);
 }
 
@@ -128,7 +130,9 @@ z-index: var(--z-modal);
   height: 28px;
   border-radius: var(--r-sm);
   color: var(--text-secondary);
-  transition: background var(--dur-fast), color var(--dur-fast);
+  transition:
+    background var(--dur-fast),
+    color var(--dur-fast);
   -webkit-app-region: no-drag;
 }
 
@@ -307,7 +311,10 @@ z-index: var(--z-modal);
   color: var(--text-secondary);
   background: var(--bg-subtle);
   cursor: pointer;
-  transition: background var(--dur-fast), border-color var(--dur-fast), color var(--dur-fast);
+  transition:
+    background var(--dur-fast),
+    border-color var(--dur-fast),
+    color var(--dur-fast);
 }
 
 button.tier-pill:hover {
@@ -328,7 +335,7 @@ button.tier-pill:hover {
 
 .tier-pill.portrait.active {
   background: var(--accent-strong);
-color: var(--on-accent);
+  color: var(--on-accent);
 }
 
 .tier-pill.log {
@@ -394,12 +401,14 @@ color: var(--on-accent);
   border-radius: var(--r-sm);
   font-size: 13px;
   font-weight: 500;
-  transition: background var(--dur-fast), opacity var(--dur-fast);
+  transition:
+    background var(--dur-fast),
+    opacity var(--dur-fast);
 }
 
 .btn.primary {
   background: var(--accent-strong);
-color: var(--on-accent);
+  color: var(--on-accent);
 }
 
 .btn.primary:hover:not(:disabled) {
@@ -437,9 +446,15 @@ color: var(--on-accent);
   background: var(--text-tertiary);
 }
 
-.scope-dot.self { background: var(--ok); }
-.scope-dot.user { background: var(--accent); }
-.scope-dot.project { background: var(--skill-cyan); }
+.scope-dot.self {
+  background: var(--ok);
+}
+.scope-dot.user {
+  background: var(--accent);
+}
+.scope-dot.project {
+  background: var(--skill-cyan);
+}
 
 .memory-list {
   list-style: none;
@@ -602,6 +617,8 @@ color: var(--on-accent);
 }
 
 /* ── Bot Profile Drawer (Right Panel) ─────────────────────── */
+/* 抽屉本身不滚动：滚动收进 .profile-drawer-body，吸底保存条才能恒贴底边
+   （UI-06 打回点：条子原先和内容一起滚，默认视口下整条落在视口外） */
 .bot-profile-drawer {
   position: relative;
   display: flex;
@@ -609,11 +626,18 @@ color: var(--on-accent);
   flex: 1;
   min-height: 0;
   height: 100%;
-  padding: 28px 22px 36px 22px;
   background: var(--bg-sidebar);
   box-sizing: border-box;
+  overflow: hidden;
+}
+
+.profile-drawer-body {
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
+  padding: 28px 22px 36px 22px;
+  box-sizing: border-box;
 }
 
 .profile-drawer-avatar-wrap {
@@ -653,7 +677,10 @@ color: var(--on-accent);
   color: var(--text);
   box-sizing: border-box;
   outline: none;
-  transition: border-color var(--dur-fast), background var(--dur-fast), box-shadow var(--dur-fast);
+  transition:
+    border-color var(--dur-fast),
+    background var(--dur-fast),
+    box-shadow var(--dur-fast);
 }
 
 .profile-drawer-input::placeholder {
@@ -679,7 +706,10 @@ color: var(--on-accent);
   box-sizing: border-box;
   outline: none;
   resize: vertical;
-  transition: border-color var(--dur-fast), background var(--dur-fast), box-shadow var(--dur-fast);
+  transition:
+    border-color var(--dur-fast),
+    background var(--dur-fast),
+    box-shadow var(--dur-fast);
 }
 
 .profile-drawer-textarea::placeholder {
@@ -748,8 +778,8 @@ color: var(--on-accent);
   width: 26px;
   height: 26px;
   border-radius: 50%;
-background: var(--bg-card);
-box-shadow: var(--shadow-md);
+  background: var(--bg-card);
+  box-shadow: var(--shadow-md);
   transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
   transform: translateX(0);
 }
@@ -808,9 +838,10 @@ box-shadow: var(--shadow-md);
 }
 
 .profile-color-swatch.selected {
-  box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent);
+  box-shadow:
+    0 0 0 2px var(--bg),
+    0 0 0 4px var(--accent);
 }
-
 
 /* ── 资料吸底保存条（UI-06 / 规范 5.10） ────────────────────────── */
 .profile-save-bar {

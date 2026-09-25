@@ -47,6 +47,9 @@ writeFileSync(
         noEmit: true,
         noUnusedLocals: true,
         noUnusedParameters: true,
+        // e2e 用例在浏览器上下文里跑（page.evaluate 里用 document/window），
+        // 只有清单里出现 e2e 文件时才把 DOM 加进来；后端文件不需要也不该依赖它
+        ...(files.some((file) => file.includes('/e2e/')) ? { lib: ['ES2023', 'DOM', 'DOM.Iterable'] } : {}),
       },
       include: files,
     },

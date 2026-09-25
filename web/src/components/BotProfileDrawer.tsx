@@ -103,7 +103,18 @@ export function BotProfileDrawer({ bot, onClose, onSave }: BotProfileDrawerProps
       void saveChanges();
     }, 600);
     return () => clearTimeout(timer);
-  }, [name, title, instructions, color, bot.name, bot.title, bot.instructions, bot.role, bot.color, saveChanges]);
+  }, [
+    name,
+    title,
+    instructions,
+    color,
+    bot.name,
+    bot.title,
+    bot.instructions,
+    bot.role,
+    bot.color,
+    saveChanges,
+  ]);
 
   const discardChanges = () => {
     setName(bot.name || '');
@@ -137,122 +148,126 @@ export function BotProfileDrawer({ bot, onClose, onSave }: BotProfileDrawerProps
 
   return (
     <div className="bot-profile-drawer" role="region" aria-label="智能体资料">
-      <div className="profile-drawer-avatar-wrap">
-        <LivingAvatar
-          size={76}
-          color={avatarColor}
-          shape={shape}
-          state={faceStateFromStatus(bot.status)}
-        />
+      {/* 滚动收在这一层：抽屉自己不滚，吸底保存条才能恒贴抽屉底边（UI-06 打回点） */}
+      <div className="profile-drawer-body">
+        <div className="profile-drawer-avatar-wrap">
+          <LivingAvatar size={76} color={avatarColor} shape={shape} state={faceStateFromStatus(bot.status)} />
+        </div>
+
+        <div className="profile-drawer-form">
+          <div className="profile-drawer-field">
+            <label className="profile-drawer-label" htmlFor="bot-profile-name">
+              名字
+            </label>
+            <input
+              id="bot-profile-name"
+              type="text"
+              className="profile-drawer-input"
+              value={name}
+              placeholder="同事名字"
+              onChange={(e) => setName(e.target.value)}
+              onBlur={() => void saveChanges()}
+            />
+          </div>
+
+          <div className="profile-drawer-field">
+            <label className="profile-drawer-label" htmlFor="bot-profile-title">
+              头衔
+            </label>
+            <input
+              id="bot-profile-title"
+              type="text"
+              className="profile-drawer-input"
+              value={title}
+              placeholder="一句话头衔"
+              onChange={(e) => setTitle(e.target.value)}
+              onBlur={() => void saveChanges()}
+            />
+          </div>
+
+          <div className="profile-drawer-field">
+            <label className="profile-drawer-label" htmlFor="bot-profile-instructions">
+              职责
+            </label>
+            <textarea
+              id="bot-profile-instructions"
+              className="profile-drawer-textarea"
+              rows={4}
+              value={instructions}
+              placeholder="它负责什么、怎么看待任务"
+              onChange={(e) => setInstructions(e.target.value)}
+              onBlur={() => void saveChanges()}
+            />
+          </div>
+
+          <div className="profile-drawer-field">
+            <span className="profile-drawer-label">形状</span>
+            <div className="profile-shape-grid">
+              {AVATAR_SHAPES.map((item) => (
+                <button
+                  type="button"
+                  key={item}
+                  className={`profile-shape-swatch${item === shape ? ' selected' : ''}`}
+                  title={item}
+                  onClick={() => pickShape(item)}
+                >
+                  <LivingAvatar shape={item} color={avatarColor} size={28} frozen />
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="profile-drawer-field">
+            <span className="profile-drawer-label">颜色</span>
+            <div className="profile-color-grid">
+              {AVATAR_COLORS.map((item) => (
+                <button
+                  type="button"
+                  key={item}
+                  className={`profile-color-swatch${item === avatarColor ? ' selected' : ''}`}
+                  style={{ background: AVATAR_COLOR_HEX[item] }}
+                  title={item}
+                  onClick={() => pickColor(item)}
+                />
+              ))}
+            </div>
+          </div>
+
+          <div className="profile-drawer-notice-card">
+            <div className="notice-card-text">
+              <div className="notice-card-title">通知</div>
+              <div className="notice-card-desc">Bot 完成任务或需要回应时通知你</div>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={notify}
+              aria-label="通知开关"
+              className={`profile-drawer-switch${notify ? ' active' : ''}`}
+              onClick={() => void toggleNotify()}
+            >
+              <span className="switch-thumb" />
+            </button>
+          </div>
+
+          {error ? <div className="profile-drawer-error">{error}</div> : null}
+        </div>
       </div>
 
-      <div className="profile-drawer-form">
-        <div className="profile-drawer-field">
-          <label className="profile-drawer-label" htmlFor="bot-profile-name">
-            名字
-          </label>
-          <input
-            id="bot-profile-name"
-            type="text"
-            className="profile-drawer-input"
-            value={name}
-            placeholder="同事名字"
-            onChange={(e) => setName(e.target.value)}
-            onBlur={() => void saveChanges()}
-          />
-        </div>
-
-        <div className="profile-drawer-field">
-          <label className="profile-drawer-label" htmlFor="bot-profile-title">
-            头衔
-          </label>
-          <input
-            id="bot-profile-title"
-            type="text"
-            className="profile-drawer-input"
-            value={title}
-            placeholder="一句话头衔"
-            onChange={(e) => setTitle(e.target.value)}
-            onBlur={() => void saveChanges()}
-          />
-        </div>
-
-        <div className="profile-drawer-field">
-          <label className="profile-drawer-label" htmlFor="bot-profile-instructions">
-            职责
-          </label>
-          <textarea
-            id="bot-profile-instructions"
-            className="profile-drawer-textarea"
-            rows={4}
-            value={instructions}
-            placeholder="它负责什么、怎么看待任务"
-            onChange={(e) => setInstructions(e.target.value)}
-            onBlur={() => void saveChanges()}
-          />
-        </div>
-
-        <div className="profile-drawer-field">
-          <span className="profile-drawer-label">形状</span>
-          <div className="profile-shape-grid">
-            {AVATAR_SHAPES.map((item) => (
-              <button
-                type="button"
-                key={item}
-                className={`profile-shape-swatch${item === shape ? ' selected' : ''}`}
-                title={item}
-                onClick={() => pickShape(item)}
-              >
-                <LivingAvatar shape={item} color={avatarColor} size={28} frozen />
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="profile-drawer-field">
-          <span className="profile-drawer-label">颜色</span>
-          <div className="profile-color-grid">
-            {AVATAR_COLORS.map((item) => (
-              <button
-                type="button"
-                key={item}
-                className={`profile-color-swatch${item === avatarColor ? ' selected' : ''}`}
-                style={{ background: AVATAR_COLOR_HEX[item] }}
-                title={item}
-                onClick={() => pickColor(item)}
-              />
-            ))}
-          </div>
-        </div>
-
-        <div className="profile-drawer-notice-card">
-          <div className="notice-card-text">
-            <div className="notice-card-title">通知</div>
-            <div className="notice-card-desc">Bot 完成任务或需要回应时通知你</div>
-          </div>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={notify}
-            aria-label="通知开关"
-            className={`profile-drawer-switch${notify ? ' active' : ''}`}
-            onClick={() => void toggleNotify()}
-          >
-            <span className="switch-thumb" />
-          </button>
-        </div>
-
-        {error ? <div className="profile-drawer-error">{error}</div> : null}
-      </div>
-
-      {/* 吸底保存条（UI-06 / 规范 5.10）：有改动才出现，保存走现有更新接口 */}
+      {/* 吸底保存条（UI-06 / 规范 5.10）：有改动才出现，保存走现有更新接口。 */}
+      {/* 它是抽屉 flex 列的最后一项（flex-shrink:0），不随上面的内容一起滚动。 */}
       {isDirty ? (
         <div className="profile-save-bar" role="group" aria-label="未保存的修改">
           <span className="profile-save-hint">{saving ? '正在保存…' : '有未保存的修改'}</span>
           <button type="button" className="btn ghost sm" onClick={discardChanges} disabled={saving}>
             撤销
           </button>
-          <button type="button" className="btn primary sm" onClick={() => void saveChanges()} disabled={saving}>
+          <button
+            type="button"
+            className="btn primary sm"
+            onClick={() => void saveChanges()}
+            disabled={saving}
+          >
             保存
           </button>
         </div>
