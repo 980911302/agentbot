@@ -80,6 +80,7 @@ export async function createAgentServer(options: AgentServerOptions = {}): Promi
   const secrets = new SecretStore(dataDir);
   const { tools, bind } = createAgentTools({
     rootDir,
+    dataDir,
     memory: memoryStore,
     secrets,
     broker,

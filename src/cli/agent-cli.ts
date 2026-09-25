@@ -60,6 +60,7 @@ async function main(): Promise<void> {
 
   const { tools, bind } = createAgentTools({
     rootDir,
+    dataDir: config.dataDir,
     memory: memoryStore,
     secrets,
     broker,

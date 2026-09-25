@@ -1,4 +1,5 @@
 import { createFileTools } from '../tools/builtin/files.js';
+import { sensitivePaths } from '../tools/sensitive-paths.js';
 import { createSendToUserTool } from '../tools/builtin/send-to-user.js';
 import { createShellTools } from '../tools/builtin/shell.js';
 import { createReadToolOutputTool } from '../tools/builtin/tool-output.js';
@@ -40,6 +41,8 @@ export interface AgentToolAccess {
 
 export interface AgentToolOptions {
   rootDir: string;
+  /** 数据目录：密钥文件在这里，本机工具默认不读写（OPT-07）。缺省按 <rootDir>/.agentbot */
+  dataDir?: string;
   memory: MemoryStore;
   secrets: SecretStore;
   broker: InteractionBroker;
@@ -69,10 +72,13 @@ export function createAgentTools(options: AgentToolOptions): {
     return access.current;
   };
 
+  // 密钥文件名单按真实数据目录算（config 的 AGENT_DATA_DIR 可能不是默认的 .agentbot）
+  const paths = sensitivePaths(options.rootDir, options.dataDir);
+
   const tools: Tool<any>[] = [
     createReadToolOutputTool(),
-    ...createShellTools(options.rootDir),
-    ...createFileTools(options.rootDir),
+    ...createShellTools(options.rootDir, paths),
+    ...createFileTools(options.rootDir, paths),
     createSendToUserTool({
       rootDir: options.rootDir,
       broker: options.broker,

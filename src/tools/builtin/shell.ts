@@ -3,6 +3,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { resolve } from 'node:path';
 import { defineTool } from '../tool.js';
 import { ShellSessionManager } from '../services/shell-session-manager.js';
+import { sensitivePaths, shellCommandSensitiveHit, shellRefusalMessage, type SensitivePaths } from '../sensitive-paths.js';
 import type { ToolResult } from '../result.js';
 
 /**
@@ -15,7 +16,7 @@ import type { ToolResult } from '../result.js';
 
 const SYNC_WAIT_CAP_MS = 60_000;
 
-export function createShellTools(rootDir = process.cwd()) {
+export function createShellTools(rootDir = process.cwd(), paths: SensitivePaths = sensitivePaths(rootDir)) {
   const manager = new ShellSessionManager();
 
   const summarize = (shell: ReturnType<ShellSessionManager['start']>, offset?: number): ToolResult => {
@@ -63,6 +64,9 @@ export function createShellTools(rootDir = process.cwd()) {
       if (!command) throw new Error('command 不能为空');
       const cwd = resolve(rootDir, args.working_directory?.trim() || '.');
       if (cwd && !existsSync(cwd)) throw new Error(`working_directory 不存在：${cwd}`);
+      // 密钥文件：命令里出现这些路径就直接拒绝（OPT-07，保守字面检查）
+      const hit = shellCommandSensitiveHit(command, paths);
+      if (hit) throw new Error(shellRefusalMessage(command, hit));
 
       const started = manager.start(command, cwd, (abort, label) =>
         context.turnState?.registerJob?.(abort, label),

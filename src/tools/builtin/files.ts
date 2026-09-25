@@ -3,6 +3,7 @@ import { link, lstat, mkdir, opendir, readFile, rename, stat, unlink, writeFile 
 import { dirname, join, relative, resolve } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import { defineTool } from '../tool.js';
+import { assertNotSensitivePath, isSensitivePath, sensitivePaths, type SensitivePaths } from '../sensitive-paths.js';
 
 const SCAN_BYTES = 32 * 1024 * 1024;
 const FILE_BYTES = 2 * 1024 * 1024;
@@ -39,7 +40,7 @@ export async function* textLines(path: string, signal?: AbortSignal, column = 1,
   } finally { stream.destroy(); }
 }
 
-export function createReadTool(rootDir = process.cwd()) {
+export function createReadTool(rootDir = process.cwd(), paths: SensitivePaths = sensitivePaths(rootDir)) {
   return defineTool<{ path: string; offset?: number; limit?: number; column?: number }>({
     name: 'Read',
     description: '分段读取本机文本，默认 200 行，最多 500 行/12000 字符；相对路径基于工作区。offset 从 1 起，负数读末尾（最多 500 行）。长行每次最多 2000 字符，可用 column 从指定列续读；最多扫描 32MiB，不支持二进制。',
@@ -54,6 +55,8 @@ export function createReadTool(rootDir = process.cwd()) {
     async execute({ path, offset = 1, limit = 200, column = 1 }, context) {
       if (!path.trim() || offset === 0) throw new Error('path 不能为空，offset 不能为 0');
       const absolute = resolve(rootDir, path.trim());
+      // 密钥文件默认不读（OPT-07）：按真实路径判断，软链也挡
+      await assertNotSensitivePath(absolute, paths);
       if (!(await stat(absolute)).isFile()) throw new Error('path 必须是文件');
       const budget = Math.min(READ_CHARS, 14000 - absolute.length - 512);
       const renderRow = (row: { line: number; text: string; truncated: boolean }) => row.line + ': ' + row.text + (row.truncated ? ' …[长行截断；column=' + (column + LINE_CHARS) + ' 续读本行]' : '');
@@ -84,7 +87,7 @@ export function createReadTool(rootDir = process.cwd()) {
   });
 }
 
-async function scanFiles(root: string, signal?: AbortSignal) {
+async function scanFiles(root: string, signal: AbortSignal | undefined, paths: SensitivePaths) {
   const files: string[] = [], queue = [root];
   let visited = 0;
   for (let i = 0; i < queue.length; i++) {
@@ -95,6 +98,8 @@ async function scanFiles(root: string, signal?: AbortSignal) {
       if (++visited > 5000) return { files: files.sort(), capped: true };
       if (entry.name.startsWith('.') || IGNORED.has(entry.name)) continue;
       const path = join(queue[i]!, entry.name);
+      // 密钥文件不进列表、不进搜索（数据目录名可配置，不能只靠隐藏目录过滤）
+      if (await isSensitivePath(path, paths)) continue;
       if (entry.isDirectory() && queue.length < 500) queue.push(path);
       else if (entry.isFile()) files.push(path);
     }
@@ -102,7 +107,7 @@ async function scanFiles(root: string, signal?: AbortSignal) {
   return { files: files.sort(), capped: queue.length >= 500 };
 }
 
-export function createFileTools(rootDir = process.cwd()) {
+export function createFileTools(rootDir = process.cwd(), paths: SensitivePaths = sensitivePaths(rootDir)) {
   const list = defineTool<{ path?: string; offset?: number; limit?: number }>({
     name: 'ListFiles', description: '递归列出文件路径，不读取内容。跳过隐藏/依赖/构建目录及符号链接；最多扫描 5000 条目录项/500 个目录，默认返回 50 条；大目录请缩小 path。offset 从 0 起。',
     parameters: { type: 'object', properties: {
@@ -110,7 +115,7 @@ export function createFileTools(rootDir = process.cwd()) {
     } },
     async execute({ path = '.', offset = 0, limit = 50 }, context) {
       const root = resolve(rootDir, path);
-      const scan = await scanFiles(root, context.signal);
+      const scan = await scanFiles(root, context.signal, paths);
       let next = offset, size = 0;
       const rows: string[] = [];
       for (const file of scan.files.slice(offset, offset + limit)) {
@@ -129,7 +134,9 @@ export function createFileTools(rootDir = process.cwd()) {
     async execute({ query, path = '.', limit = 30, offset = 0 }, context) {
       if (!query.trim()) throw new Error('query 不能为空');
       const root = resolve(rootDir, path), info = await stat(root);
-      const scan = info.isFile() ? { files: [root], capped: false } : await scanFiles(root, context.signal);
+      // 直接指到某个文件时要单独过一遍密钥名单（目录扫描已跳过）
+      if (info.isFile()) await assertNotSensitivePath(root, paths);
+      const scan = info.isFile() ? { files: [root], capped: false } : await scanFiles(root, context.signal, paths);
       let bytes = 0, count = 0, hits = 0, size = 0, capped = scan.capped, skipped = 0;
       const rows: string[] = [];
       outer: for (const file of scan.files) {
@@ -156,6 +163,8 @@ export function createFileTools(rootDir = process.cwd()) {
     parameters: { type: 'object', properties: { path: { type: 'string', minLength: 1 }, content: { type: 'string' }, overwrite: { type: 'boolean' }, append: { type: 'boolean' } }, required: ['path', 'content'] },
     async execute(args, context) {
       const path = resolve(rootDir, args.path);
+      // 密钥文件不允许由工具改写（写坏密钥会让用户彻底连不上模型）
+      await assertNotSensitivePath(path, paths);
       return withFileLock(path, async () => {
         if (args.append && args.overwrite) throw new Error('append 和 overwrite 不能同时启用');
         const current = await writableText(path, context.signal);
@@ -171,6 +180,7 @@ export function createFileTools(rootDir = process.cwd()) {
     parameters: { type: 'object', properties: { path: { type: 'string', minLength: 1 }, old_text: { type: 'string', minLength: 1 }, new_text: { type: 'string' }, expected_sha256: { type: 'string', maxLength: 64 } }, required: ['path', 'old_text', 'new_text'] },
     async execute(args, context) {
       const path = resolve(rootDir, args.path);
+      await assertNotSensitivePath(path, paths);
       return withFileLock(path, async () => {
         const current = await writableText(path, context.signal);
         if (current === null) throw new Error('文件不存在');
@@ -183,7 +193,7 @@ export function createFileTools(rootDir = process.cwd()) {
       });
     },
   });
-  return [createReadTool(rootDir), list, search, write, edit];
+  return [createReadTool(rootDir, paths), list, search, write, edit];
 }
 
 const locks = new Set<string>();
