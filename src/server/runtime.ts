@@ -1,6 +1,8 @@
 import { createRuntimeAssembly } from '../app/bootstrap.js';
 import type { createDelegationWaitBridge } from './runtime/delegation-wait-bridge.js';
 import type { createWaitCoordinator } from './runtime/wait-coordinator.js';
+import type { createRoomGateway } from './runtime/room-gateway-service.js';
+import type { createControlViews } from './runtime/control-view-service.js';
 import type { WaitRequest } from './runtime/send-to-agent-service.js';
 import { ActivationCoordinator } from './runtime/activation-coordinator.js';
 import { DeliveryService } from './runtime/delivery-service.js';
@@ -99,6 +101,8 @@ import {
 export * from './runtime/types.js';
 
 const OWNER_ID = 'owner';
+/** 控制面视图服务的返回形状（OPT-03 从门面搬出，转发用） */
+type ControlViews = ReturnType<typeof createControlViews>;
 /** 用户问题卡的默认答复期限：持久等待不该被 5 分钟掐掉；到点只判过期，不当已回答 */
 const DEFAULT_USER_WAIT_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -189,6 +193,10 @@ export class AgentRuntime {
   readonly roomFlowService: RoomFlowService;
   readonly roomFlowScheduler: RoomFlowScheduler;
   readonly roomFlowRouter: RoomFlowRouter;
+  /** 群收发与群流程门面（OPT-03 从门面搬出） */
+  private readonly roomGateway: ReturnType<typeof createRoomGateway>;
+  /** 控制面视图与停止/恢复命令（OPT-03 从门面搬出） */
+  private readonly controlViews: ReturnType<typeof createControlViews>;
   /** 持久等待生命周期（E4.3，OPT-03 从门面搬出） */
   private readonly waitLifecycle: ReturnType<typeof createWaitCoordinator>;
   /** 委派与同事回信的等待闭环（E4.4，OPT-03 从门面搬出） */
@@ -272,6 +280,8 @@ export class AgentRuntime {
     this.tools = deps.tools;
     this.inboxScheduler = deps.inboxScheduler;
     this.waitTimer = deps.waitTimer;
+    this.roomGateway = deps.roomGateway;
+    this.controlViews = deps.controlViews;
     this.waitLifecycle = deps.waitLifecycle;
     this.delegationWaits = deps.delegationWaits;
   }
@@ -814,140 +824,41 @@ export class AgentRuntime {
     };
   }
 
-  // ── 群回合：扇出叫醒（搬至 RoomDispatcher，此处保持兼容入口）──
+  // ── 群收发与群流程（受理编排搬至 runtime/room-gateway-service.ts，门面在此）──
 
   /**
    * 用户往房间发一条 → 扇出给全体成员（三波次见 RoomDispatcher）。
    * `@` 是强信号不是投递开关：没被点名的一样进这一轮，只是不强制开口。
    */
   async postToRoom(roomId: string, text: string, options: SendOptions = {}): Promise<RoomRoundSummary> {
-    // 进程内兼容接口仍可等待三波结果；HTTP 与模型工具不使用这条等待路径。
-    const accepted = await this.acceptRoomMessage(roomId, text, options, true);
-    return accepted.execute();
+    return this.roomGateway.postToRoom(roomId, text, options);
   }
 
   /**
    * HTTP 收信：先持久写时间线和收件箱，再回 202；execute 仅通知调度器。
    * 群消息的 messageId 由 room_message 事件带回来（客户端按内容/幂等键校正占位）。
    */
-  async acceptRoomMessage(
+  acceptRoomMessage(
     roomId: string,
     text: string,
     options: SendOptions = {},
     waitForRounds = false,
   ): Promise<AcceptedRun<RoomRoundSummary>> {
-    return this.chatRuns.accept(`room:${roomId}:${options.clientMessageId ?? randomUUID()}`, async () => {
-      const { room, members } = await this.membersOf(roomId);
-      if (!room || members.length === 0) throw new Error('房间不存在或没有成员');
-      if (this.stopCoordinator.isStopSentence(text)) {
-        const activeFlow = await this.roomFlowService.getActiveFlowForRoom(roomId);
-        if (activeFlow) {
-          await this.stopCoordinator.stopRoomFlow(roomId, activeFlow.id, text);
-          await this.roomFlowService.pauseFlow(activeFlow.id, 'USER_STOP_COMMAND');
-        }
-      }
-      const { run, duplicate } = await this.chatRuns.prepare(
-        {
-          channelId: roomId,
-          roomId,
-          kind: 'room',
-          source: options.roomSenderId ? 'agent' : 'user',
-          input: text,
-          clientMessageId: options.clientMessageId,
-          messageId: randomUUID(),
-        },
-        [
-          options.model ?? '',
-          options.ownerName ?? this.ownerName(),
-          options.excludeAgentIds ?? [],
-          options.roomSenderId ?? '',
-        ],
-      );
-
-      // §6.2：用户新的群发言为受众签发新链许可。没有它，停止后的成员在这一轮
-      // 全部判定 held，于是「私聊说一次停 → 群里再也不响应」。
-      // 工作台代发（roomSenderId）不是用户命令，不签发；停止词更不签发。
-      let chainId: string | undefined;
-      if (!options.roomSenderId && !duplicate && !this.stopCoordinator.isStopSentence(text)) {
-        const excluded = new Set(options.excludeAgentIds ?? []);
-        const audience = members.map((member) => member.id).filter((id) => !excluded.has(id));
-        if (audience.length > 0) {
-          chainId = (
-            await this.activation.acceptRoomInput({
-              commandId: options.clientMessageId ?? run.runId,
-              agentIds: audience,
-            })
-          ).chainId;
-        }
-      }
-
-      const opts = this.chatRuns.bind(run, {
-        ...options,
-        messageId: run.messageId,
-        ...(chainId ? { chainId } : {}),
-      });
-      const queued =
-        !waitForRounds && !duplicate
-          ? await this.chatRuns.execute(
-              run.runId,
-              () => this.roomDispatcher.enqueueMessage(roomId, text, opts),
-              () => ({}),
-            )
-          : { roundId: run.runId, roomId, roomName: room.name, outcomes: [], queued: [] };
-      return {
-        receipt: {
-          roomId,
-          runId: run.runId,
-          taskId: run.taskId,
-          run: this.chatRuns.get(run.runId)!,
-          messageId: run.messageId,
-          receiptSeq: this.events.latestSeq,
-          duplicate,
-        },
-        execute: () => {
-          if (!waitForRounds) {
-            for (const member of members) this.inboxScheduler.watch(member.id);
-            return Promise.resolve(queued);
-          }
-          return !isActiveChatRun(this.chatRuns.get(run.runId)!)
-            ? Promise.resolve({ roundId: run.runId, roomId, roomName: room.name, outcomes: [], queued: [] })
-            : this.chatRuns.execute(
-                run.runId,
-                () => this.roomDispatcher.postToRoom(roomId, text, opts),
-                () => ({}),
-              );
-        },
-      };
-    });
+    return this.roomGateway.acceptRoomMessage(roomId, text, options, waitForRounds);
   }
 
-  getActiveRoomFlow(roomId: string): Promise<RoomFlow | undefined> {
-    return this.roomFlowService.getActiveFlowForRoom(roomId);
-  }
+  getActiveRoomFlow(roomId: string): Promise<RoomFlow | undefined> { return this.roomGateway.getActiveRoomFlow(roomId); }
 
-  getRoomFlow(flowId: string): Promise<RoomFlow | undefined> {
-    return this.roomFlowService.getFlow(flowId);
-  }
+  getRoomFlow(flowId: string): Promise<RoomFlow | undefined> { return this.roomGateway.getRoomFlow(flowId); }
 
-  async pauseRoomFlow(flowId: string, reason?: string): Promise<RoomFlow> {
-    const flow = await this.roomFlowService.pauseFlow(flowId, reason);
-    await this.stopCoordinator.stopRoomFlow(flow.roomId, flowId, reason ?? 'pause');
-    return flow;
-  }
+  pauseRoomFlow(flowId: string, reason?: string): Promise<RoomFlow> { return this.roomGateway.pauseRoomFlow(flowId, reason); }
 
-  resumeRoomFlow(flowId: string): Promise<RoomFlow> {
-    return this.roomFlowService.resumeFlow(flowId);
-  }
+  resumeRoomFlow(flowId: string): Promise<RoomFlow> { return this.roomGateway.resumeRoomFlow(flowId); }
 
-  async cancelRoomFlow(flowId: string, reason?: string): Promise<RoomFlow> {
-    const flow = await this.roomFlowService.cancelFlow(flowId, reason);
-    await this.stopCoordinator.stopRoomFlow(flow.roomId, flowId, reason ?? 'cancel');
-    return flow;
-  }
+  cancelRoomFlow(flowId: string, reason?: string): Promise<RoomFlow> { return this.roomGateway.cancelRoomFlow(flowId, reason); }
 
-  listRoomFlows(roomId?: string): Promise<RoomFlow[]> {
-    return this.roomFlowStore.listFlows(roomId);
-  }
+  listRoomFlows(roomId?: string): Promise<RoomFlow[]> { return this.roomGateway.listRoomFlows(roomId); }
+
 
   /** 热更新模型配置与提供者 */
   updateModelConfig(options: {
@@ -1212,75 +1123,26 @@ export class AgentRuntime {
     return this.locks.has(agentId);
   }
 
-  /**
-   * 修复控制存储（OPT-06）：损坏文件改名备份后以空状态重建，已知同事全部置 paused
-   * ——需要用户逐个核对恢复，而不是默认放行。
-   */
-  async repairControlStore(): Promise<{
-    ok: boolean;
-    corruptBackup?: string;
-    pausedAgents: number;
-    faulted: boolean;
-  }> {
-    const known = await this.registry.list();
-    const result = await this.control.repair(known.map((agent) => agent.id));
-    return { ok: true, ...result, faulted: this.control.faulted };
+  // ── 控制面视图（控制存储快照、停止/恢复命令）搬至 runtime/control-view-service.ts
+
+  repairControlStore(): ReturnType<ControlViews['repairControlStore']> { return this.controlViews.repairControlStore(); }
+
+  controlView(agentId: string): ReturnType<ControlViews['controlView']> { return this.controlViews.controlView(agentId); }
+
+  stopOperation(stopId: string): ReturnType<ControlViews['stopOperation']> { return this.controlViews.stopOperation(stopId); }
+
+  activationSnapshot(): ReturnType<ControlViews['activationSnapshot']> { return this.controlViews.activationSnapshot(); }
+
+  requestAgentStop(agentId: string, commandId: string): ReturnType<ControlViews['requestAgentStop']> {
+    return this.controlViews.requestAgentStop(agentId, commandId);
   }
 
-  controlView(agentId: string) {
-    const snap = this.control.snapshot();
-    const agent = snap.agents[agentId];
-    return {
-      agentId,
-      autoActivation: agent?.autoActivation ?? 'enabled',
-      generation: agent?.generation ?? 0,
-      lastStopId: agent?.lastStopId,
-      held: Object.values(snap.tickets).filter(
-        (ticket) => ticket.agentId === agentId && ticket.state === 'revoked',
-      ).length,
-      faulted: this.control.faulted,
-    };
+  resumeAgent(command: Parameters<ActivationCoordinator['resumeSelected']>[0]): ReturnType<ControlViews['resumeAgent']> {
+    return this.controlViews.resumeAgent(command);
   }
 
-  stopOperation(stopId: string) {
-    return this.control.snapshot().stops[stopId];
-  }
+  deliveryReceipt(receiptId: string): DeliveryReceipt | undefined { return this.controlViews.deliveryReceipt(receiptId); }
 
-  activationSnapshot() {
-    return this.control.snapshot();
-  }
-
-  async requestAgentStop(agentId: string, commandId: string) {
-    const operation = await this.activation.requestStop({
-      commandId,
-      requestedBy: { kind: 'user', id: 'owner' },
-      scope: { kind: 'agent', agentId },
-    });
-    await this.inbox.hold(agentId, 'agent_paused').catch(() => 0);
-    const runningId = this.ledger.runningTurnOf(agentId);
-    if (runningId) {
-      const treeId = this.ledger.getTurn(runningId)?.treeId;
-      if (treeId) for (const job of this.ledger.jobsOf(treeId)) job.abort();
-    }
-    const pending = await this.effects.waitFor(operation.targetEffectIds, 5_000);
-    await this.activation.settleStop(operation.stopId, pending.length > 0 ? 'needs_attention' : 'settled');
-    return (
-      this.activationSnapshot().stops[operation.stopId] ?? {
-        ...operation,
-        state: pending.length > 0 ? ('needs_attention' as const) : ('settled' as const),
-      }
-    );
-  }
-
-  resumeAgent(command: Parameters<ActivationCoordinator['resumeSelected']>[0]) {
-    return this.activation.resumeSelected(command);
-  }
-
-  deliveryReceipt(receiptId: string): DeliveryReceipt | undefined {
-    const value = this.control.snapshot().receipts[receiptId];
-    if (!value || typeof value !== 'object' || !('receiptId' in value)) return undefined;
-    return value as DeliveryReceipt;
-  }
 
   // ── 回合执行（搬至 RunExecutor，此处保持兼容入口）──
 
