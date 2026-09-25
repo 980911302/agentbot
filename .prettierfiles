@@ -28,3 +28,4 @@ test/message-store-views.test.ts
 scripts/verify-staged.mjs
 src/tools/sensitive-paths.ts
 test/runtime-control-store.test.ts
+src/settings/store.ts

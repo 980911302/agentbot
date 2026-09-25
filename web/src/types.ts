@@ -10,11 +10,7 @@ export interface ToolCallView {
 }
 
 // 线上契约的唯一来源：src/shared/contracts（纯类型，编译期擦除，不引入后端运行模块）
-import type {
-  MessageContent,
-  MessageRole,
-  ToolCall,
-} from '../../src/shared/contracts/sse.js';
+import type { MessageContent, MessageRole, ToolCall } from '../../src/shared/contracts/sse.js';
 import type { AgentEvent as WireAgentEvent } from '../../src/shared/contracts/sse.js';
 import type { Message as WireMessageShape } from '../../src/shared/contracts/sse.js';
 import type { RunResult as WireRunResult } from '../../src/shared/contracts/sse.js';
@@ -108,6 +104,8 @@ export interface ToolInfo {
 
 export interface HealthInfo {
   ok: boolean;
+  /** 主人显示名（E5.7）：来自后端设置存储，不再是 localStorage */
+  ownerName?: string;
   model: string;
   thinkingEnabled?: boolean;
   thinkingLevel?: 'low' | 'medium' | 'high';

@@ -33,7 +33,6 @@ export interface WorkbenchDeps {
     callerId?: string,
   ) => Promise<PostToRoomResult>;
   /** 主人在群里的显示名 */
-  ownerName: string;
   /** 由运行时注入：给新建智能体登记 enabled 控制条目，避免重启后被当成旧智能体暂停 */
   enrollAgent?: (agentId: string) => Promise<void>;
 }

@@ -73,7 +73,7 @@ npm run dev -- "读一下 package.json"   # 命令行单次对话
 | `AGENT_API_KEY` / `OPENAI_API_KEY`   | 模型 Key，必填其一；缺失时启动报 `MissingApiKeyError`       |
 | `AGENT_BASE_URL` / `OPENAI_BASE_URL` | OpenAI 兼容地址，默认 `https://api.deepseek.com/v1`         |
 | `AGENT_MODEL`                        | 默认 `deepseek-chat`                                        |
-| `AGENT_OWNER_NAME` / `AGENT_OWNER`   | 主人在群里的显示名，默认「主人」                            |
+| `AGENT_OWNER_NAME` / `AGENT_OWNER`   | 主人名的**初始默认值**，默认「主人」。设置页/CLI 改过之后存在 `settings/preferences.json`，那里优先（E5.7） |
 | `AGENT_DATA_DIR`                     | 数据目录，默认 `<项目根>/.agentbot`                         |
 | `AGENT_MEMORY_EXTRACTION`            | `off` 关闭回合后的自动记忆抽取（update_state 仍可写记忆）   |
 | `AGENT_WEB`                          | `off` 不装载 WebSearch / WebFetch                           |
@@ -99,6 +99,7 @@ npm run dev -- "读一下 package.json"   # 命令行单次对话
 
 | 路由                                                       | 方法与作用                                                                                                                                                                                                                                         |
 | ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/api/settings/preferences`                                | GET 读 / POST 改主人级设置（主人名、时区、语言、通知偏好）；非法值 400 + 错误码
 | `/api/health`                                              | GET：服务状态、模型、工具目录、预算、主人名                                                                                                                                                                                                        |
 | `/api/events`                                              | GET：SSE 订阅，`?after=<seq>` 补发；先发 `ready {latestSeq, resync}`                                                                                                                                                                               |
 | `/api/chat/state`                                          | GET：`?channels=a,b` 取频道快照（消息、运行、待答卡、智能体控制状态）                                                                                                                                                                              |
@@ -152,6 +153,7 @@ npm run dev -- "读一下 package.json"   # 命令行单次对话
 | `memory/agents/`、`memory/user.json`、`memory/projects/` | 三作用域记忆                                                                                                                                                                                                                                                       |
 | `compaction/*.json`                                      | 压缩摘要                                                                                                                                                                                                                                                           |
 | `inbox/*.json`                                           | 同事来信与排队群回合（领取/期限/尝试次数/检查点/held）                                                                                                                                                                                                             |
+| `settings/preferences.json`                              | 主人级设置（E5.7）：主人名、时区、语言、通知偏好。界面、群消息与 CLI 读同一份（`GET/POST /api/settings/preferences`）；密钥不在这里（走 SecretStore）。文件损坏明确报 `SETTINGS_UNREADABLE`，不静默回默认值 |
 | `correspondence/accepted.jsonl`                          | 已受理来信的往来档案                                                                                                                                                                                                                                               |
 | `chat/runs.json`                                         | 聊天运行账本（重启时把未结束的运行标为中断）                                                                                                                                                                                                                       |
 | `control/state.json`                                     | 执行控制：许可、票据、停止、投递回执、副作用。已终结的票据只保留最近若干条（默认 2000，`ticketRetention` 可调），文件不会随消息数无限增长；接近 48MB 软上限约 80% 时开始告警。每次写入把上一个好版本挪成 `control/state.json.bak`（两步 rename，不用多写一遍文件） |

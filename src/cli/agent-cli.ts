@@ -13,7 +13,9 @@ function printEvent(event: AgentEvent): void {
       .filter((section) => section.tokens > 0)
       .map((section) => `${section.label} ${section.tokens}t/${section.items}项`)
       .join(' · ');
-    console.log(`\n[context] ${rows}\n[context] 合计 ${event.stats.totalTokens}t / 预算 ${event.stats.budgetTokens}t`);
+    console.log(
+      `\n[context] ${rows}\n[context] 合计 ${event.stats.totalTokens}t / 预算 ${event.stats.budgetTokens}t`,
+    );
     return;
   }
   if (event.type === 'message') {
@@ -49,6 +51,7 @@ import { OpenAIProvider } from '../llm/openai-provider.js';
 import { MemoryStore } from '../memory/store.js';
 import { InteractionBroker } from '../interaction/broker.js';
 import { SecretStore } from '../secret/store.js';
+import { SettingsStore } from '../settings/store.js';
 
 async function main(): Promise<void> {
   const rootDir = resolve(process.cwd());
@@ -56,6 +59,9 @@ async function main(): Promise<void> {
   const memoryStore = new MemoryStore(config.dataDir);
   const broker = new InteractionBroker();
   const secrets = new SecretStore(config.dataDir);
+  // 与 HTTP 入口读同一份主人级设置（E5.7）：CLI 与群消息的显示名必须一致
+  const settings = new SettingsStore(config.dataDir, { ownerName: config.ownerName });
+  await settings.load();
   let runtime: AgentRuntime;
 
   const { tools, bind } = createAgentTools({
@@ -69,8 +75,7 @@ async function main(): Promise<void> {
 
   runtime = new AgentRuntime({
     tools,
-    createProvider: (model) =>
-      new OpenAIProvider({ apiKey: config.apiKey, model, baseURL: config.baseURL }),
+    createProvider: (model) => new OpenAIProvider({ apiKey: config.apiKey, model, baseURL: config.baseURL }),
     dataDir: config.dataDir,
     defaultModel: config.model,
     knownModels: ['deepseek-chat', 'deepseek-reasoner'],
@@ -80,6 +85,7 @@ async function main(): Promise<void> {
     broker,
     secrets,
     ownerName: config.ownerName,
+    settings,
   });
 
   // CLI 模式没有界面，卡片交互拿不到回答；让工具报错时说得清楚些
@@ -89,8 +95,7 @@ async function main(): Promise<void> {
   });
 
   const agent = await runtime.ensureDefaultAgent();
-  const prompt =
-    process.argv.slice(2).join(' ').trim() || '读一下 package.json，用一句话总结这个项目';
+  const prompt = process.argv.slice(2).join(' ').trim() || '读一下 package.json，用一句话总结这个项目';
 
   console.log(`agent> ${agent.name} · ${config.model}`);
   console.log(`user> ${prompt}`);

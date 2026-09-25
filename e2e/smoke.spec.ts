@@ -191,3 +191,32 @@ test('资料吸底保存条：在视口内且恒贴抽屉底边，内容滚动�
   await page.getByRole('button', { name: '保存' }).click();
   await expect(bar).toBeHidden();
 });
+
+/**
+ * E5.7：主人名以后端设置为准——改完刷新还在，且不是 localStorage 在起作用。
+ * 先清掉 localStorage 再刷新，验证名字来自后端（这条正是「CLI 与界面同一个名字」的界面侧）。
+ */
+test('主人名持久在后端：改完刷新仍在（localStorage 清空也不丢）', async ({ page }) => {
+  await page.goto('/');
+  // 侧栏账号行（title 不是可访问名，按类选更稳）
+  await page.locator('.sidebar-user-row').click();
+  const dialog = page.getByRole('dialog', { name: '设置' });
+  const nameInput = dialog.getByLabel('主人显示名');
+  await expect(nameInput).toBeVisible();
+
+  await nameInput.fill('端到端主人名');
+  await nameInput.blur();
+  await expect(page.locator('.ui-toast-message')).toHaveCount(0); // 保存成功不发错误 Toast
+
+  // 清掉本地缓存再刷新：名字仍应出现，说明事实源在后端
+  await page.evaluate(() => localStorage.removeItem('agentbot.ownerName'));
+  await page.reload();
+  await page.locator('.sidebar-user-row').click();
+  await expect(page.getByRole('dialog', { name: '设置' }).getByLabel('主人显示名')).toHaveValue(
+    '端到端主人名',
+  );
+
+  // 复位，避免影响同一 webServer 上的其它用例
+  await page.getByRole('dialog', { name: '设置' }).getByLabel('主人显示名').fill('linlin zhang');
+  await page.getByRole('dialog', { name: '设置' }).getByLabel('主人显示名').blur();
+});

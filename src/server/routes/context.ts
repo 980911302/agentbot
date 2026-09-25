@@ -10,7 +10,8 @@ export interface RouteContext {
   models: ModelOption[];
   tools: Array<{ name: string; description: string }>;
   budget: AppConfig['budget'];
-  ownerName: string;
+  /** 主人显示名：函数形式，设置改了即刻生效（E5.7）。用 runtime.ownerName() 取当前值 */
+  ownerName: () => string;
   /**
    * 启动时从环境变量解析出的模型默认值（bug_epxdph16hjut）。
    *

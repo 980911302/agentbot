@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { resolveConfig } from '../config.js';
 import { pickerOptionsFromProviders } from '../shared/contracts/model-catalog.js';
 import { MemoryStore } from '../memory/store.js';
+import { SettingsStore } from '../settings/store.js';
 import { InteractionBroker } from '../interaction/broker.js';
 import { SecretStore } from '../secret/store.js';
 import { OpenAIProvider } from '../llm/openai-provider.js';
@@ -28,7 +29,7 @@ import { handleHealthRoute } from './routes/health.js';
 import { handleEventsRoute } from './routes/events.js';
 import { ReplyFinalizer } from './runtime/reply-finalizer.js';
 import { ModelConfigStore } from '../storage/model-config-store.js';
-import { handleModelSettingsRoute } from './routes/settings.js';
+import { handleModelSettingsRoute, handlePreferencesRoute } from './routes/settings.js';
 
 export interface AgentServerOptions {
   port?: number;
@@ -76,6 +77,9 @@ export async function createAgentServer(options: AgentServerOptions = {}): Promi
   const knownModels = models.length > 0 ? models.map((item) => item.id) : [activeModel];
 
   const memoryStore = new MemoryStore(dataDir);
+  // 主人级设置（E5.7）：主人名/时区/语言/通知偏好落数据目录，与 CLI 读同一份
+  const settings = new SettingsStore(dataDir, { ownerName: config.ownerName });
+  await settings.load();
   const broker = new InteractionBroker();
   const secrets = new SecretStore(dataDir);
   const { tools, bind } = createAgentTools({
@@ -109,6 +113,7 @@ export async function createAgentServer(options: AgentServerOptions = {}): Promi
     seed: SEED_AGENTS,
     seedRooms: SEED_ROOMS,
     ownerName: config.ownerName,
+    settings,
     stopWords: config.stopWords,
     broker,
     secrets,
@@ -166,7 +171,7 @@ export async function createAgentServer(options: AgentServerOptions = {}): Promi
     models,
     tools: toolDefs,
     budget: config.budget,
-    ownerName: config.ownerName,
+    ownerName: () => runtime.ownerName(),
     // 环境变量里的模型默认值（bug_epxdph16hjut）：设置页只在没建供应商时拿它兜底
     envDefaults: {
       ...(config.baseURL ? { baseURL: config.baseURL } : {}),
@@ -245,6 +250,11 @@ async function handleRequest(
     return;
   }
 
+  if (path === '/api/settings/preferences') {
+    await handlePreferencesRoute(request, response, context);
+    return;
+  }
+
   // 界面事件的独立订阅（E3.4）：发送与订阅分离，断线只断订阅
   if (path === '/api/events' && method === 'GET') {
     handleEventsRoute(request, response, context);
@@ -263,7 +273,10 @@ async function handleRequest(
   }
 
   const botMatch = /^\/api\/bots\/([^/]+)$/.exec(path);
-  if (botMatch && (await handleBotItem(request, response, context, decodeURIComponent(botMatch[1] ?? ''), method))) {
+  if (
+    botMatch &&
+    (await handleBotItem(request, response, context, decodeURIComponent(botMatch[1] ?? ''), method))
+  ) {
     return;
   }
 
@@ -281,7 +294,10 @@ async function handleRequest(
   const stopMatch = /^\/api\/control\/stops\/([^/]+)$/.exec(path);
   if (stopMatch && method === 'GET') {
     const stop = context.runtime.stopOperation(decodeURIComponent(stopMatch[1] ?? ''));
-    if (!stop) { json(response, 404, { error: 'unknown stop' }); return; }
+    if (!stop) {
+      json(response, 404, { error: 'unknown stop' });
+      return;
+    }
     json(response, 200, stop);
     return;
   }
@@ -289,7 +305,10 @@ async function handleRequest(
   const deliveryMatch = /^\/api\/deliveries\/([^/]+)$/.exec(path);
   if (deliveryMatch && method === 'GET') {
     const receipt = context.runtime.deliveryReceipt(decodeURIComponent(deliveryMatch[1] ?? ''));
-    if (!receipt) { json(response, 404, { error: 'unknown receipt' }); return; }
+    if (!receipt) {
+      json(response, 404, { error: 'unknown receipt' });
+      return;
+    }
     json(response, 200, receipt);
     return;
   }
@@ -345,7 +364,9 @@ async function handleRequest(
 
   const secretMatch = /^\/api\/secrets\/([^/]+)$/.exec(path);
   if (secretMatch && method === 'DELETE') {
-    json(response, 200, { ok: await context.runtime.secrets.remove(decodeURIComponent(secretMatch[1] ?? '')) });
+    json(response, 200, {
+      ok: await context.runtime.secrets.remove(decodeURIComponent(secretMatch[1] ?? '')),
+    });
     return;
   }
 

@@ -21,6 +21,31 @@ export function fetchHealth(): Promise<HealthInfo> {
   return request('/api/health');
 }
 
+export interface OwnerPreferences {
+  ownerName: string;
+  timezone: string;
+  language: string;
+  notifications: { done: boolean; blocked: boolean; needsAction: boolean };
+  updatedAt?: number;
+}
+
+/** 主人级设置（E5.7）：CLI / 界面 / 群消息读同一份 */
+export async function fetchPreferences(): Promise<OwnerPreferences> {
+  const data = await request<{ preferences: OwnerPreferences }>('/api/settings/preferences');
+  return data.preferences;
+}
+
+export async function savePreferences(
+  patch: Partial<Omit<OwnerPreferences, 'updatedAt'>>,
+): Promise<OwnerPreferences> {
+  const data = await request<{ preferences: OwnerPreferences }>('/api/settings/preferences', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(patch),
+  });
+  return data.preferences;
+}
+
 export async function fetchBots(): Promise<BotSummary[]> {
   const data = await request<{ bots: BotSummary[] }>('/api/bots');
   return data.bots;
@@ -94,8 +119,13 @@ export function fetchSession(
 }
 
 export function fetchCorrespondence(agentId: string, peerId: string, before?: string, signal?: AbortSignal) {
-  return request<{ messages: import('../../src/shared/contracts/message-identity').Correspondence[]; nextBefore: string | null }>(
-    `/api/agents/${encodeURIComponent(agentId)}/correspondence/${encodeURIComponent(peerId)}${before ? `?before=${encodeURIComponent(before)}` : ''}`, { signal });
+  return request<{
+    messages: import('../../src/shared/contracts/message-identity').Correspondence[];
+    nextBefore: string | null;
+  }>(
+    `/api/agents/${encodeURIComponent(agentId)}/correspondence/${encodeURIComponent(peerId)}${before ? `?before=${encodeURIComponent(before)}` : ''}`,
+    { signal },
+  );
 }
 
 export async function deleteSession(id: string): Promise<void> {
@@ -202,7 +232,12 @@ export async function fetchAgentInbox(agentId: string): Promise<AgentInboxView> 
 
 /** 恢复自动处理（POST /api/agents/:id/resume） */
 /** 修复损坏的控制存储（OPT-06）：必须带确认字段，防止误触 */
-export async function repairControlStore(): Promise<{ ok: boolean; corruptBackup?: string; pausedAgents: number; faulted: boolean }> {
+export async function repairControlStore(): Promise<{
+  ok: boolean;
+  corruptBackup?: string;
+  pausedAgents: number;
+  faulted: boolean;
+}> {
   return request('/api/control/repair', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -220,10 +255,9 @@ export async function resumeAgent(agentId: string): Promise<unknown> {
 
 /** 重试失败的来信（POST /api/agents/:id/inbox/retry），返回实际重投条数 */
 export async function retryAgentMail(agentId: string): Promise<number> {
-  const data = await request<{ retried: number }>(
-    `/api/agents/${encodeURIComponent(agentId)}/inbox/retry`,
-    { method: 'POST' },
-  );
+  const data = await request<{ retried: number }>(`/api/agents/${encodeURIComponent(agentId)}/inbox/retry`, {
+    method: 'POST',
+  });
   return data.retried;
 }
 
@@ -318,7 +352,10 @@ export async function readEvents(
   },
   options: { after?: number; epoch?: string; signal?: AbortSignal } = {},
 ): Promise<void> {
-  const suffix = options.after === undefined ? '' : `?after=${options.after}&epoch=${encodeURIComponent(options.epoch ?? '')}`;
+  const suffix =
+    options.after === undefined
+      ? ''
+      : `?after=${options.after}&epoch=${encodeURIComponent(options.epoch ?? '')}`;
   const response = await fetch(`/api/events${suffix}`, { signal: options.signal });
   if (!response.ok) throw new Error(await errorMessage(response));
   if (!response.body) throw new Error('当前环境不支持流式响应');
@@ -441,7 +478,12 @@ export async function saveModelSettings(patch: {
   thinkingEnabled?: boolean;
   thinkingLevel?: 'low' | 'medium' | 'high';
   temperature?: number;
-}): Promise<{ ok: boolean; config: ModelSettingsData['config']; providers: ProviderItemConfig[]; models: ConfiguredModelItem[] }> {
+}): Promise<{
+  ok: boolean;
+  config: ModelSettingsData['config'];
+  providers: ProviderItemConfig[];
+  models: ConfiguredModelItem[];
+}> {
   return request('/api/settings/model', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -451,7 +493,12 @@ export async function saveModelSettings(patch: {
 
 export async function saveProviderConfig(
   provider: Partial<ProviderItemConfig> & { id: string },
-): Promise<{ ok: boolean; config: ModelSettingsData['config']; providers: ProviderItemConfig[]; models: ConfiguredModelItem[] }> {
+): Promise<{
+  ok: boolean;
+  config: ModelSettingsData['config'];
+  providers: ProviderItemConfig[];
+  models: ConfiguredModelItem[];
+}> {
   return request('/api/settings/model', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -461,7 +508,12 @@ export async function saveProviderConfig(
 
 export async function deleteProviderConfig(
   id: string,
-): Promise<{ ok: boolean; config: ModelSettingsData['config']; providers: ProviderItemConfig[]; models: ConfiguredModelItem[] }> {
+): Promise<{
+  ok: boolean;
+  config: ModelSettingsData['config'];
+  providers: ProviderItemConfig[];
+  models: ConfiguredModelItem[];
+}> {
   return request('/api/settings/model', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -473,7 +525,12 @@ export async function saveModelToProvider(
   providerId: string,
   model: Partial<ProviderModelConfig> & { id: string },
   setAsActive = false,
-): Promise<{ ok: boolean; config: ModelSettingsData['config']; providers: ProviderItemConfig[]; models: ConfiguredModelItem[] }> {
+): Promise<{
+  ok: boolean;
+  config: ModelSettingsData['config'];
+  providers: ProviderItemConfig[];
+  models: ConfiguredModelItem[];
+}> {
   return request('/api/settings/model', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -484,7 +541,12 @@ export async function saveModelToProvider(
 export async function deleteModelFromProvider(
   providerId: string,
   modelId: string,
-): Promise<{ ok: boolean; config: ModelSettingsData['config']; providers: ProviderItemConfig[]; models: ConfiguredModelItem[] }> {
+): Promise<{
+  ok: boolean;
+  config: ModelSettingsData['config'];
+  providers: ProviderItemConfig[];
+  models: ConfiguredModelItem[];
+}> {
   return request('/api/settings/model', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -495,7 +557,12 @@ export async function deleteModelFromProvider(
 export async function setActiveProviderModel(
   providerId: string,
   modelId: string,
-): Promise<{ ok: boolean; config: ModelSettingsData['config']; providers: ProviderItemConfig[]; models: ConfiguredModelItem[] }> {
+): Promise<{
+  ok: boolean;
+  config: ModelSettingsData['config'];
+  providers: ProviderItemConfig[];
+  models: ConfiguredModelItem[];
+}> {
   return request('/api/settings/model', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -513,7 +580,12 @@ export async function addConfiguredModel(data: {
   thinkingLevel?: 'low' | 'medium' | 'high';
   temperature?: number;
   setAsDefault?: boolean;
-}): Promise<{ ok: boolean; config: ModelSettingsData['config']; providers: ProviderItemConfig[]; models: ConfiguredModelItem[] }> {
+}): Promise<{
+  ok: boolean;
+  config: ModelSettingsData['config'];
+  providers: ProviderItemConfig[];
+  models: ConfiguredModelItem[];
+}> {
   return request('/api/settings/model', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -534,7 +606,12 @@ export async function updateConfiguredModel(
     temperature?: number;
     setAsDefault?: boolean;
   },
-): Promise<{ ok: boolean; config: ModelSettingsData['config']; providers: ProviderItemConfig[]; models: ConfiguredModelItem[] }> {
+): Promise<{
+  ok: boolean;
+  config: ModelSettingsData['config'];
+  providers: ProviderItemConfig[];
+  models: ConfiguredModelItem[];
+}> {
   return request('/api/settings/model', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -544,7 +621,12 @@ export async function updateConfiguredModel(
 
 export async function deleteConfiguredModel(
   id: string,
-): Promise<{ ok: boolean; config: ModelSettingsData['config']; providers: ProviderItemConfig[]; models: ConfiguredModelItem[] }> {
+): Promise<{
+  ok: boolean;
+  config: ModelSettingsData['config'];
+  providers: ProviderItemConfig[];
+  models: ConfiguredModelItem[];
+}> {
   return request('/api/settings/model', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -554,7 +636,12 @@ export async function deleteConfiguredModel(
 
 export async function setActiveModelConfig(
   id: string,
-): Promise<{ ok: boolean; config: ModelSettingsData['config']; providers: ProviderItemConfig[]; models: ConfiguredModelItem[] }> {
+): Promise<{
+  ok: boolean;
+  config: ModelSettingsData['config'];
+  providers: ProviderItemConfig[];
+  models: ConfiguredModelItem[];
+}> {
   return request('/api/settings/model', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },

@@ -8,6 +8,7 @@ import type { MemoryStore } from '../../memory/store.js';
 import type { RoomEventHandler, RoundOutcome, RoundStatus } from '../../room/types.js';
 import type { ModelConfigStore } from '../../storage/model-config-store.js';
 import type { SecretStore } from '../../secret/store.js';
+import type { SettingsStore } from '../../settings/store.js';
 import type { RunTreeRecord, RunTurnRecord, ToolInvocationRecord } from '../../storage/ports.js';
 import type { RecoveryPlan } from '../../tools/policy.js';
 import type { Tool } from '../../tools/tool.js';
@@ -39,8 +40,10 @@ export interface AgentRuntimeOptions {
   seedRooms?: SeedRoom[];
   /** 智能体互传的链深度上限，防止无限互发 */
   maxAgentChainDepth?: number;
-  /** 主人在群里的显示名；不配则用「主人」 */
+  /** 主人在群里的显示名；不配则用「主人」。有 settings 时以 settings 为准（E5.7） */
   ownerName?: string;
+  /** 主人级设置（主人名/时区/语言/通知偏好）持久存储；配了就以它为准 */
+  settings?: SettingsStore;
   /** 交互代理（工具问用户 → 界面作答）；不传则自建 */
   broker?: InteractionBroker;
   /** 密钥存储；不传则自建 */

@@ -124,7 +124,7 @@ export async function handleRoomRoute(
     const accepted = await runtime.acceptRoomMessage(roomId, text, {
       model,
       clientMessageId,
-      ownerName: readString(body.ownerName) ?? context.ownerName,
+      ownerName: readString(body.ownerName) ?? context.ownerName(),
     });
     json(response, 202, accepted.receipt);
     void accepted.execute().catch(() => undefined);

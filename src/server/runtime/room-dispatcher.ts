@@ -40,7 +40,8 @@ export class RoomDispatcher {
         room: import('../../room/types.js').Room | undefined;
         members: AgentRecord[];
       }>;
-      ownerNameFallback: string;
+      /** 主人显示名：函数形式，设置改了即刻生效（E5.7） */
+      ownerNameFallback: () => string;
       stopWords: string[];
       runTurn: (
         agentId: string,
@@ -94,11 +95,19 @@ export class RoomDispatcher {
     }));
     const mentions = resolveMentions(text, snapshot);
     const roundId = options.runId ?? randomUUID();
-    const ownerName = options.ownerName ?? this.deps.ownerNameFallback;
-    const postingAgent = options.roomSenderId ? members.find(member => member.id === options.roomSenderId) : undefined;
+    const ownerName = options.ownerName ?? this.deps.ownerNameFallback();
+    const postingAgent = options.roomSenderId
+      ? members.find((member) => member.id === options.roomSenderId)
+      : undefined;
     if (options.roomSenderId && !postingAgent) throw new Error('代发智能体已不在群里');
     const actor = postingAgent
-      ? { kind: 'agent' as const, id: postingAgent.id, name: postingAgent.name, color: postingAgent.color, avatar: postingAgent.avatar }
+      ? {
+          kind: 'agent' as const,
+          id: postingAgent.id,
+          name: postingAgent.name,
+          color: postingAgent.color,
+          avatar: postingAgent.avatar,
+        }
       : { kind: 'user' as const, id: 'owner', name: ownerName };
     // 群里的停止令：不能紧急下发，被点名者从简报里知道
     const stopRequested = isStopSentence(text, this.deps.stopWords);
@@ -121,9 +130,19 @@ export class RoomDispatcher {
     options.signal?.throwIfAborted();
     await this.deps.rooms.appendIfAbsent(inbound);
     options.onRoomEvent?.({ type: 'room_message', message: inbound });
-    if (postingAgent) await this.remember({ id: randomUUID(), agentId: postingAgent.id, role: 'assistant',
-      runId: roundId, content: { type: 'text', text }, createdAt: inbound.createdAt,
-      roomId, roomName: room.name, source: 'room', sender: actor });
+    if (postingAgent)
+      await this.remember({
+        id: randomUUID(),
+        agentId: postingAgent.id,
+        role: 'assistant',
+        runId: roundId,
+        content: { type: 'text', text },
+        createdAt: inbound.createdAt,
+        roomId,
+        roomName: room.name,
+        source: 'room',
+        sender: actor,
+      });
 
     if (this.deps.router) {
       const routeResult = await this.deps.router.route(inbound);
@@ -135,7 +154,9 @@ export class RoomDispatcher {
     // 工作台代发时排除调用者自己；其余在场成员都记进各自对话线（忙的也记，等它空下来看）
     const exclude = new Set(options.excludeAgentIds ?? []);
     const fixedRecipients = options.roomRecipientIds ? new Set(options.roomRecipientIds) : undefined;
-    const roster = members.filter((record) => !exclude.has(record.id) && (!fixedRecipients || fixedRecipients.has(record.id)));
+    const roster = members.filter(
+      (record) => !exclude.has(record.id) && (!fixedRecipients || fixedRecipients.has(record.id)),
+    );
     await Promise.all(
       roster.map((member) =>
         this.remember({
@@ -163,29 +184,32 @@ export class RoomDispatcher {
         continue;
       }
       queued.push(record.name);
-      await this.deps.inbox.enqueueRoom({
-        id: options.roomRecipientDeliveryIds?.[record.id],
-        toAgentId: record.id,
-        fromAgentId: actor.id,
-        fromName: actor.name,
-        fromActor: actor,
-        text: stripped,
-        priority: false,
-        depth: options.agentChainDepth ?? 0,
-        kind: 'room',
-        room: {
-          roomId,
-          roomName: room.name,
-          roundId,
-          model: options.model,
-          speaker: actor.name,
-          summoned: mentions.everyone || mentions.ids.includes(record.id),
-          everyone: mentions.everyone,
-          stopRequested,
+      await this.deps.inbox.enqueueRoom(
+        {
+          id: options.roomRecipientDeliveryIds?.[record.id],
+          toAgentId: record.id,
+          fromAgentId: actor.id,
+          fromName: actor.name,
+          fromActor: actor,
+          text: stripped,
+          priority: false,
+          depth: options.agentChainDepth ?? 0,
+          kind: 'room',
+          room: {
+            roomId,
+            roomName: room.name,
+            roundId,
+            model: options.model,
+            speaker: actor.name,
+            summoned: mentions.everyone || mentions.ids.includes(record.id),
+            everyone: mentions.everyone,
+            stopRequested,
+          },
+          correlationId: roundId,
+          ...(options.chainId ? { chainId: options.chainId } : {}),
         },
-        correlationId: roundId,
-        ...(options.chainId ? { chainId: options.chainId } : {}),
-      }, ROOM_MAX_RUNS_PER_MEMBER);
+        ROOM_MAX_RUNS_PER_MEMBER,
+      );
     }
 
     if (queueOnly) return { roundId, roomId, roomName: room.name, outcomes: [], queued };
@@ -327,8 +351,12 @@ export class RoomDispatcher {
     // 同一轮里别人已经说过的话：从群时间线取（晚到的人也要接得上）
     const recent = await this.deps.rooms.messages(context.roomId, 20).catch(() => []);
     const roundPosts = recent
-      .filter((message) => message.roundId === context.roundId && message.senderKind === 'agent'
-        && message.createdAt >= (room.memberJoinedAt?.[member.id] ?? room.createdAt))
+      .filter(
+        (message) =>
+          message.roundId === context.roundId &&
+          message.senderKind === 'agent' &&
+          message.createdAt >= (room.memberJoinedAt?.[member.id] ?? room.createdAt),
+      )
       .map((message) => ({ speaker: message.senderName, text: message.text }));
 
     options.onRoomEvent?.({
@@ -358,20 +386,55 @@ export class RoomDispatcher {
   }
 
   /** 把某个成员的公开发言落到群里：时间线 + 其他成员内部群经历 + 事件（发言者自己的经历由 runRoomTurn 写） */
-  async publishResumedPosts(agentId: string, continuation: RunContinuation, posts: string[], options: SendOptions): Promise<void> {
+  async publishResumedPosts(
+    agentId: string,
+    continuation: RunContinuation,
+    posts: string[],
+    options: SendOptions,
+  ): Promise<void> {
     if (!continuation.room) return;
     const { room, members } = await this.deps.membersOf(continuation.room.roomId);
-    const member = members.find(item => item.id === agentId);
+    const member = members.find((item) => item.id === agentId);
     if (!room || !member) throw new Error('任务所在群已解散或智能体已离群，未交付续跑结果');
     options.signal?.throwIfAborted();
-    for (const text of posts) await this.remember({ id: randomUUID(), runId: options.runId,
-      agentId, role: 'assistant', content: { type: 'text', text }, createdAt: Date.now(),
-      source: 'room', roomId: room.id, roomName: room.name,
-      sender: { kind: 'agent', id: member.id, name: member.name, color: member.color, avatar: member.avatar } });
-    const entries = await this.publishMemberPosts({ roomId: room.id, roomName: room.name,
-      roundId: continuation.room.roundId, member, color: member.color, posts, members, options });
-    await this.queueRoundMentions({ roomId: room.id, roomName: room.name,
-      roundId: continuation.room.roundId, speaker: member, entries, members, depth: continuation.agentChainDepth });
+    for (const text of posts)
+      await this.remember({
+        id: randomUUID(),
+        runId: options.runId,
+        agentId,
+        role: 'assistant',
+        content: { type: 'text', text },
+        createdAt: Date.now(),
+        source: 'room',
+        roomId: room.id,
+        roomName: room.name,
+        sender: {
+          kind: 'agent',
+          id: member.id,
+          name: member.name,
+          color: member.color,
+          avatar: member.avatar,
+        },
+      });
+    const entries = await this.publishMemberPosts({
+      roomId: room.id,
+      roomName: room.name,
+      roundId: continuation.room.roundId,
+      member,
+      color: member.color,
+      posts,
+      members,
+      options,
+    });
+    await this.queueRoundMentions({
+      roomId: room.id,
+      roomName: room.name,
+      roundId: continuation.room.roundId,
+      speaker: member,
+      entries,
+      members,
+      depth: continuation.agentChainDepth,
+    });
   }
 
   private async publishMemberPosts(input: {
@@ -418,7 +481,13 @@ export class RoomDispatcher {
               roomId: input.roomId,
               roomName: input.roomName,
               speaker: input.member.name,
-              sender: { kind: 'agent', id: input.member.id, name: input.member.name, color: input.member.color, avatar: input.member.avatar },
+              sender: {
+                kind: 'agent',
+                id: input.member.id,
+                name: input.member.name,
+                color: input.member.color,
+                avatar: input.member.avatar,
+              },
               source: 'room',
             }),
           ),
@@ -442,31 +511,38 @@ export class RoomDispatcher {
   }): Promise<string[]> {
     const queued: string[] = [];
     for (const entry of input.entries) {
-      const targets = entry.mentions.everyone
-        ? input.members.map((member) => member.id)
-        : entry.mentions.ids;
+      const targets = entry.mentions.everyone ? input.members.map((member) => member.id) : entry.mentions.ids;
       for (const targetId of targets) {
         if (targetId === input.speaker.id) continue;
         if (!input.members.some((member) => member.id === targetId)) continue;
-        const accepted = await this.deps.inbox.enqueueRoom({
-          toAgentId: targetId,
-          fromAgentId: input.speaker.id,
-          fromName: input.speaker.name,
-          fromActor: { kind: 'agent', id: input.speaker.id, name: input.speaker.name, color: input.speaker.color, avatar: input.speaker.avatar },
-          text: stripMentions(entry.text, input.members),
-          priority: false,
-          depth: input.depth ?? 0,
-          kind: 'room',
-          room: {
-            roomId: input.roomId,
-            roomName: input.roomName,
-            roundId: input.roundId,
-            speaker: input.speaker.name,
-            summoned: true,
-            everyone: entry.mentions.everyone,
+        const accepted = await this.deps.inbox.enqueueRoom(
+          {
+            toAgentId: targetId,
+            fromAgentId: input.speaker.id,
+            fromName: input.speaker.name,
+            fromActor: {
+              kind: 'agent',
+              id: input.speaker.id,
+              name: input.speaker.name,
+              color: input.speaker.color,
+              avatar: input.speaker.avatar,
+            },
+            text: stripMentions(entry.text, input.members),
+            priority: false,
+            depth: input.depth ?? 0,
+            kind: 'room',
+            room: {
+              roomId: input.roomId,
+              roomName: input.roomName,
+              roundId: input.roundId,
+              speaker: input.speaker.name,
+              summoned: true,
+              everyone: entry.mentions.everyone,
+            },
+            correlationId: input.roundId,
           },
-          correlationId: input.roundId,
-        }, ROOM_MAX_RUNS_PER_MEMBER);
+          ROOM_MAX_RUNS_PER_MEMBER,
+        );
         if (!accepted) continue;
         queued.push(targetId);
         // 空闲的人立刻叫醒；忙的人由它自己的回合收尾接手
@@ -518,44 +594,89 @@ export class RoomDispatcher {
       roomName: input.roomName,
       speaker: inbound.senderName,
       source: 'room',
-      sender: { kind: inbound.senderKind, id: inbound.senderId, name: inbound.senderName, color: inbound.senderColor },
+      sender: {
+        kind: inbound.senderKind,
+        id: inbound.senderId,
+        name: inbound.senderName,
+        color: inbound.senderColor,
+      },
     };
 
     try {
-      const result = await this.deps.runTurn(member.id, task, {
-        brief,
-        skipPersist: true,
-        persistAssistantText: false,
-        // 被点名时必须开口：连沉默工具都不给，把「必须说」做成硬约束
-        extraTools: [],
-        toolContext: {
-          room: {
-            roomId: input.roomId,
-            roomName: input.roomName,
-            posts,
-            roundId: input.roundId,
-            limit: ROOM_POST_LIMIT_PER_TURN,
-            ...(input.livePosts ? { live: true, publish: async (text: string) => {
-              options.signal?.throwIfAborted();
-              const current = await this.deps.rooms.get(input.roomId);
-              if (!current?.memberIds.includes(member.id)) throw new Error('已经不在这个群里，未发送');
-              await this.remember({ id: randomUUID(), runId: options.runId, agentId: member.id,
-                role: 'assistant', content: { type: 'text', text }, createdAt: Date.now(), source: 'room',
-                roomId: input.roomId, roomName: input.roomName,
-                sender: { kind: 'agent', id: member.id, name: member.name, color: member.color, avatar: member.avatar } });
-              const posted = await this.publishMemberPosts({ roomId: input.roomId, roomName: input.roomName,
-                roundId: input.roundId, member, color: member.color, posts: [text], members, options });
-              await this.queueRoundMentions({ roomId: input.roomId, roomName: input.roomName, roundId: input.roundId,
-                speaker: member, entries: posted, members, depth: options.agentChainDepth });
-            } } : {}),
+      const result = await this.deps.runTurn(
+        member.id,
+        task,
+        {
+          brief,
+          skipPersist: true,
+          persistAssistantText: false,
+          // 被点名时必须开口：连沉默工具都不给，把「必须说」做成硬约束
+          extraTools: [],
+          toolContext: {
+            room: {
+              roomId: input.roomId,
+              roomName: input.roomName,
+              posts,
+              roundId: input.roundId,
+              limit: ROOM_POST_LIMIT_PER_TURN,
+              ...(input.livePosts
+                ? {
+                    live: true,
+                    publish: async (text: string) => {
+                      options.signal?.throwIfAborted();
+                      const current = await this.deps.rooms.get(input.roomId);
+                      if (!current?.memberIds.includes(member.id))
+                        throw new Error('已经不在这个群里，未发送');
+                      await this.remember({
+                        id: randomUUID(),
+                        runId: options.runId,
+                        agentId: member.id,
+                        role: 'assistant',
+                        content: { type: 'text', text },
+                        createdAt: Date.now(),
+                        source: 'room',
+                        roomId: input.roomId,
+                        roomName: input.roomName,
+                        sender: {
+                          kind: 'agent',
+                          id: member.id,
+                          name: member.name,
+                          color: member.color,
+                          avatar: member.avatar,
+                        },
+                      });
+                      const posted = await this.publishMemberPosts({
+                        roomId: input.roomId,
+                        roomName: input.roomName,
+                        roundId: input.roundId,
+                        member,
+                        color: member.color,
+                        posts: [text],
+                        members,
+                        options,
+                      });
+                      await this.queueRoundMentions({
+                        roomId: input.roomId,
+                        roomName: input.roomName,
+                        roundId: input.roundId,
+                        speaker: member,
+                        entries: posted,
+                        members,
+                        depth: options.agentChainDepth,
+                      });
+                    },
+                  }
+                : {}),
+            },
+            agentChainDepth: options.agentChainDepth ?? 0,
           },
-          agentChainDepth: options.agentChainDepth ?? 0,
+          posts,
+          model: options.model,
+          onEvent: options.onEvent,
+          signal: options.signal,
         },
-        posts,
-        model: options.model,
-        onEvent: options.onEvent,
-        signal: options.signal,
-      }, options);
+        options,
+      );
 
       // 群里只有显式调用 SendToUser 才算发言；普通收尾文本始终是草稿。
       for (const post of decideRoomPosts({
@@ -577,7 +698,13 @@ export class RoomDispatcher {
             roomId: input.roomId,
             roomName: input.roomName,
             source: 'room',
-            sender: { kind: 'agent', id: member.id, name: member.name, color: member.color, avatar: member.avatar },
+            sender: {
+              kind: 'agent',
+              id: member.id,
+              name: member.name,
+              color: member.color,
+              avatar: member.avatar,
+            },
           });
         }
       }

@@ -17,7 +17,7 @@ export async function handleHealthRoute(
       models: pickerOptionsFromProviders(stored.providers),
       tools: context.tools,
       budget: context.budget,
-      ownerName: context.ownerName,
+      ownerName: context.ownerName(),
     });
   } catch {
     json(response, 200, {
@@ -27,7 +27,7 @@ export async function handleHealthRoute(
       models: context.models,
       tools: context.tools,
       budget: context.budget,
-      ownerName: context.ownerName,
+      ownerName: context.ownerName(),
     });
   }
 }

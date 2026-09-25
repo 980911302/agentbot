@@ -17,6 +17,48 @@ import {
 } from '../../shared/contracts/model-catalog.js';
 import { OpenAIProvider } from '../../llm/openai-provider.js';
 
+/**
+ * 主人级设置（E5.7）：GET 读、POST 改。
+ * 主人名以前只活在前端 localStorage，CLI 与后台回合拿不到；这里统一到数据目录。
+ * 通知偏好与时区/语言先持久化（界面消费见后续任务），密钥仍走 SecretStore。
+ */
+export async function handlePreferencesRoute(
+  request: IncomingMessage,
+  response: ServerResponse,
+  context: RouteContext,
+): Promise<void> {
+  const method = request.method ?? 'GET';
+  if (method === 'GET') {
+    json(response, 200, { preferences: context.runtime.preferences() });
+    return;
+  }
+  if (method !== 'POST') {
+    json(response, 405, { error: 'method not allowed' });
+    return;
+  }
+  const body = (await readJson(request)) as Record<string, unknown>;
+  const patch: {
+    ownerName?: string;
+    timezone?: string;
+    language?: string;
+    notifications?: Record<string, boolean>;
+  } = {};
+  if (readString(body.ownerName) !== undefined) patch.ownerName = readString(body.ownerName);
+  if (readString(body.timezone) !== undefined) patch.timezone = readString(body.timezone);
+  if (readString(body.language) !== undefined) patch.language = readString(body.language);
+  if (body.notifications && typeof body.notifications === 'object') {
+    patch.notifications = body.notifications as Record<string, boolean>;
+  }
+  try {
+    const preferences = await context.runtime.updatePreferences(patch);
+    json(response, 200, { ok: true, preferences });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const code = (error as { code?: string }).code ?? 'SETTINGS_UPDATE_FAILED';
+    json(response, 400, { error: message, code });
+  }
+}
+
 export async function handleModelSettingsRoute(
   request: IncomingMessage,
   response: ServerResponse,
@@ -228,9 +270,11 @@ export async function handleModelSettingsRoute(
       ? stored.providers.find((p) => p.id === providerId)
       : stored.providers.find((p) => p.models.some((m) => m.id === modelId));
 
-    const targetModel = (modelId
-      ? targetProvider?.models.find((m) => m.id === modelId) || stored.models.find((m) => m.id === modelId)
-      : targetProvider?.models[0]) as any;
+    const targetModel = (
+      modelId
+        ? targetProvider?.models.find((m) => m.id === modelId) || stored.models.find((m) => m.id === modelId)
+        : targetProvider?.models[0]
+    ) as any;
 
     const rawKey = readString(body.apiKey)?.trim();
     // 界面回填的是打码值，不代表用户提供了新 Key
@@ -262,13 +306,17 @@ export async function handleModelSettingsRoute(
       typeof body.thinkingEnabled === 'boolean'
         ? body.thinkingEnabled
         : targetModel?.thinkingEnabled !== undefined
-        ? targetModel.thinkingEnabled
-        : true;
+          ? targetModel.thinkingEnabled
+          : true;
     const thinkingLevel =
       (body.thinkingLevel as ThinkingLevel) || targetModel?.thinkingLevel || stored.thinkingLevel || 'medium';
 
     // 本地地址无需强制要求 API Key
-    const finalApiKey = apiKey || (baseURL.includes('127.0.0.1') || baseURL.includes('localhost') || baseURL.includes('192.168.') ? 'sk-local' : '');
+    const finalApiKey =
+      apiKey ||
+      (baseURL.includes('127.0.0.1') || baseURL.includes('localhost') || baseURL.includes('192.168.')
+        ? 'sk-local'
+        : '');
     if (!finalApiKey) {
       json(response, 400, { ok: false, error: '未提供 API Key' });
       return;

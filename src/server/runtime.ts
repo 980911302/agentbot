@@ -33,6 +33,7 @@ import { SecretStore } from '../secret/store.js';
 import { AgentInbox, type InboxItem } from '../agent/inbox.js';
 import { CorrespondenceStore } from '../storage/correspondence-store.js';
 import { DEFAULT_OWNER_NAME, DEFAULT_STOP_WORDS, isStopSentence } from '../config.js';
+import type { SettingsStore } from '../settings/store.js';
 import { ContextBuilder, type BuiltContext, type BuildOptions } from '../context/builder.js';
 import type { ContextBudget } from '../context/budget.js';
 import type { LLMProvider } from '../llm/provider.js';
@@ -282,7 +283,6 @@ export class AgentRuntime {
       registry: this.registry,
       rooms: this.rooms,
       messages: this.messages,
-      ownerName: options.ownerName ?? DEFAULT_OWNER_NAME,
       // 新建同事务必登记 enabled，否则重启后会被迁移逻辑当成旧智能体暂停
       enrollAgent: (agentId) => this.enrollAgent(agentId),
       postToRoom: async (roomId, text, excludeAgentIds, agentChainDepth, signal, callerId) => {
@@ -307,7 +307,7 @@ export class AgentRuntime {
       inbox: this.inbox,
       locks: this.locks,
       membersOf: (roomId) => this.membersOf(roomId),
-      ownerNameFallback: options.ownerName ?? DEFAULT_OWNER_NAME,
+      ownerNameFallback: () => this.ownerName(),
       stopWords: options.stopWords ?? DEFAULT_STOP_WORDS,
       runTurn: (agentId, task, turn, options) => this.runTurn(agentId, task, turn, options),
       // 只通知调度器，绝不沿发送方的栈递归执行收件人。
@@ -819,7 +819,9 @@ export class AgentRuntime {
     }
     const stop = this.stopCoordinator.isStopSentence(text);
     if (this.control.faulted && !stop) {
-      throw Object.assign(new Error('控制数据损坏，已进入保护模式：去设置 → 高级 → 修复控制数据'), { code: 'CONTROL_FAULTED' });
+      throw Object.assign(new Error('控制数据损坏，已进入保护模式：去设置 → 高级 → 修复控制数据'), {
+        code: 'CONTROL_FAULTED',
+      });
     }
     const commandId = clientMessageId ?? randomUUID();
     let authorization: Awaited<ReturnType<ActivationCoordinator['acceptUserInput']>> | undefined;
@@ -854,7 +856,7 @@ export class AgentRuntime {
       content: { type: 'text', text },
       createdAt: Date.now(),
       source: 'user',
-      sender: { kind: 'user', id: OWNER_ID, name: this.options.ownerName ?? DEFAULT_OWNER_NAME },
+      sender: { kind: 'user', id: OWNER_ID, name: this.ownerName() },
       ...(clientMessageId ? { clientMessageId } : {}),
     };
     // 先落盘再回执：客户端拿到 messageId 时消息已经在库里（E3.2/E3.4）
@@ -999,7 +1001,7 @@ export class AgentRuntime {
         },
         [
           options.model ?? '',
-          options.ownerName ?? '',
+          options.ownerName ?? this.ownerName(),
           options.excludeAgentIds ?? [],
           options.roomSenderId ?? '',
         ],
@@ -1360,6 +1362,32 @@ export class AgentRuntime {
     return this.inbox.retryFailed(agentId);
   }
 
+  /**
+   * 生效的主人名（E5.7）：有 SettingsStore 就以它为准，否则回落到构造时的配置。
+   * 群消息、工作台代发、幂等指纹都走这里，保证 CLI / 界面 / 后台是同一个名字。
+   */
+  ownerName(): string {
+    return this.options.settings?.ownerName ?? this.options.ownerName ?? DEFAULT_OWNER_NAME;
+  }
+
+  /** 当前主人级设置；没配 SettingsStore 时给一份只读的默认视图 */
+  preferences() {
+    return (
+      this.options.settings?.current() ?? {
+        ownerName: this.ownerName(),
+        timezone: '',
+        language: '',
+        notifications: { done: true, blocked: true, needsAction: true },
+      }
+    );
+  }
+
+  /** 更新主人级设置（E5.7）：落盘后才生效，三个入口读同一份 */
+  async updatePreferences(patch: Parameters<SettingsStore['update']>[0]) {
+    if (!this.options.settings) throw new Error('本次运行没有配置主人设置存储（settings 未注入）');
+    return this.options.settings.update(patch);
+  }
+
   isBusy(agentId: string): boolean {
     return this.locks.has(agentId);
   }
@@ -1368,7 +1396,12 @@ export class AgentRuntime {
    * 修复控制存储（OPT-06）：损坏文件改名备份后以空状态重建，已知同事全部置 paused
    * ——需要用户逐个核对恢复，而不是默认放行。
    */
-  async repairControlStore(): Promise<{ ok: boolean; corruptBackup?: string; pausedAgents: number; faulted: boolean }> {
+  async repairControlStore(): Promise<{
+    ok: boolean;
+    corruptBackup?: string;
+    pausedAgents: number;
+    faulted: boolean;
+  }> {
     const known = await this.registry.list();
     const result = await this.control.repair(known.map((agent) => agent.id));
     return { ok: true, ...result, faulted: this.control.faulted };
