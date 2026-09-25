@@ -6,7 +6,7 @@ import { memberPauseTag } from '../features/chat/group-view';
 import type { BotSummary, DisplayMessage } from '../types';
 import { BotAvatar, type AvatarMember } from './BotAvatar';
 import { ToolCallCard } from './ToolCallCard';
-import { IconChevronRight, IconTool } from '../icons';
+import { IconAlert, IconChevronRight, IconTool } from '../icons';
 
 function getInitials(name: string): string {
   const trimmed = name.trim();
@@ -97,11 +97,21 @@ export function MessageItem({
     <span className="msg-origin-tag">{message.originLabel}</span>
   ) : null;
 
-  // 只有工具调用的消息没有正文：别画一个空气泡，工具卡自己会说话
+  // 只有工具调用的消息没有正文：别画一个空气泡，工具卡自己会说话。
+  // 错误消息统一在这里画一个警示图标（正文不再拼 ⚠️），图标带 aria-label 让读屏先读「出错」。
   const text = message.content.trim() ? (
-    <div className={`msg-bubble-box ${layout}${message.error ? ' error' : ''}`}>
-      <BubbleContent message={message} memberNames={memberNames} />
-    </div>
+    message.error ? (
+      <div className={`msg-bubble-box ${layout} error`}>
+        <IconAlert size={16} className="msg-error-icon" role="img" aria-label="出错" />
+        <div className="msg-error-body">
+          <BubbleContent message={message} memberNames={memberNames} />
+        </div>
+      </div>
+    ) : (
+      <div className={`msg-bubble-box ${layout}`}>
+        <BubbleContent message={message} memberNames={memberNames} />
+      </div>
+    )
   ) : null;
 
   /** 工具过程聚合成一条摘要，默认收起；失败时展开，便于看见需要处理的问题。 */

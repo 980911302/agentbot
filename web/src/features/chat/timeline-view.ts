@@ -98,15 +98,17 @@ function sameDay(a: number, b: number): boolean {
 /**
  * 把消息流变成时间线行：合并组 + 跨天日期分隔。
  * 过滤器与历史一致（空正文不渲染），往来条由 ChatView 另行处理。
+ * `previousAt`：这一段之前最后一条消息的时间（被往来条切开的上一段）；
+ * 不传或 null 表示这是时间线的起点，首条要插日期分隔。
  */
 export function groupTimelineMessages(
   messages: DisplayMessage[],
-  options: { isGroup: boolean; now?: number },
+  options: { isGroup: boolean; now?: number; previousAt?: number | null },
 ): TimelineEntry[] {
   const now = options.now ?? Date.now();
   const renderable = messages.filter(isRenderable);
   const entries: TimelineEntry[] = [];
-  let previousAt: number | null = null;
+  let previousAt: number | null = options.previousAt ?? null;
   for (const run of mergeRun(renderable, options.isGroup)) {
     const firstAt = Date.parse(run[0]!.createdAt);
     if (needsDateDivider(firstAt, previousAt)) {
@@ -155,13 +157,16 @@ export function timelineBlocks(
   const now = options.now ?? Date.now();
   const blocks: TimelineBlock[] = [];
   let run: DisplayMessage[] = [];
+  /** 上一段最后一条已渲染消息的时间：往来条切开的下一段接着它比，不重复插「今天」 */
+  let previousAt: number | null = null;
 
   const flushRun = () => {
-    for (const group of groupTimelineMessages(run, { isGroup: options.isGroup, now })) {
+    for (const group of groupTimelineMessages(run, { isGroup: options.isGroup, now, previousAt })) {
       if (group.kind === 'divider') {
         blocks.push({ kind: 'divider', key: group.key, label: group.label });
       } else {
         blocks.push({ kind: 'group', key: group.key, messages: group.messages });
+        previousAt = Date.parse(group.messages.at(-1)!.createdAt);
       }
     }
     run = [];

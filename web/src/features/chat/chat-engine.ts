@@ -108,7 +108,7 @@ export class ChatEngine {
     const error: DisplayMessage = {
       id: `send-error-${key}`,
       role: 'assistant',
-      content: `⚠️ 未确认是否已受理：${reason}`,
+      content: `未确认是否已受理：${reason}`,
       error: true,
       retryText: pending.text,
       retryClientMessageId: key,
@@ -320,7 +320,7 @@ export class ChatEngine {
               id,
               runId: run.runId,
               role: 'assistant',
-              content: `⚠️ ${run.error ?? '执行失败'}`,
+              content: run.error ?? '执行失败',
               error: true,
               retryText,
               toolCalls: [],

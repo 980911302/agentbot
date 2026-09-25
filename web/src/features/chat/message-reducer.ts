@@ -18,7 +18,7 @@ export function errorMessage(channel: ChannelItem, text: string, retryText?: str
     role: 'assistant',
     senderName: channel.name,
     senderColor: channel.color,
-    content: `⚠️ ${text}`,
+    content: text,
     toolCalls: [],
     createdAt: now(),
     error: true,

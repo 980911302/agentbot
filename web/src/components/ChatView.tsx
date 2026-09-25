@@ -14,6 +14,8 @@ import { jumpToBottomVisible, timelineBlocks } from '../features/chat/timeline-v
 import { controlStatusText as controlStatusTextOf, type ControlNoticeInput } from '../features/chat/control-view';
 import { headerMemberStack, memberPauseTag, roomFlowPhaseLabel } from '../features/chat/group-view';
 import { ChatWelcome } from './ChatWelcome';
+import { toast } from './ui/Toast';
+import { conversationMarkdown } from '../features/chat/export-view';
 import type { MessageActor } from '../../../src/shared/contracts/message-identity';
 
 interface ChatViewProps {
@@ -113,6 +115,42 @@ export function ChatView({
   const memberStack = headerMemberStack(faces);
   const [peer, setPeer] = useState<MessageActor | null>(null);
   useEffect(() => setPeer(null), [channelKey]);
+
+  /** 导出会话：刚复制成功时按钮短暂换成对勾，文案同步改成「已复制」 */
+  const [exported, setExported] = useState(false);
+  useEffect(() => {
+    if (!exported) return undefined;
+    const timer = window.setTimeout(() => setExported(false), 1800);
+    return () => window.clearTimeout(timer);
+  }, [exported]);
+  useEffect(() => setExported(false), [channelKey]);
+
+  const exportConversation = () => {
+    const { markdown, count } = conversationMarkdown({
+      title,
+      isGroup: Boolean(isGroup),
+      ownerName,
+      botName: isGroup ? undefined : bot?.name,
+      messages,
+    });
+    if (count === 0) {
+      toast('这段会话还没有可导出的消息');
+      return;
+    }
+    const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : undefined;
+    if (!clipboard) {
+      toast('当前环境不支持写剪贴板，导出失败', 'error');
+      return;
+    }
+    clipboard.writeText(markdown).then(
+      () => {
+        setExported(true);
+        toast(`已复制 ${count} 条消息（Markdown），可直接粘贴`, 'ok');
+      },
+      () => toast('复制到剪贴板失败，请检查浏览器权限后重试', 'error'),
+    );
+  };
+  const exportLabel = exported ? '已复制会话 Markdown' : '导出会话：复制为 Markdown';
 
   const [roomFlow, setRoomFlow] = useState<RoomFlowView | null>(null);
   /** 受控流程条文案与 warn 语义（规范 5.14） */
@@ -350,14 +388,12 @@ export function ChatView({
           ) : null}
           <button
             type="button"
-            className="chat-header-icon-btn"
-            aria-label="分享"
-            title="分享或导出会话"
-            onClick={() => {
-              void navigator.clipboard.writeText(window.location.href);
-            }}
+            className={`chat-header-icon-btn${exported ? ' done' : ''}`}
+            aria-label={exportLabel}
+            title={exported ? '已复制' : '导出会话（复制为 Markdown：发送者、时间、正文）'}
+            onClick={exportConversation}
           >
-            <IconShare size={17} />
+            {exported ? <IconCheck size={17} /> : <IconShare size={17} />}
           </button>
           <button
             type="button"
@@ -442,9 +478,17 @@ export function ChatView({
       >
         {/* aria-live：新消息到达时朗读给屏幕阅读器（UI-10）。
             polite 不打断当前朗读；role=log 表明这是追加型内容。 */}
-        <div className="chat-message-list swap" key={channelKey} role="log" aria-live="polite" aria-relevant="additions">
+        <div
+          className="chat-message-list swap"
+          key={channelKey}
+          role="log"
+          aria-live="polite"
+          aria-relevant="additions"
+          aria-busy={loading || undefined}
+        >
+          {/* 骨架只是视觉占位：不再嵌一层 aria-live，忙碌由外层 log 的 aria-busy 表达 */}
           {loading ? (
-            <div className="chat-loading" aria-busy="true" aria-live="polite">
+            <div className="chat-loading" aria-hidden="true">
               {[0, 1, 2].map((row) => (
                 <div className={`chat-loading-row${row % 2 === 1 ? ' mine' : ''}`} key={row}>
                   <div className="skeleton chat-loading-avatar" />
@@ -517,8 +561,9 @@ export function ChatView({
               ))
             : null}
 
+          {/* 流式中的气泡每来一段增量都会改文本：对读屏隐藏，完成后落成正式消息再朗读一次 */}
           {busy && !isGroup && liveText ? (
-            <div className="msg-row dm-agent streaming-indicator">
+            <div className="msg-row dm-agent streaming-indicator" aria-hidden="true">
               <div className="msg-avatar-col">
                 <BotAvatar
                   name={bot?.name || '助手'}
@@ -542,15 +587,18 @@ export function ChatView({
         </div>
       </div>
 
+      {/* 忙碌提示：思考中的头像 + 一行「名字 正在…」+ 三个 .dot-pulse（规范 §3 / §8），不做假气泡 */}
       {busy && !isGroup && !liveText ? (
         <div className="chat-status-line" role="status" aria-live="polite" title={actionHint ?? undefined}>
-          <BotAvatar name={bot?.name || '助手'} color={bot?.color || '#b89b6a'} size={28} agentId={bot?.id} status="thinking" />
-          <span className="chat-status-copy">
+          <BotAvatar name={bot?.name || '助手'} color={bot?.color || '#b89b6a'} size={24} agentId={bot?.id} status="thinking" />
+          <span className="chat-status-text">
             <span className="chat-status-name">{bot?.name || '助手'}</span>
-            <span className="chat-status-message">
-              {bot?.activity ? `正在${bot.activity}` : '正在组织回复'}
-              <span className="chat-status-dots" aria-hidden="true"><i /><i /><i /></span>
-            </span>
+            {bot?.activity ? `正在${bot.activity}` : '正在组织回复'}
+          </span>
+          <span className="chat-status-dots" aria-hidden="true">
+            <span className="dot-pulse" />
+            <span className="dot-pulse" />
+            <span className="dot-pulse" />
           </span>
         </div>
       ) : null}

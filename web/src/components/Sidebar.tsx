@@ -368,7 +368,14 @@ export function Sidebar({
                             ) : null}
                           </div>
                           <span className="channel-time">{channel.time}</span>
-                          {channel.unread ? <span className="channel-unread-dot" title={`${channel.unread} 条未读`} /> : null}
+                          {channel.unread ? (
+                            <span
+                              className="channel-unread-dot"
+                              title={`${channel.unread} 条未读`}
+                              role="img"
+                              aria-label={`${channel.unread} 条未读`}
+                            />
+                          ) : null}
                         </div>
                         <div className="channel-snippet-row">
                           <span className="channel-snippet">{channel.lastMessage}</span>

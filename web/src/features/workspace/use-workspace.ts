@@ -3,6 +3,14 @@ import * as api from '../../api';
 import { formatClock } from '../../format';
 import type { BotSummary, DisplayMessage, RoomView } from '../../types';
 import type { ChannelItem } from '../../components/Sidebar';
+import {
+  loadReadMarks,
+  reconcileUnread,
+  sameUnread,
+  saveReadMarks,
+  type ReadMarks,
+  type ReadMarksStore,
+} from './unread-view';
 
 /** 智能体控制/来信快照（UI-03）：暂停、待处理、失败 */
 export interface AgentControlFlags {
@@ -28,7 +36,13 @@ export function useWorkspace(deps: { activeChannelId: string }) {
   /** 智能体控制/来信快照（UI-03 状态点）：暂停、待处理、失败 */
   const [agentFlags, setAgentFlags] = useState<Record<string, AgentControlFlags>>({});
   const agentFlagsRef = useRef<Record<string, AgentControlFlags>>({});
-  const seenRoomsRef = useRef<Map<string, number>>(new Map());
+  /** 各频道「已读到第几条」，落 localStorage，重启不丢（群与私聊同一套） */
+  const readMarksRef = useRef<ReadMarks | null>(null);
+  /** 最近一次拿到的各频道条数（群 / 私聊分开存，一边拉取失败时沿用上次）：切进频道时立刻按它记已读 */
+  const roomCountsRef = useRef<Record<string, number>>({});
+  const agentCountsRef = useRef<Record<string, number>>({});
+  /** 上次同步后离开过的频道：在里面时来的消息已经看过，下一轮同步按已读收口 */
+  const leftChannelsRef = useRef<Set<string>>(new Set());
   const activeChannelIdRef = useRef('');
   const agentsRef = useRef<BotSummary[]>([]);
   const roomsRef = useRef<RoomView[]>([]);
@@ -52,11 +66,23 @@ export function useWorkspace(deps: { activeChannelId: string }) {
   }, [channels]);
 
   useEffect(() => {
+    const previous = activeChannelIdRef.current;
+    if (previous && previous !== deps.activeChannelId) leftChannelsRef.current.add(previous);
     activeChannelIdRef.current = deps.activeChannelId;
-    // 切进频道就是看过了
-    setUnread((current) =>
-      current[deps.activeChannelId] ? { ...current, [deps.activeChannelId]: 0 } : current,
-    );
+    // 切进频道就是看过了：已读位置立刻跟到已知条数并落盘，红点清掉
+    const id = deps.activeChannelId;
+    const known = roomCountsRef.current[id] ?? agentCountsRef.current[id];
+    const marks = ensureReadMarks(readMarksRef);
+    if (id && known !== undefined && marks[id] !== known) {
+      marks[id] = known;
+      saveReadMarks(readMarksStore(), marks);
+    }
+    setUnread((current) => {
+      if (!current[id]) return current;
+      const next = { ...current };
+      delete next[id];
+      return next;
+    });
   }, [deps.activeChannelId]);
 
   const syncWorkspace = useCallback(async (): Promise<ChannelItem[]> => {
@@ -70,36 +96,28 @@ export function useWorkspace(deps: { activeChannelId: string }) {
     if (roomData) {
       setRooms(roomData.rooms);
       setRoomMemberLimit(roomData.memberLimit);
-
-      // 未读：首轮只记基线；之后 messageCount 增长且不在当前频道 → 累加差值
-      const updates: Record<string, number> = {};
-      for (const room of roomData.rooms) {
-        const seen = seenRoomsRef.current.get(room.id);
-        if (seen === undefined) {
-          seenRoomsRef.current.set(room.id, room.messageCount);
-          continue;
-        }
-        if (room.messageCount > seen) {
-          seenRoomsRef.current.set(room.id, room.messageCount);
-          if (room.id !== activeChannelIdRef.current) {
-            updates[room.id] = (updates[room.id] ?? 0) + Math.min(room.messageCount - seen, 99);
-          }
-        } else if (room.messageCount < seen) {
-          seenRoomsRef.current.set(room.id, room.messageCount);
-        }
-      }
-      if (Object.keys(updates).length > 0) {
-        setUnread((current) => {
-          const next = { ...current };
-          for (const [roomId, increment] of Object.entries(updates)) {
-            next[roomId] = Math.min((current[roomId] ?? 0) + increment, 99);
-          }
-          return next;
-        });
-      }
-    } else if (agents) {
-      // 房间拉取失败但智能体成功：保持智能体更新（rooms 由上次状态保留）
     }
+
+    // 未读（群 + 私聊）：条数 − 已读位置；当前频道与刚离开的频道按已读收口。
+    // 房间或同事有一边拉取失败：那一边沿用上次的条数，不清也不新增未读。
+    if (roomData) {
+      roomCountsRef.current = Object.fromEntries(roomData.rooms.map((room) => [room.id, room.messageCount]));
+    }
+    if (agents) {
+      agentCountsRef.current = Object.fromEntries(
+        agents.filter((bot) => !bot.hidden).map((bot) => [bot.id, bot.conversationCount]),
+      );
+    }
+    const result = reconcileUnread({
+      counts: { ...roomCountsRef.current, ...agentCountsRef.current },
+      marks: ensureReadMarks(readMarksRef),
+      readThrough: [activeChannelIdRef.current, ...leftChannelsRef.current],
+      complete: Boolean(roomData && agents),
+    });
+    leftChannelsRef.current.clear();
+    readMarksRef.current = result.marks;
+    if (result.changed) saveReadMarks(readMarksStore(), result.marks);
+    setUnread((current) => (sameUnread(current, result.unread) ? current : result.unread));
 
     const rebuilt: ChannelItem[] = [
       ...roomList(roomData ?? { rooms: roomsRef.current, memberLimit: roomMemberLimitRef.current }),
@@ -227,4 +245,22 @@ export function useWorkspace(deps: { activeChannelId: string }) {
     /** 操作（恢复/重试）后立刻重取一次，不用等下一个 15s 周期 */
     refreshAgentFlags: pollAgentFlags,
   };
+}
+
+/** localStorage 在隐私模式下访问即抛：包一层，读写失败都交给 unread-view 静默处理 */
+function readMarksStore(): ReadMarksStore {
+  try {
+    return window.localStorage;
+  } catch {
+    return {
+      getItem: () => null,
+      setItem: () => undefined,
+    };
+  }
+}
+
+/** 已读位置：首次用到时从 localStorage 读一次，之后以内存为准 */
+function ensureReadMarks(ref: { current: ReadMarks | null }): ReadMarks {
+  if (!ref.current) ref.current = loadReadMarks(readMarksStore());
+  return ref.current;
 }
