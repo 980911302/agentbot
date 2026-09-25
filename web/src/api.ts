@@ -329,9 +329,13 @@ export async function sendChat(body: {
 }
 
 /** 群发送：202 受理回执；扇出在后台，谁开口走事件订阅 */
+/**
+ * 发群消息。**不接受 ownerName**：群消息的显示名由后端设置决定（E5.7），
+ * 客户端传什么都不能覆盖——从签名上禁掉比运行时忽略更明确。
+ */
 export async function sendRoomMessage(
   roomId: string,
-  body: { text: string; model?: string; ownerName?: string; clientMessageId?: string },
+  body: { text: string; model?: string; clientMessageId?: string },
 ): Promise<Receipt> {
   return request<Receipt>(`/api/rooms/${encodeURIComponent(roomId)}/messages`, {
     method: 'POST',
