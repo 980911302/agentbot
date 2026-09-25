@@ -50,6 +50,8 @@ export interface AgentRegistryPort {
 export interface MessageRepositoryPort {
   append(message: Message): Promise<void>;
   list(agentId: string, limit?: number): Promise<Message[]>;
+  /** 某个回合产生的消息（按 runId 过滤，避免整条线扫描） */
+  byRun(agentId: string, runId: string): Promise<Message[]>;
   recent(agentId: string, limit: number, excludeId?: string): Promise<Message[]>;
   count(agentId: string): Promise<number>;
   clear(agentId: string): Promise<void>;

@@ -391,7 +391,8 @@ export class RunExecutor {
       let memoryExchange: Message[] | undefined;
       if (result.stopReason === 'final_answer') {
         await this.deps.registry.update(agentId, {});
-        memoryExchange = [task, ...(await this.deps.messages.list(agentId)).filter(message => message.id !== task.id && message.runId === turnId)];
+        // 只取这一回合写下的消息：不再全量 list 后再过滤
+        memoryExchange = [task, ...(await this.deps.messages.byRun(agentId, turnId)).filter(message => message.id !== task.id)];
         assertExecution(guard);
       }
 
