@@ -16,9 +16,12 @@ export function createReadToolOutputTool() {
         offset: { type: 'integer', minimum: 0, description: 'UTF-8 字节偏移，从 0 起' },
         limit: {
           type: 'integer',
-          minimum: 4,
+          // 下限取两种模式的更小者：搜索模式只要 1 个命中（读取模式的 4–12000 字节
+          // 由 store 兜底——那里已经有「limit 必须在 4–12000 字节之间」的校验）。
+          // 原先写 4 会让「搜索模式有效 1–30」这句描述与 schema 自相矛盾（E5.8 打回点）。
+          minimum: 1,
           maximum: 12000,
-          description: '读取模式：本页最多几个字节（4–12000）；搜索模式：最多几个命中（有效 1–30，缺省 30）',
+          description: '读取模式：本页最多几个字节（4–12000）；搜索模式：最多几个命中（1–30，缺省 30）',
         },
         query: {
           type: 'string',

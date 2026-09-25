@@ -324,6 +324,12 @@ it('ReadToolOutput 搜索模式下 limit 真的生效（E5.8：不许接受参�
     // 显式给 limit：命中数被真的截断（修复前这个参数在搜索模式下被完全忽略）
     const few = await tool.execute({ output_id: record.id, query: 'NEEDLE', limit: 5 }, ctx(outputs));
     assert.equal((String(few).match(/命中字节 offset/g) ?? []).length, 5);
+
+    // 下限：搜索模式要 1 个命中必须能过校验（E5.8 打回点——描述写「1–30」时 schema 还是 minimum:4）
+    const two = await tool.execute({ output_id: record.id, query: 'NEEDLE', limit: 2 }, ctx(outputs));
+    assert.equal((String(two).match(/命中字节 offset/g) ?? []).length, 2, 'limit=2 要真的只回 2 个命中');
+    const one = await tool.execute({ output_id: record.id, query: 'NEEDLE', limit: 1 }, ctx(outputs));
+    assert.equal((String(one).match(/命中字节 offset/g) ?? []).length, 1, '下限 1 可用');
     assert.match(String(few), /next_offset: \d+（仍有未读\/未扫描内容）/);
 
     // 超过 30 的上限按 30 处理（扫描预算不变）
