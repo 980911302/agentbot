@@ -42,6 +42,18 @@ npm run dev -- "读一下 package.json"   # 命令行单次对话
 | `node scripts/check-imports.mjs` | 跨层 import 约束（R1 契约纯净 / R2 前端只类型导入 / R3 路由不碰 storage / R4 工具不碰门面），可传 rootDir 指向测试夹具 |
 | `npm run clean` | 只清 `dist`、`web/dist`、`test-results`（白名单，绝不碰 `.agentbot`/`.env`） |
 
+### 提交前钩子（ENG-02）
+
+仓库没有远端，`.github/workflows/ci.yml` 不会运行，所以门禁靠本地钩子兜底：
+
+- `.githooks/pre-commit`：先跑 `node scripts/verify-staged.mjs`（暂存区红线：`.env` 与
+  `.env.*`（`.env.example` 放行）、`.agentbot/`、`.commandcode/`、`*.key`/`*.pem`/`*.p12`、
+  大于 1MB 的文件），再跑 `npm run typecheck` 与 `npm test`；任一步失败即阻止提交。
+- 安装：`npm install` 会经 `package.json` 的 `prepare` → `node scripts/install-hooks.mjs`
+  自动执行 `git config core.hooksPath .githooks`；也可以手动跑这一条。
+- 钩子检查的是**工作区**（原生钩子拿不到干净的暂存树），所以提交前请让工作区处于要提交的状态。
+- 只在确知风险时用 `git commit --no-verify` 跳过；完整门禁仍是提交前跑一次 `npm run ci`。
+
 ## 3. 配置
 
 启动时读取项目根 `.env`（`src/config.ts`，进程环境变量优先）。设置页保存的模型配置写入数据目录 `model-config.json`，启动时优先于环境变量，可在界面热更新。

@@ -1,0 +1,30 @@
+#!/bin/sh
+# 提交前门禁（ENG-02）：让「只靠自觉跑 npm run ci」变成机械约束。
+#
+# 只跑两步快的：类型检查 + 全量测试；完整门禁（构建、文档、令牌、格式、
+# 静态、跨层 import）仍在提交前/流水线里用 `npm run ci`。
+# 检查的是**工作区**而不是暂存内容（原生钩子拿不到一份干净的暂存树），
+# 所以请先确保工作区是你要提交的状态。
+#
+# 安装：npm install 会通过 package.json 的 prepare 自动设置
+#   git config core.hooksPath .githooks
+# 手动安装：git config core.hooksPath .githooks
+# 临时跳过（仅在确知风险时）：git commit --no-verify
+
+set -e
+
+node scripts/verify-staged.mjs || exit 1
+
+echo "[pre-commit] 类型检查…"
+npm run typecheck || {
+  echo "[pre-commit] 类型检查未通过，提交被阻止。修好后再提交，或用 git commit --no-verify 跳过（不推荐）。" >&2
+  exit 1
+}
+
+echo "[pre-commit] 跑测试…"
+npm test || {
+  echo "[pre-commit] 测试未通过，提交被阻止。修好后再提交，或用 git commit --no-verify 跳过（不推荐）。" >&2
+  exit 1
+}
+
+echo "[pre-commit] 通过：类型检查 + 测试全绿。"
