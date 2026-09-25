@@ -1,4 +1,5 @@
 import type { DisplayMessage } from '../../types.js';
+import { stripThinkingBlocks } from './thinking.js';
 
 /**
  * 「导出会话」的纯函数：把当前频道的消息整理成 Markdown（发送者、时间、正文），
@@ -30,11 +31,6 @@ export function exportTimestamp(value: string | number): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
-/** 去掉思考块（含未闭合的尾巴）与首尾空白 */
-function stripThinking(text: string): string {
-  return text.replace(/<think>[\s\S]*?(?:<\/think>|$)\s*/g, '').trim();
-}
-
 function senderOf(message: DisplayMessage, input: ConversationExportInput): string {
   if (message.role === 'user') return message.senderName || message.sender?.name || input.ownerName || '我';
   return message.senderName || message.sender?.name || input.botName || '助手';
@@ -53,7 +49,7 @@ function messageSection(message: DisplayMessage, input: ConversationExportInput)
       .join('\n');
     return `${head}\n\n${body || '>'}`;
   }
-  const text = stripThinking(message.content);
+  const text = stripThinkingBlocks(message.content);
   const tools = message.toolCalls.map((call) => call.name);
   if (!text && tools.length === 0) return null;
   const tags = [message.error ? '（出错）' : '', message.originLabel ? `（${message.originLabel}）` : ''].join('');

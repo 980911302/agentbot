@@ -9,10 +9,9 @@ export type Block =
   | { type: 'hr' }
   | { type: 'paragraph'; content: string };
 
-/** 剥掉历史消息里残留的思维链段落，只留可见正文（复制用；渲染侧由 parseBlocks 丢弃） */
-export function stripThinkingBlocks(text: string): string {
-  return text.replace(/<think>[\s\S]*? Maç\s*/g, '').trim();
-}
+/** 剥掉历史消息里残留的思维链段落，只留可见正文（复制用；渲染侧由 parseBlocks 丢弃）。
+ *  实现在 features/chat/thinking.ts，与导出会话共用；这里保留导出，调用方不用改。 */
+export { stripThinkingBlocks } from './features/chat/thinking';
 
 export function parseBlocks(text: string): Block[] {
   const blocks: Block[] = [];
