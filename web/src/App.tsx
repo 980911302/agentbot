@@ -22,6 +22,7 @@ import { BotProfileDrawer } from './components/BotProfileDrawer';
 import { RenameDialog } from './components/RenameDialog';
 import { MemberPanel } from './components/MemberPanel';
 import { MemoryPanel } from './components/MemoryPanel';
+import { WorkPanel } from './components/WorkPanel';
 import { InteractionCard } from './components/InteractionCard';
 import { IconClose } from './icons';
 import { usePresence } from './motion';
@@ -163,7 +164,7 @@ export default function App() {
     return () => window.removeEventListener('resize', onResize);
   }, []);
   const panelLayout = panelLayoutKind(viewportWidth, drawerPresence.mounted && !screenFull);
-  const [drawerTab, setDrawerTab] = useState<'screen' | 'memory' | 'members' | 'profile'>('screen');
+  const [drawerTab, setDrawerTab] = useState<'screen' | 'memory' | 'members' | 'profile' | 'work'>('screen');
   const [memoryToken, setMemoryToken] = useState(0);
   /** 正在等用户回答的卡片（E2.5b 拆出） */
   const {
@@ -380,6 +381,16 @@ export default function App() {
     if (backendAgents.some((agent) => agent.id === activeChannelId)) return activeChannelId;
     return backendAgents[0]?.id ?? null;
   }, [activeChannel, activeChannelId, backendAgents]);
+
+  /**
+   * 工作面板标题里的同事名。群里 activeAgentId 取的是第一个成员，
+   * 标题就必须写这位成员的名字——写群名会让人以为整群共用一件工作。
+   */
+  const activeAgentName = useMemo(() => {
+    if (activeChannel.kind !== 'room') return activeChannel.name;
+    const member = activeChannel.members?.find((item) => item.id === activeAgentId);
+    return member?.name ?? activeChannel.name;
+  }, [activeChannel, activeAgentId]);
 
   useEffect(() => {
     if (!activeChannelId) return undefined;
@@ -786,7 +797,7 @@ export default function App() {
   return (
     <ToastProvider>
       <div
-        className={`app${drawerPresence.mounted && !screenFull ? ' with-screen' : ''}${panelLayout === 'overlay' ? ' panel-overlay' : ''}${sidebarDrawerOpen ? ' drawer-open' : ''}${isResizing ? ' resizing' : ''}`}
+        className={`app${drawerPresence.mounted && !screenFull ? ' with-screen' : ''}${panelLayout === 'overlay' ? ' panel-overlay' : ''}${sidebarDrawerOpen ? ' drawer-open' : ''}${isResizing || isResizingPanel ? ' resizing' : ''}`}
         style={
           {
             '--sidebar-w': `${sidebarGridWidth}px`,
@@ -943,12 +954,16 @@ export default function App() {
                     event.preventDefault();
                     const startX = event.clientX;
                     const startWidth = panelWidth;
+                    // 拖拽期间关掉 .app 的网格列宽过渡：面板列现在跟抽屉同宽（--panel-w-dyn），
+                    // 过渡会让聊天区慢半拍、还留出一条瞬时空隙
+                    setIsResizingPanel(true);
                     const onMove = (move: MouseEvent) => onPanelResize(startWidth + (startX - move.clientX));
                     const onUp = () => {
                       document.removeEventListener('mousemove', onMove);
                       document.removeEventListener('mouseup', onUp);
                       document.body.style.cursor = '';
                       document.body.style.userSelect = '';
+                      setIsResizingPanel(false);
                     };
                     document.body.style.cursor = 'col-resize';
                     document.body.style.userSelect = 'none';
@@ -980,6 +995,15 @@ export default function App() {
                   onClick={() => setDrawerTab('memory')}
                 >
                   记忆
+                </button>
+                {/* 工作（E4.7）：这位同事手头的工作，只读，状态来自 GET /api/agents/:id/work */}
+                <button
+                  type="button"
+                  className={`drawer-tab${drawerTab === 'work' ? ' active' : ''}`}
+                  data-drawer-tab="work"
+                  onClick={() => setDrawerTab('work')}
+                >
+                  工作
                 </button>
                 {activeChannel.kind === 'room' ? (
                   <button
@@ -1031,6 +1055,8 @@ export default function App() {
                     onSave={(ids) => void saveMembers(activeRoom.id, ids)}
                     onClose={() => setScreenOpen(false)}
                   />
+                ) : drawerTab === 'work' && activeAgentId ? (
+                  <WorkPanel agentId={activeAgentId} agentName={activeAgentName} />
                 ) : activeAgentId ? (
                   <MemoryPanel
                     agentId={activeAgentId}

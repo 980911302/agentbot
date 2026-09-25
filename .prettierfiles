@@ -41,3 +41,4 @@ src/work/delegation.ts
 src/work/delegation-store.ts
 src/work/delegation-service.ts
 test/delegation-stop.test.ts
+test/work-view.test.ts

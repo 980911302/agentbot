@@ -13,6 +13,7 @@
  *   7. 模型报错-失败演示       发送「触发模型错误」实时报错（失败运行不落库，刷新后只剩用户消息）
  *   8. 长对话-跨天两百条       210 条消息跨 3 天
  *   9. 交互卡-待回答           发送「请主人定方向」挂起选项卡
+ *  11. 手头工作-三件在办        2 件进行中 + 1 件等待中（E4.7「工作」标签的验收场景）
  */
 import { randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -20,6 +21,7 @@ import { join, resolve } from 'node:path';
 import { createAgentServer } from '../../src/server/http.js';
 import { FakeProvider } from '../fakes/fake-provider.js';
 import { tempDataDir } from '../fakes/test-env.js';
+import { agentWaitKey } from '../../src/work/wait.js';
 import type { LLMMessage } from '../../src/llm/provider.js';
 import type { MessageActor } from '../../src/shared/contracts/message-identity.js';
 
@@ -373,6 +375,105 @@ const busy = await createAgent(
 await say(busy.id, 'user', { type: 'text', text: '等一下再回：先看别的。' });
 await say(busy.id, 'assistant', { type: 'text', text: '好，我在。' }, actor(busy));
 
+// ── 11. 手头工作：2 件进行中 + 1 件等待中（E4.7 验收场景 1）──────────
+// 造数据走 WorkService 本身（acceptUserMessage / update / appendStep），不直接写存储，
+// 这样状态机的校验也在预览里生效。等待那件同时落一条 pending WorkWait，
+// 与运行时进 waiting 的行为一致（runtime 会把 WorkWait.condition 写进 work.nextAction）。
+const worker = await createAgent('手头工作·三件在办', '#22c55e', '界面验收：工作标签列出目标/状态/进展/等待对象/下一步/交付物');
+const peers = await createAgent('同事-手头工作的等待对象', '#a3a3a3', '界面验收：被等待的那位同事');
+
+/** 发一条用户消息并返回它的 id（工作要记来源消息） */
+const workSeed = async (agentId: string, text: string) => {
+  const messageId = randomUUID();
+  await runtime.messages.append({
+    id: messageId,
+    agentId,
+    role: 'user',
+    content: { type: 'text', text },
+    createdAt: tick(),
+    source: 'user',
+  });
+  return messageId;
+};
+
+const acceptWork = async (text: string) => {
+  const accepted = await runtime.works.acceptUserMessage({
+    agentId: worker.id,
+    channel: { kind: 'dm', id: worker.id },
+    messageId: await workSeed(worker.id, text),
+    text,
+  });
+  if (!accepted || accepted.kind === 'clarify') throw new Error(`预览造工作失败：${text}`);
+  return accepted.work;
+};
+
+// 进行中之一：有进展、有下一步、有交付物引用、有步骤与验收。
+// 目标写两句，界面才会把「目标」与标题分开列（标题只取第一句）。
+const uiWork = await acceptWork(
+  '把 UI-06 保存条那条缺陷修掉，补上几何断言。断言要卡住条子底边与抽屉底边的关系，别只断元素存在。',
+);
+await runtime.works.update(uiWork.id, {
+  status: 'active',
+  progressSummary: '已定位到父级滚动容器，条子改回贴抽屉底边；正在补 6 张截图矩阵的几何断言。',
+  nextAction: '补齐深色两档的截图断言',
+  acceptance: ['保存条底边贴住抽屉底边，内容滚动不影响它', '浅/深 × 1280/1024/768 都有几何数值'],
+  // artifactIds 是不透明引用：仓库里还没有「按 id 取产物」的接口，
+  // 界面只能把引用本身显示出来（不编文件名）。
+  artifactIds: ['9f2c1d7ab3e4', '5c8e0a41dff2'],
+});
+await runtime.works.appendStep({
+  workId: uiWork.id,
+  title: '读 UI-06 打回记录，复现「条子在视口外」',
+  status: 'completed',
+});
+await runtime.works.appendStep({ workId: uiWork.id, title: '把滚动收进 profile-drawer-body', status: 'completed' });
+await runtime.works.appendStep({
+  workId: uiWork.id,
+  title: '补 6 张截图矩阵的几何断言',
+  status: 'in_progress',
+  note: '还差深色两档',
+});
+await runtime.works.appendStep({ workId: uiWork.id, title: '请主人复核截图', status: 'pending' });
+
+// 进行中之二：没有交付物（界面要如实说「还没有交付物」）。
+// 第二、三件都带「另外」——E4.2 判定这是新工作的真实路径（同一同事上已经有一件在办，
+// 不带这个标志词的消息会按「继续最近那件」接到第一件上）。
+const displayNameWork = await acceptWork('另外把群消息显示名被请求体覆盖的缺陷修掉，补一条回归');
+await runtime.works.update(displayNameWork.id, {
+  status: 'active',
+  progressSummary: '已确认显示名只该取后端设置；回归用例写完，正在跑全量。',
+  nextAction: '跑完整 npm test，确认没有别的调用方依赖旧行为',
+  acceptance: ['请求体里的名字不再覆盖后端设置'],
+});
+await runtime.works.appendStep({
+  workId: displayNameWork.id,
+  title: '复现：请求体覆盖后端名字',
+  status: 'completed',
+});
+await runtime.works.appendStep({ workId: displayNameWork.id, title: '改成只读后端设置', status: 'in_progress' });
+
+// 等待中：真实 pending WorkWait + 工作 status=waiting，nextAction 就是「在等谁」
+const waitingWork = await acceptWork('另外跟进一下 159 的日志核对，拿到结论再收口');
+await runtime.works.update(waitingWork.id, {
+  status: 'waiting',
+  progressSummary: '核对请求已经发出去，对方还没回；等结论回来再决定是否降级。',
+  nextAction: `等「${peers.name}」给出 159 的日志结论`,
+});
+await runtime.works.appendStep({ workId: waitingWork.id, title: '整理 159 的异常时间线', status: 'completed' });
+await runtime.works.appendStep({
+  workId: waitingWork.id,
+  title: `发核对请求给「${peers.name}」`,
+  status: 'completed',
+});
+await runtime.works.appendStep({ workId: waitingWork.id, title: '等回信', status: 'pending' });
+await runtime.waits.create({
+  agentId: worker.id,
+  workId: waitingWork.id,
+  kind: 'agent',
+  correlationId: agentWaitKey(peers.id),
+  condition: `等「${peers.name}」给出 159 的日志结论`,
+});
+
 console.log(
   JSON.stringify(
     {
@@ -389,8 +490,10 @@ console.log(
         '长对话·跨天两百条': long.id,
         '交互卡·待回答': interactive.id,
         '忙碌态·慢回复演示': busy.id,
+        '手头工作·三件在办': worker.id,
       },
       activeFlowId: activeFlow.id,
+      works: { active: [uiWork.id, displayNameWork.id], waiting: waitingWork.id },
       hint: '场景 7 在界面里对该同事发送「触发模型错误」可看到实时报错行（失败运行不落库，刷新后只剩用户消息）；场景 10 发送含「慢回复演示」的话会把回合拖住 8 秒，用来看忙碌态占位文字（UI-07）',
     },
     null,

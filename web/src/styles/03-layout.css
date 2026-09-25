@@ -15,7 +15,9 @@
 }
 
 .app.with-screen {
-  grid-template-columns: var(--sidebar-w) minmax(360px, 1fr) var(--panel-w);
+  /* 第三列与抽屉同源（--panel-w-dyn 由 App.tsx 按拖拽结果覆盖）：
+     用静态的 --panel-w 会让列比抽屉宽——默认 340 vs 380，右缘就留下一条空隙。 */
+  grid-template-columns: var(--sidebar-w) minmax(360px, 1fr) var(--panel-w-dyn, var(--panel-w));
 }
 
 /* ── 响应式断点（UI-09，唯一出处见 web/src/features/chat/layout-view.ts，

@@ -11,6 +11,8 @@ import type {
   RoomView,
   SessionSummary,
 } from './types';
+// 工作模型是后端领域类型，前端只做类型引用（跨层契约 R2：web 只能 import type 后端）
+import type { WorkItem, WorkStatus, WorkStep } from '../../src/work/item.js';
 
 import { errorMessage, readSseFrames, request } from './shared/transport';
 import type { ChatReceipt, JournalEntry, ChatSnapshot } from '../../src/shared/contracts/chat-state';
@@ -259,6 +261,33 @@ export async function retryAgentMail(agentId: string): Promise<number> {
     method: 'POST',
   });
   return data.retried;
+}
+
+// ── 工作（E4.7） ───────────────────────────────────────
+
+/**
+ * 某同事手头的工作（GET /api/agents/:id/work）。
+ *
+ * 类型只 `import type` 后端领域模型（src/work/item.ts）：字段只有一份定义，
+ * 接口改了类型检查就会红，不需要在前端再维护一份副本。
+ * `status` 走服务端过滤（?status=）；界面上的 chip 在已取回的列表上筛，切档不再发请求。
+ */
+export async function fetchAgentWorks(agentId: string, status?: WorkStatus): Promise<WorkItem[]> {
+  const query = status ? `?status=${encodeURIComponent(status)}` : '';
+  const data = await request<{ works: WorkItem[] }>(
+    `/api/agents/${encodeURIComponent(agentId)}/work${query}`,
+  );
+  return data.works;
+}
+
+/** 单件工作 + 步骤（GET /api/agents/:id/work/:workId）；不属于该同事的工作后端回 404 */
+export async function fetchWorkDetail(
+  agentId: string,
+  workId: string,
+): Promise<{ work: WorkItem; steps: WorkStep[] }> {
+  return request(
+    `/api/agents/${encodeURIComponent(agentId)}/work/${encodeURIComponent(workId)}`,
+  );
 }
 
 // ── 房间（群） ─────────────────────────────────────────

@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 
 /**
  * 前端冒烟（OPT-05）：四条必测流程 + 一条响应式回归。
@@ -219,4 +219,164 @@ test('主人名持久在后端：改完刷新仍在（localStorage 清空也不�
   // 复位，避免影响同一 webServer 上的其它用例
   await page.getByRole('dialog', { name: '设置' }).getByLabel('主人显示名').fill('linlin zhang');
   await page.getByRole('dialog', { name: '设置' }).getByLabel('主人显示名').blur();
+});
+
+/**
+ * E4.7「工作」标签：浅/深 × 1280/1024/768 共 6 组，每组都断几何而不是「元素存在」。
+ *
+ * 断的是：面板整体在视口内且右/下缘贴住视口与抽屉、面板与整页都没有横向滚动、
+ * 高亮标签与显示内容一致（只有一个 active，且就是「工作」）；另外确认预览夹具里
+ * 是 2 件进行中 + 1 件等待中，等待对象指名了那位同事。
+ *
+ * 想顺带出图（截图不进仓库）：
+ *   AGENT_PREVIEW_PORT=4620 E47_SHOT_DIR=/tmp/e47-shots npx playwright test -g 工作面板几何
+ */
+const WORK_SCENE = '手头工作·三件在办';
+const WORK_PEER = '同事-手头工作的等待对象';
+const WORK_CASES = [
+  { theme: 'light', width: 1280, height: 900 },
+  { theme: 'dark', width: 1280, height: 900 },
+  { theme: 'light', width: 1024, height: 900 },
+  { theme: 'dark', width: 1024, height: 900 },
+  { theme: 'light', width: 768, height: 900 },
+  { theme: 'dark', width: 768, height: 900 },
+] as const;
+
+/**
+ * 等布局稳定：连续两次取样一致才算定下来。
+ *
+ * 光等 `transform === 'none'` 不够——抽屉有 320ms 进场位移，.app 的
+ * `grid-template-columns` 还有 180ms 过渡，改视口宽度后 React 的档位状态也要下一帧才跟上，
+ * 期间量到的是中间态（768 档就曾在 x=776 处量到一次）。
+ */
+async function waitForStableBox(page: Page, selector: string) {
+  let previous: { left: number; right: number; top: number; bottom: number } | null = null;
+  await expect
+    .poll(async () => {
+      const box = await page.locator(selector).evaluate((el) => {
+        const rect = el.getBoundingClientRect();
+        return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom };
+      });
+      const settled =
+        previous !== null &&
+        Math.abs(box.left - previous.left) <= 0.5 &&
+        Math.abs(box.right - previous.right) <= 0.5 &&
+        Math.abs(box.top - previous.top) <= 0.5 &&
+        Math.abs(box.bottom - previous.bottom) <= 0.5;
+      previous = box;
+      return settled;
+    })
+    .toBe(true);
+}
+
+for (const item of WORK_CASES) {
+  test(`工作面板几何（${item.theme} × ${item.width}）：在视口内、无横向滚动、标签与内容同步`, async ({
+    page,
+  }) => {
+    await page.addInitScript((theme: string) => localStorage.setItem('agentbot.theme', theme), item.theme);
+    await page.goto('/');
+    // 先在宽档选同事：768 档侧栏会收成迷你，名字不显示
+    await page.locator('.channel-item', { hasText: WORK_SCENE }).first().click();
+    await page.setViewportSize({ width: item.width, height: item.height });
+    await page.getByRole('button', { name: '侧边栏与屏幕' }).click();
+    // <1280 时面板是覆盖层：这条 class 由 App 按「已量到的视口宽度」加，等它出现
+    // 说明改视口后的档位状态已经跟上（否则会量到面板还挂在网格里那一帧）
+    if (item.width < 1280) await expect(page.locator('.app')).toHaveClass(/panel-overlay/);
+
+    // 按需展开：没点之前，步骤根本不在 DOM 里
+    expect(await page.locator('.work-step-list').count()).toBe(0);
+
+    await page.locator('[data-drawer-tab="work"]').click();
+    await expect(page.locator('.work-panel')).toBeVisible();
+    await expect(page.locator('.work-card[data-status="active"]')).toHaveCount(2);
+    await expect(page.locator('.work-card[data-status="waiting"]')).toHaveCount(1);
+    await expect(page.locator('.work-card[data-status="waiting"] .work-field.waiting dd')).toContainText(
+      WORK_PEER,
+    );
+
+    // 标签高亮与内容同步：只有一个高亮标签，且就是「工作」
+    await expect(page.locator('.drawer-tab.active')).toHaveCount(1);
+    await expect(page.locator('.drawer-tab.active')).toHaveText('工作');
+    await expect(page.locator('[data-drawer-tab="work"]')).toHaveClass(/active/);
+
+    await waitForStableBox(page, '.drawer');
+    await waitForStableBox(page, '.work-panel');
+
+    // 第一张工作卡整张都在面板可视区里（内容没被面板上/下缘切掉）
+    const band = await page.evaluate(() => {
+      const body = document.querySelector('.work-body')!.getBoundingClientRect();
+      const card = document.querySelector('.work-card')!.getBoundingClientRect();
+      return { bodyTop: body.top, bodyBottom: body.bottom, cardTop: card.top, cardBottom: card.bottom };
+    });
+    expect(band.cardTop).toBeGreaterThanOrEqual(band.bodyTop - 1);
+    expect(band.cardBottom).toBeLessThanOrEqual(band.bodyBottom + 1);
+
+    const geometry = await page.evaluate(() => {
+      const panel = document.querySelector('.work-panel')!.getBoundingClientRect();
+      const drawer = document.querySelector('.drawer')!.getBoundingClientRect();
+      const body = document.querySelector('.work-body')!;
+      return {
+        viewportW: window.innerWidth,
+        viewportH: window.innerHeight,
+        panelLeft: panel.left,
+        panelRight: panel.right,
+        panelTop: panel.top,
+        panelBottom: panel.bottom,
+        drawerTop: drawer.top,
+        drawerBottom: drawer.bottom,
+        panelScrollW: body.scrollWidth,
+        panelClientW: body.clientWidth,
+        docScrollW: document.documentElement.scrollWidth,
+        docClientW: document.documentElement.clientWidth,
+        bodyScrollW: document.body.scrollWidth,
+      };
+    });
+
+    expect(geometry.panelLeft).toBeGreaterThanOrEqual(-1);
+    expect(geometry.panelTop).toBeGreaterThanOrEqual(-1);
+    expect(geometry.panelBottom).toBeLessThanOrEqual(geometry.viewportH + 1);
+    expect(geometry.panelRight).toBeLessThanOrEqual(geometry.viewportW + 1);
+    // 面板右缘贴住视口右缘：留出空隙说明网格列宽与抽屉宽度不同源
+    expect(Math.abs(geometry.panelRight - geometry.viewportW)).toBeLessThanOrEqual(1);
+    // 面板不越出抽屉
+    expect(geometry.panelBottom).toBeLessThanOrEqual(geometry.drawerBottom + 1);
+    expect(geometry.panelTop).toBeGreaterThanOrEqual(geometry.drawerTop - 1);
+    // 横向滚动：面板内容、整页、body 都不许溢出
+    expect(geometry.panelScrollW).toBeLessThanOrEqual(geometry.panelClientW + 1);
+    expect(geometry.docScrollW).toBeLessThanOrEqual(geometry.docClientW + 1);
+    expect(geometry.bodyScrollW).toBeLessThanOrEqual(geometry.viewportW + 1);
+
+    const shotDir = process.env.E47_SHOT_DIR;
+    if (shotDir) {
+      await page.screenshot({ path: `${shotDir}/e47-work-${item.theme}-${item.width}x${item.height}.png` });
+    }
+  });
+}
+
+test('工作面板：步骤按需展开；没有工作的同事给空态', async ({ page }) => {
+  await page.goto('/');
+  await page.locator('.channel-item', { hasText: WORK_SCENE }).first().click();
+  await page.getByRole('button', { name: '侧边栏与屏幕' }).click();
+  await page.locator('[data-drawer-tab="work"]').click();
+
+  const waitingCard = page.locator('.work-card[data-status="waiting"]');
+  await expect(waitingCard).toBeVisible();
+  await expect(waitingCard.locator('.work-step')).toHaveCount(0);
+
+  await waitingCard.locator('.work-act').click();
+  await expect(waitingCard.locator('.work-step')).toHaveCount(3);
+  await expect(waitingCard.locator('.work-step[data-step-status="pending"]')).toHaveCount(1);
+  // 收起后 DOM 还在（折叠动画要有内容可播），但内容被收到 0 高
+  await waitingCard.locator('.work-act').click();
+  await expect(waitingCard.locator('.work-act')).toHaveAttribute('aria-expanded', 'false');
+  await expect(waitingCard.locator('.collapsible')).not.toHaveClass(/open/);
+  // 折叠是几何事实：子元素还在 DOM 里，但 .collapsible-inner 被收到 0 高
+  await expect
+    .poll(() => waitingCard.locator('.collapsible-inner').evaluate((el) => el.getBoundingClientRect().height))
+    .toBeLessThan(1);
+
+  // 换一位没有工作的同事：空态一句，不转圈、不编进度
+  await page.locator('.channel-item', { hasText: '普通私聊' }).first().click();
+  await expect(page.locator('.work-panel')).toContainText('手头没有工作');
+  await expect(page.locator('.work-card')).toHaveCount(0);
 });

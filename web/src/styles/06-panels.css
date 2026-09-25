@@ -524,6 +524,341 @@ button.tier-pill:hover {
   padding: 40px 16px;
 }
 
+/* ── Work Panel（E4.7「手头工作」）───────────────────────────
+   结构照 memory-panel：头部固定、体内容纵向滚动。
+   work-body 必须 overflow-x: hidden 且文字允许断词——
+   长标题/长等待条件不能把面板撑出横向滚动条（截图断言会断这一条）。 */
+.work-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  min-width: 0;
+  background: var(--bg-sidebar);
+  overflow: hidden;
+}
+
+.work-head-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.work-head-sub {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.work-body {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: var(--sp-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.work-filters {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+}
+
+.work-summary {
+  margin: 0;
+  font-size: var(--fs-xs);
+  color: var(--text-tertiary);
+}
+
+.work-skeletons {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.work-empty {
+  margin: 0;
+  text-align: center;
+  color: var(--text-tertiary);
+  font-size: 13px;
+  padding: var(--sp-9) var(--sp-5);
+}
+
+.work-error {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  padding: var(--sp-4);
+  border: 1px solid var(--danger-border);
+  border-radius: var(--r-md);
+  background: var(--danger-weak);
+  color: var(--danger-text);
+  font-size: 13px;
+}
+
+.work-error p {
+  margin: 0;
+}
+
+.work-error-line {
+  margin: 0;
+  color: var(--danger-text);
+  font-size: var(--fs-sm);
+}
+
+.work-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  padding: var(--sp-4);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--bg-card);
+  box-shadow: var(--shadow-card);
+}
+
+/* 等待中要一眼看出来：左侧一条警示边，不靠动效 */
+.work-card[data-status='waiting'] {
+  border-color: var(--warn-border);
+  background: var(--bg-subtle);
+}
+
+.work-card-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  min-width: 0;
+}
+
+.work-card-title {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-base);
+  font-weight: 600;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.work-card-time {
+  flex: 0 0 auto;
+  font-size: var(--fs-xs);
+  color: var(--text-tertiary);
+}
+
+.work-status {
+  flex: 0 0 auto;
+  padding: var(--sp-1) var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r-full);
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+  background: var(--bg-subtle);
+}
+
+.work-status.active {
+  color: var(--info-text);
+  background: var(--info-weak);
+  border-color: var(--info);
+}
+
+.work-status.waiting {
+  color: var(--warn-text);
+  background: var(--warn-weak);
+  border-color: var(--warn-border);
+}
+
+.work-status.completed {
+  color: var(--ok-text);
+  background: var(--ok-weak);
+  border-color: var(--ok);
+}
+
+.work-status.failed {
+  color: var(--danger-text);
+  background: var(--danger-weak);
+  border-color: var(--danger);
+}
+
+.work-objective {
+  margin: 0;
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.work-fields {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.work-field {
+  display: flex;
+  gap: var(--sp-3);
+  min-width: 0;
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+}
+
+.work-field dt {
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+}
+
+.work-field dd {
+  margin: 0;
+  min-width: 0;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.work-field.waiting dd {
+  color: var(--warn-text);
+}
+
+.work-none {
+  color: var(--text-tertiary);
+}
+
+.work-artifacts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+
+.work-artifact {
+  padding: var(--sp-1) var(--sp-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg-subtle);
+  color: var(--text-secondary);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+}
+
+.work-act {
+  align-self: flex-start;
+  padding: var(--sp-1) var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg-subtle);
+  color: var(--text-secondary);
+  font-size: var(--fs-xs);
+  transition:
+    background var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+
+.work-act:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.work-steps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding-top: var(--sp-1);
+}
+
+.work-step-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.work-step {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  min-width: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-secondary);
+}
+
+.work-step-dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--r-full);
+  background: var(--border-strong);
+}
+
+.work-step-dot.in_progress {
+  background: var(--info);
+}
+
+.work-step-dot.completed {
+  background: var(--ok);
+}
+
+.work-step-dot.cancelled {
+  background: var(--text-tertiary);
+}
+
+.work-step-title {
+  min-width: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.work-step-status {
+  flex: 0 0 auto;
+  font-size: var(--fs-xs);
+  color: var(--text-tertiary);
+}
+
+.work-step-status.in_progress {
+  color: var(--info-text);
+}
+
+.work-step-status.completed {
+  color: var(--ok-text);
+}
+
+.work-step-note {
+  min-width: 0;
+  flex: 1;
+  font-size: var(--fs-xs);
+  color: var(--text-tertiary);
+  overflow-wrap: anywhere;
+}
+
+.work-acceptance {
+  display: flex;
+  gap: var(--sp-3);
+  min-width: 0;
+  font-size: var(--fs-sm);
+}
+
+.work-acceptance-label {
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+}
+
+.work-acceptance-list {
+  margin: 0;
+  padding-left: var(--sp-5);
+  min-width: 0;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
 /* ── Member Panel ─────────────────────────────────────────── */
 .member-panel {
   display: flex;
