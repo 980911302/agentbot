@@ -54,7 +54,7 @@ npm run dev -- "读一下 package.json"   # 命令行单次对话
 
 ### 提交前钩子（ENG-02）
 
-仓库没有远端，`.github/workflows/ci.yml` 不会运行，所以门禁靠本地钩子兜底：
+仓库已推到 GitHub（`980911302/agentbot`），推送与 PR 会触发 `.github/workflows/ci.yml` 跑 `npm run ci`（含 e2e）；本地钩子仍在提交前先兜一道底，避免把红的提交推上去：
 
 - `.githooks/pre-commit`：先跑 `node scripts/verify-staged.mjs`（暂存区红线：`.env` 与
   `.env.*`（`.env.example` 放行）、`.agentbot/`、`.commandcode/`、`*.key`/`*.pem`/`*.p12`、
