@@ -338,7 +338,8 @@ export function Sidebar({
           <BotAvatar
             name={channel.name}
             color={channel.color || '#b89b6a'}
-            size={pinned ? 108 : 64}
+            size={pinned ? 64 : isMini ? 44 : isGroup ? 52 : 48}
+            className={isGroup ? 'sidebar-group-avatar' : ''}
             status={channel.status}
             agentId={channel.id}
             isGroup={isGroup}
@@ -359,9 +360,7 @@ export function Sidebar({
           <div className="channel-title-row">
             <div className="channel-name-box">
               <span className="channel-title">{channel.name}</span>
-              {isGroup ? <span className="channel-tag group">群</span> : null}
             </div>
-            {!pinned ? <span className="channel-time">{channel.time}</span> : null}
             {unread ? (
               <span className="channel-unread" title={`${channel.unread} 条未读`} aria-label={`${channel.unread} 条未读`} role="img">
                 {unread}
