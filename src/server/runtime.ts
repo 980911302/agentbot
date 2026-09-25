@@ -44,7 +44,7 @@ import { MemoryExtractor } from '../memory/extract.js';
 import { USER_OWNER } from '../memory/policy.js';
 import { MemoryStore } from '../memory/store.js';
 import type { MemoryScope, MemorySnapshot, MemoryTier } from '../memory/types.js';
-import { resolveMentions, stripMentions } from '../room/mentions.js';
+import { stripMentions } from '../room/mentions.js';
 import type { RoomMemberLike } from '../room/member.js';
 import { RoomStore } from '../room/store.js';
 import { SummonQueue } from '../room/summon.js';
@@ -54,10 +54,10 @@ import { ROOM_MAX_RUNS_PER_MEMBER, ROOM_POST_LIMIT_PER_TURN } from '../room/type
 import { MessageStore } from '../store/messages.js';
 import { WorkService, type AcceptResult, type ClarifyResult } from '../work/service.js';
 import { JsonWorkRepository } from '../work/store.js';
-import { isTerminalWork, titleFrom } from '../work/item.js';
+import { isTerminalWork } from '../work/item.js';
 import { WaitService, WAIT_TERMINAL_MESSAGES } from '../work/wait-service.js';
 import { JsonWorkWaitRepository } from '../work/wait-store.js';
-import { agentWaitKey, answerSummary, isAgentWaitForPeer, type WorkWait } from '../work/wait.js';
+import { answerSummary, isAgentWaitForPeer, type WorkWait } from '../work/wait.js';
 import { DelegationService } from '../work/delegation-service.js';
 import { JsonDelegationRepository } from '../work/delegation-store.js';
 import { isOpenDelegation } from '../work/delegation.js';
@@ -65,7 +65,7 @@ import type { InteractionRequest } from '../shared/contracts/sse.js';
 import { resolveProjectOwner } from '../tools/builtin/memory.js';
 import { ToolRegistry } from '../tools/registry.js';
 import { effectiveToolNames } from '../tools/capabilities.js';
-import { createSendToAgentTool } from '../tools/builtin/room.js';
+import { createSendToAgentDispatcher, type WaitRequest } from './runtime/send-to-agent-service.js';
 import { createTaskTools } from '../tools/builtin/task.js';
 import { createReadToolOutputTool } from '../tools/builtin/tool-output.js';
 import { ToolOutputStore } from '../tools/services/tool-output-store.js';
@@ -1362,184 +1362,20 @@ export class AgentRuntime {
 
   // ── 智能体 1:1 ──────────────────────────────────────
 
-  /** SendToAgent：target 支持 id / 名字（同事），群 id / 群名（必须是自己所在的群） */
+  /** SendToAgent：投递编排已抽到 runtime/send-to-agent-service.ts（OPT-03），这里只接线 */
   private createSendToAgentTool() {
-    return createSendToAgentTool({
-      maxDepth: this.options.maxAgentChainDepth ?? DEFAULT_MAX_AGENT_DEPTH,
-      resolveTarget: async (wanted, callerId) => {
-        const agents = await this.registry.list();
-        const agent = agents.find((item) => item.id === wanted);
-        if (agent) return { kind: 'agent' as const, id: agent.id, name: agent.name };
-        const rooms = await this.workbench.listRooms();
-        const room = rooms.find((item) => item.id === wanted);
-        if (room) {
-          if (!room.memberIds.includes(callerId)) throw new Error('你不在这个群');
-          return { kind: 'room' as const, id: room.id, name: room.name };
-        }
-        const matches = [
-          ...agents
-            .filter((item) => item.name === wanted)
-            .map((item) => ({ kind: 'agent' as const, id: item.id, name: item.name })),
-          ...rooms
-            .filter((item) => item.memberIds.includes(callerId) && item.name === wanted)
-            .map((item) => ({ kind: 'room' as const, id: item.id, name: item.name })),
-        ];
-        if (matches.length > 1)
-          throw new Error(
-            `收件方名称有歧义，请使用 id：${matches.map((item) => `${item.kind === 'agent' ? '同事' : '群'}「${item.name}」id=${item.id}`).join('；')}`,
-          );
-        return matches[0];
-      },
-      dispatch: async ({
-        targetId,
-        kind,
-        text,
-        images,
-        priority,
-        callerId,
-        correlationId,
-        chainId,
-        depth,
-        signal,
-        roundId,
-      }) => {
-        if (kind === 'agent') {
-          const sender = await this.registry.get(callerId);
-          const target = await this.registry.get(targetId);
-          signal?.throwIfAborted();
-          if (!sender || !target) throw new Error('发信方或收件方不存在');
-          // E4.4：这次投递是「回某次委派」还是「新派一件事」？
-          // 回信复用原委派线程键，让发起方能只唤醒「那一次请求」；
-          // 新派则由这封信自己的投递 id 当线程键（投影时落定）。
-          const replyThread = await this.delegations.resolveReplyThread({
-            callerId,
-            targetId,
-            ...(correlationId ? { threadId: correlationId } : {}),
-          });
-          const submitted = await this.deliveries.submit({
-            actorId: callerId,
-            inputId: correlationId ?? `${callerId}:${targetId}`,
-            chainId: chainId ?? correlationId ?? callerId,
-            target: { kind: 'agent', id: targetId, nameAtSend: target.name },
-            payload: text,
-            ...(images?.length ? { images } : {}),
-            priority,
-            depth: depth ?? 1,
-            ...(replyThread ? { correlationId: replyThread.id } : {}),
-          });
-          if (submitted.kind !== 'accepted') throw new Error(submitted.code);
-          // E4.4：先记委派、再让信可见——收件方认领这封信时要能查到「这是哪条委派」，
-          // 否则它就成了没主的一次投递，childWorkId 也就永远回填不上。
-          // 线程键 = 请求信投递 id；重试/重复提交时幂等复用原记录。
-          const threadId = submitted.receipt.deliveryId;
-          const waitingWork = await this.works.openWorkOf(callerId);
-          if (threadId) {
-            await this.delegations
-              .recordOutbound({
-                id: threadId,
-                fromAgentId: callerId,
-                toAgentId: targetId,
-                ...(waitingWork && !isTerminalWork(waitingWork.status)
-                  ? { parentWorkId: waitingWork.id }
-                  : {}),
-                requestMessageId: threadId,
-              })
-              .catch((error) => console.warn(`委派未记账：${messageOf(error)}`));
-          }
-          if (replyThread) {
-            await this.delegations
-              .markReplied(replyThread.id)
-              .catch((error) => console.warn(`委派回信状态未写回：${messageOf(error)}`));
-          }
-          await this.projector.project(submitted.receipt.actionId, {
-            from: {
-              kind: 'agent',
-              id: sender.id,
-              name: sender.name,
-              color: sender.color,
-              avatar: sender.avatar,
-            },
-            to: {
-              kind: 'agent',
-              id: target.id,
-              name: target.name,
-              color: target.color,
-              avatar: target.avatar,
-            },
-          });
-          const projected = await this.inbox.peek(targetId);
-          const letter = projected.find((item) => item.id === submitted.receipt.deliveryId);
-          if (letter) await this.archiveLetter(letter);
-          this.inboxScheduler.watch(targetId);
-          // E4.3：记一条「在等这位同事回信」的持久等待——重启后仍然知道在等谁；
-          // 对方回信被确认处理时按线程键精确 resolve 并唤醒工作（见 resolveAgentWaitsForReply）。
-          // 没有关联的工作时不记（没有可唤醒的对象，投递本身照常）。
-          if (waitingWork && !isTerminalWork(waitingWork.status)) {
-            await this.beginWait({
-              agentId: callerId,
-              workId: waitingWork.id,
-              kind: 'agent',
-              correlationId: agentWaitKey(targetId),
-              ...(threadId ? { threadId } : {}),
-              condition: `等「${target.name}」回复「${titleFrom(text)}」`,
-            }).catch((error) => console.warn(`同事等待未记录：${messageOf(error)}`));
-          }
-          return {
-            status: 'ok' as const,
-            content: `已投递给「${target.name}」；发出去就结束，回复是之后的新回合。`,
-            output: {
-              truncated: false,
-              handle: submitted.receipt.receiptId,
-            },
-          };
-        }
-        const sender = await this.registry.get(callerId);
-        const rooms = await this.workbench.listRooms();
-        const room = rooms.find((item) => item.id === targetId);
-        if (!sender || !room) throw new Error('发信方或不在该群');
-        const members = (await Promise.all(room.memberIds.map((id) => this.registry.get(id)))).filter(
-          (member): member is AgentRecord => Boolean(member),
-        );
-        const mentioned = resolveMentions(
-          text,
-          members.map((member) => ({ id: member.id, name: member.name, color: member.color })),
-        );
-        const recipientMembers = members.filter((member) => member.id !== callerId);
-        const submitted = await this.deliveries.submit({
-          actorId: callerId,
-          inputId: correlationId ?? `${callerId}:${targetId}`,
-          chainId: chainId ?? correlationId ?? callerId,
-          target: { kind: 'room', id: targetId, nameAtSend: room.name },
-          payload: text,
-          depth: depth ?? 0,
-          sender: {
-            kind: 'agent',
-            id: sender.id,
-            name: sender.name,
-            color: sender.color,
-            avatar: sender.avatar,
-          },
-          roomRecipients: recipientMembers.map((member) => ({
-            id: member.id,
-            name: member.name,
-            color: member.color,
-            avatar: member.avatar,
-            summoned: mentioned.everyone || mentioned.ids.includes(member.id),
-            everyone: mentioned.everyone,
-          })),
-          recipientAgentIds: recipientMembers.map((member) => member.id),
-          recipientCount: recipientMembers.length,
-          ...(roundId ? { roundId } : {}),
-        });
-        if (submitted.kind !== 'accepted') throw new Error(submitted.code);
-        await this.projector.projectRoom(submitted.receipt.actionId);
-        for (const member of recipientMembers) this.inboxScheduler.watch(member.id);
-        return {
-          status: 'ok' as const,
-          content: `已发到「${room.name}」。`,
-          output: { truncated: false, handle: submitted.receipt.receiptId },
-        };
-      },
+    return createSendToAgentDispatcher({
+      maxAgentChainDepth: this.options.maxAgentChainDepth ?? DEFAULT_MAX_AGENT_DEPTH,
+      registry: this.registry,
+      workbench: this.workbench,
+      delegations: this.delegations,
+      deliveries: this.deliveries,
+      works: this.works,
+      projector: this.projector,
+      inbox: this.inbox,
+      watchInbox: (agentId) => this.inboxScheduler.watch(agentId),
+      beginWait: (input) => this.beginWait(input),
+      archiveLetter: (item) => this.archiveLetter(item),
     });
   }
 
@@ -1649,17 +1485,7 @@ export class AgentRuntime {
    * 落一条等待并把工作置为 waiting。
    * dueAt 缺省时：用户卡给一个明确的答复期限（到点只判过期）；其余等待不设期限。
    */
-  private async beginWait(input: {
-    agentId: string;
-    workId?: string;
-    kind: WorkWait['kind'];
-    correlationId: string;
-    /** 「哪一次请求」的线程键（E4.4）：kind=agent 时是委派 id */
-    threadId?: string;
-    card?: WorkWait['card'];
-    condition?: string;
-    dueAt?: number;
-  }): Promise<WorkWait> {
+  private async beginWait(input: WaitRequest): Promise<WorkWait> {
     if (input.kind === 'user') {
       const existing = await this.waits.listPending({ agentId: input.agentId, kind: 'user' });
       if (existing.length > 0) throw new Error('这个同事已经有一张等回答的卡了，先回答或作废它再问');
