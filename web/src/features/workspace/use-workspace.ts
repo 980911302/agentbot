@@ -122,7 +122,7 @@ export function useWorkspace(deps: { activeChannelId: string }) {
     const rebuilt: ChannelItem[] = [
       ...roomList(roomData ?? { rooms: roomsRef.current, memberLimit: roomMemberLimitRef.current }),
       ...agentList(agents ?? agentsRef.current),
-    ];
+    ].sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
     setChannels(rebuilt);
     return rebuilt;
 
@@ -131,6 +131,7 @@ export function useWorkspace(deps: { activeChannelId: string }) {
         id: room.id,
         name: room.name,
         time: formatRelativeTime(room.updatedAt),
+        updatedAt: room.updatedAt,
         lastMessage: room.lastMessage?.text ?? '还没有人说话',
         color: room.members[0]?.color ?? '#b89b6a',
         role: `${room.members.length} 位成员`,
@@ -151,6 +152,7 @@ export function useWorkspace(deps: { activeChannelId: string }) {
           id: bot.id,
           name: bot.name,
           time: formatRelativeTime(Date.parse(bot.updatedAt)),
+          updatedAt: Date.parse(bot.updatedAt) || 0,
           lastMessage: bot.activity || bot.title || bot.role || '准备就绪',
           color: bot.color,
           role: bot.title || bot.role,

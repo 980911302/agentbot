@@ -1,21 +1,22 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { IconChevronRight, IconCompose, IconPlus, IconSearch, IconTrash, IconUsers } from '../icons';
+import { IconCompose, IconPlus, IconSearch, IconTrash, IconUsers } from '../icons';
 import { BotAvatar } from './BotAvatar';
 import { Menu, MenuItem } from './ui/Menu.js';
 import {
   channelStatusDot,
+  matchesKeyword,
   nextSearchCursor,
-  sidebarSections,
   sidebarWidthByKey,
   snapSidebarWidth,
   unreadBadgeText,
-  type SidebarSectionState,
 } from '../features/workspace/sidebar-view.js';
 
 export interface ChannelItem {
   id: string;
   name: string;
   time: string;
+  /** 最近活动时间，用于把群与智能体混排 */
+  updatedAt?: number;
   lastMessage: string;
   color?: string;
   role?: string;
@@ -74,19 +75,6 @@ const readPinnedChannels = (): string[] => {
   }
 };
 
-const readSectionState = (): SidebarSectionState => {
-  try {
-    const raw = window.localStorage.getItem('agentbot.sidebarSections');
-    if (raw) {
-      const parsed = JSON.parse(raw) as Partial<SidebarSectionState> | null;
-      return { rooms: parsed?.rooms === true, agents: parsed?.agents === true };
-    }
-  } catch {
-    // 本地存储不可用或内容损坏：按默认展开，不影响使用
-  }
-  return { rooms: false, agents: false };
-};
-
 export function Sidebar({
   channels,
   activeId,
@@ -105,7 +93,6 @@ export function Sidebar({
   const [query, setQuery] = useState('');
   /** 搜索结果的键盘游标（-1 = 无选中）；⌘K 聚焦后上下键移动、Enter 打开 */
   const [cursor, setCursor] = useState(-1);
-  const [collapsed, setCollapsed] = useState<SidebarSectionState>(readSectionState);
   const [pinnedIds, setPinnedIds] = useState<string[]>(readPinnedChannels);
   const [draggingChannelId, setDraggingChannelId] = useState<string | null>(null);
   const [pinDropActive, setPinDropActive] = useState(false);
@@ -117,14 +104,6 @@ export function Sidebar({
   const expandPendingRef = useRef(false);
 
   const closeMenu = useCallback(() => setMenu(null), []);
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem('agentbot.sidebarSections', JSON.stringify(collapsed));
-    } catch {
-      // 存不下就不存，折叠状态只在本次会话有效
-    }
-  }, [collapsed]);
 
   useEffect(() => {
     try {
@@ -169,13 +148,9 @@ export function Sidebar({
       .map((id) => channels.find((channel) => channel.id === id))
       .filter((channel): channel is ChannelItem => Boolean(channel && channel.kind !== 'room'));
   }, [channels, isMini, keyword, pinnedIds]);
-  const sections = useMemo(() => {
-    const visibleChannels = keyword || isMini
-      ? channels
-      : channels.filter((channel) => !pinnedIds.includes(channel.id));
-    return sidebarSections(visibleChannels, collapsed, keyword);
-  }, [channels, collapsed, isMini, keyword, pinnedIds]);
-  const flat = useMemo(() => sections.flatMap(section => section.channels), [sections]);
+  const flat = useMemo(() => channels.filter((channel) =>
+    (keyword || isMini || !pinnedIds.includes(channel.id)) && matchesKeyword(channel, keyword.toLowerCase()),
+  ), [channels, isMini, keyword, pinnedIds]);
   const visibleCount = flat.length;
   const hasVisibleChannels = visibleCount > 0 || pinnedChannels.length > 0;
   const effectiveCursor = cursor >= 0 && cursor < visibleCount ? cursor : -1;
@@ -280,13 +255,6 @@ export function Sidebar({
     },
     [isMini, onResize, width],
   );
-
-  // 搜索时段是强制展开的，此时点段头不写持久态：否则用户以为是展开/收起，
-  // 实际写进去的折叠态要等清空搜索才显现（验收打回点：折叠态不可见地写入）
-  const toggleSection = useCallback((id: 'rooms' | 'agents') => {
-    if (keyword.trim().length > 0) return;
-    setCollapsed(current => ({ ...current, [id]: !current[id] }));
-  }, [keyword]);
 
   const togglePinned = useCallback((id: string) => {
     setPinnedIds((current) => current.includes(id)
@@ -461,7 +429,7 @@ export function Sidebar({
         </label>
       </div>
 
-      {/* 3. Channels / Bots / Sessions List：同事与群分两段，各段可折叠 */}
+      {/* 3. 会话列表：群与智能体按最近活动混排 */}
       <div
         className="sidebar-channel-list"
         ref={listRef}
@@ -517,29 +485,9 @@ export function Sidebar({
                 {pinnedChannels.map((channel) => renderChannel(channel, true))}
               </section>
             ) : null}
-            {sections.map((section) => (
-              <section key={section.id} className="sidebar-section">
-                <button
-                  type="button"
-                  className="sidebar-section-head"
-                  aria-expanded={!section.collapsed}
-                  aria-controls={`sidebar-section-${section.id}`}
-                  onClick={() => toggleSection(section.id)}
-                >
-                  <IconChevronRight
-                    size={12}
-                    className={`sidebar-section-chevron${section.collapsed ? '' : ' open'}`}
-                  />
-                  <span className="sidebar-section-title">{section.title}</span>
-                  <span className="sidebar-section-count">{section.channels.length}</span>
-                </button>
-                {section.collapsed ? null : (
-                  <div className="sidebar-section-body" id={`sidebar-section-${section.id}`}>
-                    {section.channels.map((channel) => renderChannel(channel))}
-                  </div>
-                )}
-              </section>
-            ))}
+            <div className="sidebar-conversation-list">
+              {flat.map((channel) => renderChannel(channel))}
+            </div>
           </>
         )}
       </div>
@@ -580,7 +528,7 @@ export function Sidebar({
         aria-orientation="vertical"
         aria-label="调整侧边栏宽度"
         aria-valuemin={72}
-        aria-valuemax={450}
+        aria-valuemax={300}
         aria-valuenow={Math.round(width)}
         tabIndex={0}
         title="拖动或用左右方向键调整侧边栏宽度；向左到底折叠为图标模式，双击或 Enter 快速切换"

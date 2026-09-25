@@ -190,52 +190,7 @@
   border-color: currentColor;
 }
 
-/* ── 分段：「同事」/「群」可折叠（UI-03） ───────────────────────── */
-.sidebar-section {
-  display: flex;
-  flex-direction: column;
-}
-
-.sidebar-section-head {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-1);
-  width: 100%;
-  padding: var(--sp-2) var(--sp-2) var(--sp-1);
-  border-radius: var(--r-sm);
-  color: var(--text-tertiary);
-  text-align: left;
-}
-
-.sidebar-section-head:hover {
-  color: var(--text-secondary);
-  background: var(--bg-hover);
-}
-
-.sidebar-section-chevron {
-  flex: none;
-  color: var(--text-tertiary);
-  transition: transform var(--dur-fast) var(--ease);
-}
-
-.sidebar-section-chevron.open {
-  transform: rotate(90deg);
-}
-
-.sidebar-section-title {
-  font-size: var(--fs-xs);
-  font-weight: 600;
-  letter-spacing: 0.06em;
-}
-
-.sidebar-section-count {
-  margin-left: auto;
-  font-size: var(--fs-xs);
-  font-variant-numeric: tabular-nums;
-  color: var(--text-tertiary);
-}
-
-.sidebar-section-body {
+.sidebar-conversation-list {
   display: flex;
   flex-direction: column;
   gap: 3px;
