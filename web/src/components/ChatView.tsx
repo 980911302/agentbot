@@ -12,6 +12,7 @@ import { CorrespondenceRow, CorrespondencePanel } from './CorrespondenceView';
 import { chatRows } from '../features/chat/correspondence';
 import { jumpToBottomVisible, timelineBlocks } from '../features/chat/timeline-view';
 import { controlStatusText as controlStatusTextOf, type ControlNoticeInput } from '../features/chat/control-view';
+import { headerMemberStack, memberPauseTag, roomFlowPhaseLabel } from '../features/chat/group-view';
 import { ChatWelcome } from './ChatWelcome';
 import type { MessageActor } from '../../../src/shared/contracts/message-identity';
 
@@ -28,6 +29,8 @@ interface ChatViewProps {
   onToggleInfo?: () => void;
   /** 私聊点标题打开智能体资料编辑 */
   onOpenProfile?: () => void;
+  /** 群顶栏成员叠放点击：打开成员面板（规范 5.6） */
+  onOpenMembers?: () => void;
   /** 错误消息的重试（重新发送原话） */
   onRetry?: (text: string, clientMessageId?: string) => void;
   /** 用户消息「重新编辑」：只把原文填回输入框，不改发送逻辑 */
@@ -68,6 +71,7 @@ export function ChatView({
   channelTitle,
   onToggleInfo,
   onOpenProfile,
+  onOpenMembers,
   onRetry,
   onEditMessage,
   notices,
@@ -102,10 +106,24 @@ export function ChatView({
     ...member,
     status: roundActive?.id === member.id ? 'working' : member.status,
   }));
+  /** 群顶栏成员叠放（规范 5.6：最多 4 个 + 数量） */
+  const memberStack = headerMemberStack(faces);
   const [peer, setPeer] = useState<MessageActor | null>(null);
   useEffect(() => setPeer(null), [channelKey]);
 
   const [roomFlow, setRoomFlow] = useState<RoomFlowView | null>(null);
+  /** 受控流程条文案与 warn 语义（规范 5.14） */
+  const flowPhase = roomFlow
+    ? roomFlowPhaseLabel({
+        status: roomFlow.status,
+        phase: roomFlow.phase,
+        actors: roomFlow.currentActors.map((actor) => ({
+          kind: actor.kind,
+          id: actor.id,
+          name: members.find((m) => m.id === actor.id)?.name ?? actor.id,
+        })),
+      })
+    : null;
   useEffect(() => {
     if (!isGroup || !channelKey) {
       setRoomFlow(null);
@@ -284,16 +302,22 @@ export function ChatView({
           </div>
 
           {isGroup && faces.length > 0 ? (
-            <div className="chat-header-member-stack" onClick={onToggleInfo} title="查看成员详情">
-              {faces.slice(0, 4).map((m) => (
-                <div key={m.id} className="header-member-avatar" title={m.name}>
+            <button
+              type="button"
+              className="chat-header-member-stack"
+              onClick={onOpenMembers}
+              title="查看成员详情"
+              aria-label={`群成员 ${faces.length} 人，查看成员面板`}
+            >
+              {memberStack.visible.map((m) => (
+                <span key={m.id} className="header-member-avatar" title={memberPauseTag(m) ? `${m.name}（${memberPauseTag(m)}）` : m.name}>
                   <BotAvatar name={m.name} color={m.color} size={22} agentId={m.id} status={m.status} />
-                </div>
+                </span>
               ))}
-              {faces.length > 4 ? (
-                <span className="header-member-more">+{faces.length - 4}</span>
+              {memberStack.more > 0 ? (
+                <span className="header-member-more">+{memberStack.more}</span>
               ) : null}
-            </div>
+            </button>
           ) : null}
           </>}
           {/* header actions */}
@@ -327,32 +351,11 @@ export function ChatView({
         </div>
       </header>
 
-      {isGroup && roomFlow && roomFlow.status !== 'completed' && roomFlow.status !== 'cancelled' ? (
-        <div className="room-flow-bar">
+      {isGroup && roomFlow && flowPhase && roomFlow.status !== 'completed' && roomFlow.status !== 'cancelled' ? (
+        <div className={`room-flow-bar${flowPhase.warn ? ' warn' : ''}`}>
           <div className="room-flow-info">
             <span className="room-flow-badge">{roomFlow.protocol}</span>
-            <span className="room-flow-phase">阶段: {roomFlow.phase}</span>
-            <span className={`room-flow-status status-${roomFlow.status}`}>
-              {roomFlow.status === 'active'
-                ? '● 进行中'
-                : roomFlow.status === 'awaiting_user'
-                  ? '👤 等待用户'
-                  : roomFlow.status === 'paused'
-                    ? '⏸ 已暂停'
-                    : roomFlow.status}
-            </span>
-            {roomFlow.currentActors.length > 0 ? (
-              <span className="room-flow-actors">
-                行动方:{' '}
-                {roomFlow.currentActors
-                  .map((actor) => {
-                    if (actor.kind === 'user') return '用户';
-                    const member = members.find((m) => m.id === actor.id);
-                    return member?.name ?? actor.id;
-                  })
-                  .join(', ')}
-              </span>
-            ) : null}
+            <span className={`room-flow-status status-${roomFlow.status}`}>{flowPhase.text}</span>
           </div>
           <div className="room-flow-actions">
             {roomFlow.status === 'active' ? (

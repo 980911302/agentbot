@@ -755,6 +755,16 @@ export default function App() {
               setScreenOpen(true);
             }
           }}
+          onOpenMembers={() => {
+            if (screenOpen && drawerTab === 'members') {
+              setScreenOpen(false);
+              setDrawerTab('screen');
+              return;
+            }
+            setDrawerTab('members');
+            setScreenOpen(true);
+            setScreenFull(false);
+          }}
           isGroup={activeChannel.kind === 'room'}
           members={liveMembers}
           channelKey={activeChannelId}

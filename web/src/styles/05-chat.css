@@ -1340,6 +1340,13 @@ z-index: var(--z-dropdown);
   font-size: 12px;
   gap: 12px;
 z-index: var(--z-header);
+  transition: background var(--dur-fast) var(--ease);
+}
+
+/* 流程暂停：warn 弱底（规范 5.14） */
+.room-flow-bar.warn {
+  background: var(--warn-weak);
+  border-bottom-color: var(--warn-border);
 }
 
 .room-flow-info {
@@ -1552,4 +1559,53 @@ border-color: var(--danger);
   gap: var(--sp-2);
   margin-top: var(--sp-2);
   max-width: var(--read-w);
+}
+
+/* ── UI-11 群聊视图：暂停标记、顶栏叠放按钮化、@ chip 强化 ────────── */
+/* 群消息里暂停中的成员：名字旁的小标，不当成沉默 */
+.msg-sender-paused {
+  flex: none;
+  margin-left: var(--sp-1);
+  padding: 0 var(--sp-2);
+  border-radius: var(--r-full);
+  border: 1px solid var(--warn-border);
+  background: var(--warn-weak);
+  color: var(--warn-text);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+}
+
+/* 顶栏成员叠放：本身是可点的成员面板入口 */
+.chat-header-member-stack {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+
+.chat-header-member-stack .header-member-avatar {
+  display: inline-flex;
+  margin-left: -6px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px var(--bg-sidebar);
+}
+
+.chat-header-member-stack .header-member-avatar:first-child {
+  margin-left: 0;
+}
+
+/* @ chip：更像chip——弱底 + 强调描边 + hover 可点 */
+.rich-text-container .mention {
+  display: inline-block;
+  padding: 0 var(--sp-2);
+  border: 1px solid var(--accent-border);
+  border-radius: var(--r-full);
+  background: var(--accent-weak);
+  color: var(--accent-text);
+  font-weight: 600;
+  line-height: 18px;
 }

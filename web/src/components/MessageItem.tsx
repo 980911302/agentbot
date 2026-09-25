@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { RichText, stripThinkingBlocks } from '../markdown';
 import { formatMessageTime } from '../format';
 import { messageEnterKind, timelineLayoutKind } from '../features/chat/ui-chrome';
+import { memberPauseTag } from '../features/chat/group-view';
 import type { BotSummary, DisplayMessage } from '../types';
 import { BotAvatar, type AvatarMember } from './BotAvatar';
 import { ToolCallCard } from './ToolCallCard';
@@ -60,6 +61,8 @@ export function MessageItem({
   const member = members.find((item) => item.id === senderId || item.name === senderName);
   const initials = isUser ? getInitials(senderName) : '';
   const [copied, setCopied] = useState(false);
+  /** 暂停成员的「暂停」标记：只在群里、且该成员确实暂停时出现 */
+  const pauseTag = isGroup && !isUser && member ? memberPauseTag(member) : null;
   const layout = timelineLayoutKind({ isGroup, role: message.role });
   const enter = messageEnterKind({ isGroup, role: message.role });
   const rowClass = `msg-row ${layout} enter-${enter}${compact ? ' compact' : ''}`;
@@ -176,6 +179,8 @@ export function MessageItem({
           >
             {senderName}
           </button>
+          {/* 暂停中的成员标出来，不当成沉默（规范 4 / UI-11） */}
+          {pauseTag ? <span className="msg-sender-paused">{pauseTag}</span> : null}
           {origin}
           <span className="msg-time">{formatMessageTime(message.createdAt)}</span>
         </div>

@@ -120,7 +120,12 @@ export function useWorkspace(deps: {
         role: `${room.members.length} 位成员`,
         isGroup: true,
         kind: 'room' as const,
-        members: room.members,
+        // 后端房间视图不带成员在场状态；把轮询拿到的控制态合进来，
+        // 群里才看得出谁被暂停（UI-11：暂停不当成沉默）。
+        members: room.members.map((m) => {
+          const flags = agentFlagsRef.current[m.id];
+          return flags?.paused ? { ...m, status: 'paused' as const } : m;
+        }),
       }));
     }
     function agentList(agents: BotSummary[]): ChannelItem[] {
@@ -145,6 +150,11 @@ export function useWorkspace(deps: {
         ...item,
         unread: unread[item.id] ?? 0,
         ...(item.kind === 'agent' ? (agentFlags[item.id] ?? {}) : {}),
+        // 群成员的在场状态：后端房间视图不带，用轮询到的控制态补（UI-11）
+        members: item.members?.map((member) => {
+          const flags = agentFlags[member.id];
+          return flags?.paused ? { ...member, status: 'paused' as const } : member;
+        }),
       })),
     [channels, unread, agentFlags],
   );
