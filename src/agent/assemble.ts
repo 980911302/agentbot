@@ -1,5 +1,6 @@
 import type { Agent, AgentMemory, AgentRecord } from './types.js';
 import type { Tool } from '../tools/tool.js';
+import { effectiveToolNames } from '../tools/capabilities.js';
 
 export interface AssembleOptions {
   record: AgentRecord;
@@ -9,7 +10,9 @@ export interface AssembleOptions {
 
 export function assembleAgent(options: AssembleOptions): Agent {
   const { record, memory, tools } = options;
-  const allowed = new Set(record.toolNames);
+  // 必需能力恒定叠加：toolNames 只是用户勾选的可选工具（可空），
+  // 谁能卸掉 SendToUser / ReadToolOutput 由 capabilities.ts 说了算，不看记录里存了什么。
+  const allowed = new Set(effectiveToolNames(record.toolNames));
   return {
     id: record.id,
     name: record.name,

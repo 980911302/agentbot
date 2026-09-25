@@ -27,6 +27,8 @@ const TEXT = (text: string) => ({
 export class FakeProvider {
   readonly name = 'fake';
   readonly calls: LLMMessage[][] = [];
+  /** 每次调用时模型请求里带的工具名（E5.3：断言同事/工人实际拿到的工具面） */
+  readonly offeredTools: string[][] = [];
   private readonly options: FakeProviderOptions;
   private readonly pending: Array<{
     resolve: (response: LLMResponse) => void;
@@ -39,8 +41,12 @@ export class FakeProvider {
     this.options = { rejectOnAbort: true, ...options };
   }
 
-  chat(messages: LLMMessage[], opts: { signal?: AbortSignal } = {}): Promise<LLMResponse> {
+  chat(
+    messages: LLMMessage[],
+    opts: { signal?: AbortSignal; tools?: Array<{ name: string }> } = {},
+  ): Promise<LLMResponse> {
     this.calls.push(messages.map((message) => ({ ...message })));
+    this.offeredTools.push((opts.tools ?? []).map((tool) => tool.name));
     if (this.options.auto) {
       if (opts.signal?.aborted) {
         return Promise.reject(new Error('aborted'));

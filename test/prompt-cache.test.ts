@@ -210,7 +210,8 @@ it('运行时重启后明确继续复用落盘快照，普通新任务重建；�
     const changed = await reopened.send(a.id, '只读继续', { resumeTaskId: first.taskId });
     assert.equal(changed.context.snapshotReused, false);
     assert.match(changed.context.systemSnapshot!.rules, /新职责/);
-    assert.equal((await reopened.buildAgent((await reopened.registry.get(a.id))!)).tools.length, 0);
+    // E5.3：toolNames 是可选项，清空后仍剩恒定叠加的必需能力（这里运行时的工具池只有 ReadToolOutput）
+    assert.deepEqual((await reopened.buildAgent((await reopened.registry.get(a.id))!)).tools.map(tool => tool.name), ['ReadToolOutput']);
     const restarted = new AgentRuntime({ ...options, createProvider: () => provider });
     await restarted.ensureDefaultAgent();
     assert.deepEqual((await restarted.registry.get(a.id))!.toolNames, [], '启动升级不能悄悄补回已撤销工具');

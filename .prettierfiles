@@ -49,3 +49,6 @@ src/tools/services/background-processes.ts
 test/process-identity.test.ts
 test/instance-lock-identity.test.ts
 test/lifecycle-shutdown.test.ts
+src/tools/capabilities.ts
+test/tool-capability-policy.test.ts
+test/worker-capability-inheritance.test.ts

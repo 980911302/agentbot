@@ -11,6 +11,7 @@ import type { Compactor, CompactionStore } from '../../memory/compact.js';
 import type { MemoryExtractor } from '../../memory/extract.js';
 import type { MemoryScope } from '../../memory/types.js';
 import { ToolRegistry } from '../../tools/registry.js';
+import { isRequiredTool } from '../../tools/capabilities.js';
 import type { Tool, TurnState } from '../../tools/tool.js';
 import type { AgentRegistry } from '../../agent/registry.js';
 import type { MessageStore } from '../../store/messages.js';
@@ -331,10 +332,15 @@ export class RunExecutor {
       let agent = await this.deps.agentService.buildAgent(record);
 
       // 从当前注册表装配可执行工具；续跑快照只收紧授权上限，不能恢复已撤销的权限。
+      // 例外是必需能力（E5.3）：它从来不是「已撤销的权限」，旧快照里没有它也不该让同事哑掉。
       const available = [...agent.tools, ...(turn.extraTools ?? [])];
       const registry = ToolRegistry.from(
         turn.continuation
-          ? available.filter((tool) => turn.continuation!.authority.toolNames.includes(tool.name))
+          ? available.filter(
+              (tool) =>
+                isRequiredTool(tool.name) ||
+                turn.continuation!.authority.toolNames.includes(tool.name),
+            )
           : available,
       );
       const authority = {

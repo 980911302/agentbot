@@ -75,6 +75,40 @@ export interface Worker {
   taskId?: string;
 }
 
+/**
+ * 工人不该持有的工具：派工 / 协作 / 出口 / 组织管理。
+ * 工人是一次性执行者——不许递归派工，也不许代同事说话或改组织结构。
+ */
+const WORKER_EXCLUDED_TOOLS = new Set([
+  'Task',
+  'MessageSubagent',
+  'CheckSubagent',
+  'StopSubagent',
+  'SendToAgent',
+  'SendToUser',
+  'CreateAgent',
+  'CreateChannel',
+]);
+
+/**
+ * 工人工具 = 运行时可用 ∩ 派工时授予（granted）∩ 派工者当前授权（current），再减去工人禁区。
+ *
+ * 「不超过派工者」靠这道交集保证：派工者后来被收回的工具（改 toolNames / 改默认集），
+ * 工人续跑时同样拿不到——授权只减不增。缺任一侧授权时按「没有权限」处理（fail closed）。
+ */
+export function selectWorkerTools(
+  available: readonly Tool<any>[],
+  granted: ExecutionAuthority | undefined,
+  current: ExecutionAuthority | undefined,
+): Tool<any>[] {
+  return available.filter(
+    (tool) =>
+      !WORKER_EXCLUDED_TOOLS.has(tool.name) &&
+      (granted?.toolNames.includes(tool.name) ?? false) &&
+      (current?.toolNames.includes(tool.name) ?? false),
+  );
+}
+
 export class WorkerManager {
   private readonly workers = new Map<string, Worker>();
   private readonly histories = new Map<string, Array<{ role: 'user' | 'assistant'; content: string }>>();
@@ -263,7 +297,7 @@ export class WorkerManager {
           id: worker.id,
           name: `工人：${worker.description}`,
           instructions: worker.prompt,
-          tools: (await this.deps.workerTools(worker.ownerId)).filter(tool => worker.authority?.toolNames.includes(tool.name) && currentAuthority?.toolNames.includes(tool.name) && !['Task', 'MessageSubagent', 'CheckSubagent', 'StopSubagent', 'SendToAgent', 'SendToUser', 'CreateAgent', 'CreateChannel'].includes(tool.name)),
+          tools: selectWorkerTools(await this.deps.workerTools(worker.ownerId), worker.authority, currentAuthority),
           memory: { projectIds },
         };
         const built = {

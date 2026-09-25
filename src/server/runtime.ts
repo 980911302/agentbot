@@ -64,6 +64,7 @@ import { isOpenDelegation } from '../work/delegation.js';
 import type { InteractionRequest } from '../shared/contracts/sse.js';
 import { resolveProjectOwner } from '../tools/builtin/memory.js';
 import { ToolRegistry } from '../tools/registry.js';
+import { effectiveToolNames } from '../tools/capabilities.js';
 import { createSendToAgentTool } from '../tools/builtin/room.js';
 import { createTaskTools } from '../tools/builtin/task.js';
 import { createReadToolOutputTool } from '../tools/builtin/tool-output.js';
@@ -527,12 +528,13 @@ export class AgentRuntime {
         messages: this.messages,
         workerTools: async (ownerId) => {
           const owner = ownerId ? await this.registry.get(ownerId) : undefined;
-          return owner ? this.tools.filter((tool) => owner.toolNames.includes(tool.name)) : [];
+          // 按派工者实际可用的工具面取（含恒定叠加的必需能力），工人再自行取交集
+          return owner ? this.tools.filter((tool) => effectiveToolNames(owner.toolNames).includes(tool.name)) : [];
         },
         providerFor: (model) => this.agentService.providerFor(this.agentService.resolveModel(model)),
         ownerAuthority: async (ownerId) => {
           const owner = await this.registry.get(ownerId);
-          return owner ? { toolNames: owner.toolNames, projectIds: owner.projectIds } : undefined;
+          return owner ? { toolNames: effectiveToolNames(owner.toolNames), projectIds: owner.projectIds } : undefined;
         },
         maxIterations: this.options.maxIterations,
         // TodoWrite → WorkStep（E4.1）：有正在进行的工作才记步骤
