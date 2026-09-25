@@ -819,7 +819,7 @@ export class AgentRuntime {
     }
     const stop = this.stopCoordinator.isStopSentence(text);
     if (this.control.faulted && !stop) {
-      throw Object.assign(new Error('控制存储已损坏，禁止自动执行'), { code: 'CONTROL_FAULTED' });
+      throw Object.assign(new Error('控制数据损坏，已进入保护模式：去设置 → 高级 → 修复控制数据'), { code: 'CONTROL_FAULTED' });
     }
     const commandId = clientMessageId ?? randomUUID();
     let authorization: Awaited<ReturnType<ActivationCoordinator['acceptUserInput']>> | undefined;
@@ -1362,6 +1362,16 @@ export class AgentRuntime {
 
   isBusy(agentId: string): boolean {
     return this.locks.has(agentId);
+  }
+
+  /**
+   * 修复控制存储（OPT-06）：损坏文件改名备份后以空状态重建，已知同事全部置 paused
+   * ——需要用户逐个核对恢复，而不是默认放行。
+   */
+  async repairControlStore(): Promise<{ ok: boolean; corruptBackup?: string; pausedAgents: number; faulted: boolean }> {
+    const known = await this.registry.list();
+    const result = await this.control.repair(known.map((agent) => agent.id));
+    return { ok: true, ...result, faulted: this.control.faulted };
   }
 
   controlView(agentId: string) {

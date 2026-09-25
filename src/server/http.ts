@@ -11,7 +11,7 @@ import { AgentRuntime } from './runtime.js';
 import { DataDirLock } from '../storage/instance-lock.js';
 import { SEED_AGENTS, SEED_ROOMS } from './seed.js';
 import { createAgentTools } from './tools.js';
-import { json, serveStatic, checkRequest } from './transport/index.js';
+import { json, readJson, serveStatic, checkRequest } from './transport/index.js';
 import type { RouteContext } from './routes/context.js';
 import { handleBotsCollection, handleBotItem } from './routes/bots.js';
 import {
@@ -296,6 +296,19 @@ async function handleRequest(
 
   if (path === '/api/control/stop-all' && method === 'POST') {
     json(response, 400, { error: 'UNSUPPORTED_STOP_SCOPE', code: 'UNSUPPORTED_STOP_SCOPE' });
+    return;
+  }
+
+  // 控制存储修复（OPT-06）：损坏文件先备份，再以空状态重建并把已知同事置 paused。
+  // 必须带确认字段，避免误触；修复后要用户逐个核对再恢复自动处理。
+  if (path === '/api/control/repair' && method === 'POST') {
+    const body = (await readJson(request).catch(() => ({}))) as { confirm?: unknown };
+    if (body?.confirm !== 'repair') {
+      json(response, 400, { error: '需要确认字段 confirm="repair"', code: 'CONFIRM_REQUIRED' });
+      return;
+    }
+    const result = await context.runtime.repairControlStore();
+    json(response, 200, result);
     return;
   }
 

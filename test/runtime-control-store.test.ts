@@ -382,3 +382,132 @@ describe('控制存储的票据清理与单条读取', () => {
     }
   });
 });
+
+describe('控制存储自愈与修复（OPT-06）', () => {
+  const statePath = (dir: string) => join(dir, 'control', 'state.json');
+
+  const seed = async (dir: string, agentIds: string[]) => {
+    const store = await RuntimeControlStore.open(dir);
+    await store.transact((draft) => {
+      for (const agentId of agentIds) {
+        draft.agents[agentId] = { agentId, generation: 1, autoActivation: 'enabled', revision: 1 };
+      }
+    });
+    return store;
+  };
+
+  it('写入时留上一个好版本：state.json.bak 始终是上一次的内容', async () => {
+    const env = await tempDataDir('control-backup');
+    try {
+      const store = await RuntimeControlStore.open(env.dir);
+      await store.transact((draft) => {
+        draft.agents['a1'] = { agentId: 'a1', generation: 1, autoActivation: 'enabled', revision: 1 };
+      });
+      // 首次写入时磁盘上还没有「上一个版本」，所以没有备份
+      await assert.rejects(() => readFile(`${statePath(env.dir)}.bak`, 'utf8'));
+
+      await store.transact((draft) => {
+        draft.agents['a2'] = { agentId: 'a2', generation: 1, autoActivation: 'enabled', revision: 1 };
+      });
+      const afterSecond = JSON.parse(await readFile(`${statePath(env.dir)}.bak`, 'utf8')) as {
+        controlSeq: number;
+        agents: Record<string, unknown>;
+      };
+      assert.equal(afterSecond.controlSeq, 1);
+      assert.ok(afterSecond.agents['a1']);
+      assert.equal(afterSecond.agents['a2'], undefined, '备份里不该有最新一次的改动');
+
+      await store.transact((draft) => {
+        draft.agents['a3'] = { agentId: 'a3', generation: 1, autoActivation: 'enabled', revision: 1 };
+      });
+      const afterThird = JSON.parse(await readFile(`${statePath(env.dir)}.bak`, 'utf8')) as {
+        controlSeq: number;
+        agents: Record<string, unknown>;
+      };
+      assert.equal(afterThird.controlSeq, 2, '每次写入都把当时的主文件挪成备份');
+      assert.ok(afterThird.agents['a2']);
+      assert.equal(afterThird.agents['a3'], undefined);
+    } finally {
+      await env.cleanup();
+    }
+  });
+
+  it('主文件写坏时启动自动从 .bak 恢复，并把所有智能体置 paused（需要核对）', async () => {
+    const env = await tempDataDir('control-restore');
+    try {
+      await seed(env.dir, ['a1']);
+      const good = await readFile(statePath(env.dir), 'utf8');
+      await writeFile(`${statePath(env.dir)}.bak`, good);
+      await writeFile(statePath(env.dir), '{"controlSeq": 3, 坏掉的 JSON');
+
+      const store = await RuntimeControlStore.open(env.dir);
+      assert.equal(store.faulted, false, '能从备份恢复就不该进保护模式');
+      assert.equal(store.restoredFromBackup, true);
+      assert.equal(store.snapshot().agents['a1']?.autoActivation, 'paused');
+      // 恢复后立刻写回主文件，避免下一次写入把损坏文件挪成 .bak 覆盖好备份
+      const raw = await readFile(statePath(env.dir), 'utf8');
+      assert.doesNotThrow(() => JSON.parse(raw));
+      await store.transact((draft) => {
+        draft.agents['a2'] = { agentId: 'a2', generation: 1, autoActivation: 'enabled', revision: 1 };
+      });
+      const backup = JSON.parse(await readFile(`${statePath(env.dir)}.bak`, 'utf8')) as {
+        controlSeq: number;
+        agents: Record<string, { autoActivation: string }>;
+      };
+      assert.equal(backup.agents['a1']?.autoActivation, 'paused', '备份里仍是恢复后的好版本，不是损坏内容');
+    } finally {
+      await env.cleanup();
+    }
+  });
+
+  it('主文件与备份都坏时进保护模式，且损坏文件原样保留', async () => {
+    const env = await tempDataDir('control-both-bad');
+    try {
+      const broken = '{"controlSeq": 3, 坏';
+      await mkdir(join(env.dir, 'control'), { recursive: true });
+      await writeFile(statePath(env.dir), broken);
+      await writeFile(`${statePath(env.dir)}.bak`, 'also broken');
+
+      const store = await RuntimeControlStore.open(env.dir);
+      assert.equal(store.faulted, true);
+      assert.equal(await readFile(statePath(env.dir), 'utf8'), broken, '损坏文件不能被覆盖');
+      await assert.rejects(
+        () => store.transact(() => undefined),
+        (error: unknown) => (error as { code?: string }).code === 'CONTROL_FAULTED',
+      );
+    } finally {
+      await env.cleanup();
+    }
+  });
+
+  it('repair：损坏文件改名备份 → 空状态重建 → 已知同事全部 paused 且可以继续写', async () => {
+    const env = await tempDataDir('control-repair');
+    try {
+      const broken = '{"controlSeq": 3, 坏';
+      await mkdir(join(env.dir, 'control'), { recursive: true });
+      await writeFile(statePath(env.dir), broken);
+
+      const store = await RuntimeControlStore.open(env.dir);
+      assert.equal(store.faulted, true);
+
+      const result = await store.repair(['a1', 'a2']);
+      assert.equal(result.pausedAgents, 2);
+      assert.ok(result.corruptBackup?.includes('state.json.corrupt-'));
+      assert.equal(await readFile(result.corruptBackup!, 'utf8'), broken, '损坏内容原样备份，绝不丢弃');
+      assert.equal(store.faulted, false);
+      const snap = store.snapshot();
+      assert.equal(snap.agents['a1']?.autoActivation, 'paused');
+      assert.equal(snap.agents['a2']?.autoActivation, 'paused');
+      assert.equal(snap.controlSeq, 1);
+      // 修复后能正常写入，并能重启读回
+      await store.transact((draft) => {
+        draft.agents['a1'] = { ...draft.agents['a1']!, autoActivation: 'enabled', revision: 2 };
+      });
+      const reopened = await RuntimeControlStore.open(env.dir);
+      assert.equal(reopened.faulted, false);
+      assert.equal(reopened.snapshot().agents['a1']?.autoActivation, 'enabled');
+    } finally {
+      await env.cleanup();
+    }
+  });
+});

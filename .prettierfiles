@@ -1,7 +1,8 @@
 # 受 Prettier 管理的文件清单（E1.4 增量落地）。
 # 规则：本清单之外的历史文件尚未格式化，不要直接 `prettier --write .`；
 # 触碰某个文件时：格式化它 → 把路径追加到本清单 → check-format 会守住它。
-# 注意：check-lint 用根 tsconfig 编同一份清单，所以 web/**（需要 jsx/Next 之外的配置）不能登记。
+# 注意：check-lint 用根 tsconfig 编同一份清单，所以 web/**（需要 jsx / 非 NodeNext 的解析配置）
+# 与带历史 any / 未使用声明的文件不能登记。
 package.json
 scripts/ci.mjs
 scripts/check-ui-tokens.mjs
@@ -26,3 +27,4 @@ test/layout-view.test.ts
 test/message-store-views.test.ts
 scripts/verify-staged.mjs
 src/tools/sensitive-paths.ts
+test/runtime-control-store.test.ts
