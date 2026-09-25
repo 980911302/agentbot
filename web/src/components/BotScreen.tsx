@@ -1,5 +1,6 @@
+import { useEffect } from 'react';
 import { BotFace } from './BotFace';
-import { IconArrows, IconClose, IconExpand } from '../icons';
+import { IconArrows, IconExpand } from '../icons';
 import { ToolCallCard } from './ToolCallCard';
 import type { ArtifactView, BotSummary, DisplayMessage, ToolCallView } from '../types';
 
@@ -32,6 +33,18 @@ export function BotScreen({
   const history = timeline.filter((call) => call.status !== 'running').reverse();
   const busy = bot?.status === 'thinking' || bot?.status === 'working';
   const hasActivity = running.length > 0 || history.length > 0;
+  // 全屏态下内容区没有关闭按钮（唯一关闭键在抽屉 tabs），Esc 就是出口
+  useEffect(() => {
+    if (!fullscreen) return undefined;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        onClose();
+      }
+    };
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
+  }, [fullscreen, onClose]);
 
   return (
     <section className={`screen${fullscreen ? ' fullscreen' : ''}`}>
@@ -46,9 +59,7 @@ export function BotScreen({
         >
           <IconExpand size={15} />
         </button>
-        <button type="button" className="screen-btn" aria-label="关闭" onClick={onClose}>
-          <IconClose size={15} />
-        </button>
+
       </header>
 
       <div className="screen-body">

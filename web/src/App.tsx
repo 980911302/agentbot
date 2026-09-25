@@ -3,6 +3,7 @@ import { Sidebar, type ChannelItem } from './components/Sidebar';
 import { BotScreen } from './components/BotScreen';
 import { ChatView } from './components/ChatView';
 import { useShortcuts } from './hooks/use-shortcuts';
+import { clampPanelWidth, loadPanelWidth, panelLayoutKind, savePanelWidth, type PanelWidthStore } from './features/chat/panel-view';
 import { Composer } from './components/Composer';
 import { SettingsDialog } from './components/SettingsDialog';
 import { ChatWelcome } from './components/ChatWelcome';
@@ -119,8 +120,30 @@ export default function App() {
   const [notices, setNotices] = useState<Record<string, string[]>>({});
   const [screenOpen, setScreenOpen] = useState(false);
   const [screenFull, setScreenFull] = useState(false);
+  /** 右侧面板宽度（UI-06）：320–480，可拖，记忆在 localStorage */
+  const [panelWidth, setPanelWidth] = useState<number>(() =>
+    typeof window === 'undefined' ? 340 : loadPanelWidth(window.localStorage as unknown as PanelWidthStore),
+  );
+  const [isResizingPanel, setIsResizingPanel] = useState(false);
+
+  const onPanelResize = useCallback((width: number) => {
+    const next = clampPanelWidth(width);
+    setPanelWidth(next);
+    if (typeof window !== 'undefined') {
+      savePanelWidth(window.localStorage as unknown as PanelWidthStore, next);
+    }
+  }, []);
   /** 抽屉卸载前先播完退出动画 */
   const drawerPresence = usePresence(screenOpen);
+  /** 面板形态：<1280 时是覆盖层（带遮罩、Esc 关闭，规范 5.10）。
+      跟随窗口宽度——拖窗口跨过 1280 时形态要跟着变。 */
+  const [viewportWidth, setViewportWidth] = useState(() => (typeof window === 'undefined' ? 1440 : window.innerWidth));
+  useEffect(() => {
+    const onResize = () => setViewportWidth(window.innerWidth);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+  const panelLayout = panelLayoutKind(viewportWidth, drawerPresence.mounted && !screenFull);
   const [drawerTab, setDrawerTab] = useState<'screen' | 'memory' | 'members' | 'profile'>('screen');
   const [memoryToken, setMemoryToken] = useState(0);
   /** 正在等用户回答的卡片（E2.5b 拆出） */
@@ -682,8 +705,8 @@ export default function App() {
   return (
     <ToastProvider>
     <div
-      className={`app${drawerPresence.mounted && !screenFull ? ' with-screen' : ''}${isResizing ? ' resizing' : ''}`}
-      style={{ '--sidebar-w': `${sidebarWidth}px` } as React.CSSProperties}
+      className={`app${drawerPresence.mounted && !screenFull ? ' with-screen' : ''}${panelLayout === 'overlay' ? ' panel-overlay' : ''}${isResizing ? ' resizing' : ''}`}
+      style={{ '--sidebar-w': `${sidebarWidth}px`, '--panel-w-dyn': `${panelWidth}px` } as React.CSSProperties}
     >
       {/* 1. 左侧导航栏 */}
       <Sidebar
@@ -814,7 +837,32 @@ export default function App() {
             }}
           />
         ) : (
-          <div className={`drawer ${drawerPresence.state}`}>
+          <div className={`drawer ${drawerPresence.state}`} style={{ width: panelLayout === 'dock' ? panelWidth : undefined }}>
+            {panelLayout === 'dock' ? (
+              <div
+                className="drawer-resizer"
+                role="separator"
+                aria-orientation="vertical"
+                aria-label="调整面板宽度"
+                title="拖动调整面板宽度（320–480）"
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  const startX = event.clientX;
+                  const startWidth = panelWidth;
+                  const onMove = (move: MouseEvent) => onPanelResize(startWidth + (startX - move.clientX));
+                  const onUp = () => {
+                    document.removeEventListener('mousemove', onMove);
+                    document.removeEventListener('mouseup', onUp);
+                    document.body.style.cursor = '';
+                    document.body.style.userSelect = '';
+                  };
+                  document.body.style.cursor = 'col-resize';
+                  document.body.style.userSelect = 'none';
+                  document.addEventListener('mousemove', onMove);
+                  document.addEventListener('mouseup', onUp);
+                }}
+              />
+            ) : null}
             <div className="drawer-tabs">
               {activeChannel.kind !== 'room' ? (
                 <button

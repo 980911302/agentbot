@@ -3,10 +3,29 @@
   display: flex;
   flex-direction: column;
   height: 100%;
+  width: var(--panel-w-dyn, var(--panel-w));
   background: var(--bg-sidebar);
   border-left: 1px solid var(--border);
   overflow: hidden;
 z-index: var(--z-panel);
+}
+
+/* 左缘拖拽手柄：320–480（UI-06）。悬停出现一条强调边 */
+.drawer-resizer {
+  position: absolute;
+  top: 0;
+  left: -3px;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+z-index: var(--z-nested);
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.drawer-resizer:hover,
+.drawer-resizer:active {
+  background: var(--accent-edge);
+  opacity: 0.6;
 }
 
 .drawer .swap {
@@ -792,3 +811,21 @@ box-shadow: var(--shadow-md);
   box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent);
 }
 
+
+/* ── 资料吸底保存条（UI-06 / 规范 5.10） ────────────────────────── */
+.profile-save-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  flex-shrink: 0;
+  padding: var(--sp-3) var(--sp-4);
+  border-top: 1px solid var(--border);
+  background: var(--bg-elevated);
+}
+
+.profile-save-hint {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-secondary);
+}

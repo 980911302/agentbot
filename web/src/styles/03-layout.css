@@ -32,6 +32,39 @@
   }
 }
 
+/* UI-06：<1280 且右侧面板打开时，面板变覆盖层（带遮罩）。
+   断点值 1280 为注释约定（CSS 变量不能用于 media query），
+   统一断点见 docs/主题与CSS.md 与 UI-09。 */
+@media (max-width: 1279px) {
+  .app.with-screen {
+    position: relative;
+    grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
+  }
+
+  .app.panel-overlay .drawer {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(var(--panel-w-dyn, 340px), 92vw) !important;
+    box-shadow: var(--shadow-lg);
+  }
+
+  /* 遮罩：点它或按 Esc 都能关面板 */
+  .app.panel-overlay::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: var(--scrim);
+    backdrop-filter: blur(2px);
+    z-index: var(--z-panel);
+  }
+
+  .app.panel-overlay .drawer {
+    z-index: var(--z-nested);
+  }
+}
+
 @media (max-width: 740px) {
   .app.with-screen {
     position: relative;

@@ -58,6 +58,13 @@ export function BotProfileDrawer({ bot, onClose, onSave }: BotProfileDrawerProps
   const latestValues = useRef({ name, title, instructions, color });
   latestValues.current = { name, title, instructions, color };
 
+  /** 是否有未保存改动（名字留空视为没改好，不出保存条） */
+  const isDirty =
+    (name.trim() !== '' && name !== bot.name) ||
+    title !== (bot.title || '') ||
+    instructions !== (bot.instructions || bot.role || '') ||
+    color !== (bot.color || AVATAR_COLOR_HEX.violet);
+
   const saveChanges = useCallback(
     async (overrides?: Partial<{ name: string; title: string; instructions: string; color: string }>) => {
       const current = { ...latestValues.current, ...overrides };
@@ -97,6 +104,14 @@ export function BotProfileDrawer({ bot, onClose, onSave }: BotProfileDrawerProps
     }, 600);
     return () => clearTimeout(timer);
   }, [name, title, instructions, color, bot.name, bot.title, bot.instructions, bot.role, bot.color, saveChanges]);
+
+  const discardChanges = () => {
+    setName(bot.name || '');
+    setTitle(bot.title || '');
+    setInstructions(bot.instructions || bot.role || '');
+    setColor(bot.color || AVATAR_COLOR_HEX.violet);
+    setError(null);
+  };
 
   const toggleNotify = async () => {
     const next = !notify;
@@ -227,9 +242,21 @@ export function BotProfileDrawer({ bot, onClose, onSave }: BotProfileDrawerProps
           </button>
         </div>
 
-        {saving ? <div className="profile-drawer-hint">正在自动同步…</div> : null}
         {error ? <div className="profile-drawer-error">{error}</div> : null}
       </div>
+
+      {/* 吸底保存条（UI-06 / 规范 5.10）：有改动才出现，保存走现有更新接口 */}
+      {isDirty ? (
+        <div className="profile-save-bar" role="group" aria-label="未保存的修改">
+          <span className="profile-save-hint">{saving ? '正在保存…' : '有未保存的修改'}</span>
+          <button type="button" className="btn ghost sm" onClick={discardChanges} disabled={saving}>
+            撤销
+          </button>
+          <button type="button" className="btn primary sm" onClick={() => void saveChanges()} disabled={saving}>
+            保存
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }

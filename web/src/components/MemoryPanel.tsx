@@ -2,6 +2,9 @@ import { useCallback, useEffect, useState } from 'react';
 import * as api from '../api';
 import { Collapsible, useCountUp } from '../motion';
 import { IconClose, IconPlus, IconTrash } from '../icons';
+import { Chip } from './ui/Chip.js';
+import { ConfirmDialog } from './ConfirmDialog.js';
+import { toast } from './ui/Toast.js';
 import type { MemoryEntryView, MemoryScope, MemorySnapshot, MemoryTier } from '../types';
 
 interface MemoryPanelProps {
@@ -75,6 +78,9 @@ export function MemoryPanel({ agentId, agentName, refreshToken, onClose }: Memor
     }
   };
 
+  /** 遗忘是不可逆操作：先确认再删（UI-06） */
+  const [pendingForget, setPendingForget] = useState<MemoryEntryView | null>(null);
+
   const promote = async (entry: MemoryEntryView, tier: MemoryTier) => {
     if (busyEntryId) return;
     setBusyEntryId(entry.id);
@@ -112,38 +118,27 @@ export function MemoryPanel({ agentId, agentName, refreshToken, onClose }: Memor
       <div className="memory-body">
         {snapshot ? (
           <div className="memory-counts">
-            <button
-              type="button"
-              className={`tier-pill portrait${tierFilter === 'portrait' ? ' active' : ''}`}
+            <Chip
+              selected={tierFilter === 'portrait'}
               onClick={() => setTierFilter((prev) => (prev === 'portrait' ? 'all' : 'portrait'))}
-              title="过滤画像记忆"
             >
               画像 {portraitCount}
-            </button>
-            <button
-              type="button"
-              className={`tier-pill log${tierFilter === 'log' ? ' active' : ''}`}
+            </Chip>
+            <Chip
+              selected={tierFilter === 'log'}
               onClick={() => setTierFilter((prev) => (prev === 'log' ? 'all' : 'log'))}
-              title="过滤日志记忆"
             >
               日志 {logCount}
-            </button>
-            <button
-              type="button"
-              className={`tier-pill scratch${tierFilter === 'scratch' ? ' active' : ''}`}
+            </Chip>
+            <Chip
+              selected={tierFilter === 'scratch'}
               onClick={() => setTierFilter((prev) => (prev === 'scratch' ? 'all' : 'scratch'))}
-              title="过滤随手记忆"
             >
               随手 {scratchCount}
-            </button>
-            <button
-              type="button"
-              className={`tier-pill all${tierFilter === 'all' ? ' active' : ''}`}
-              onClick={() => setTierFilter('all')}
-              title="显示全部"
-            >
+            </Chip>
+            <Chip selected={tierFilter === 'all'} onClick={() => setTierFilter('all')}>
               共 {totalCount} 条
-            </button>
+            </Chip>
           </div>
         ) : null}
 
@@ -243,7 +238,7 @@ export function MemoryPanel({ agentId, agentName, refreshToken, onClose }: Memor
                                 className="memory-act danger"
                                 aria-label="遗忘"
                                 disabled={isBusy}
-                                onClick={() => void remove(entry)}
+                                onClick={() => setPendingForget(entry)}
                               >
                                 <IconTrash size={13} />
                               </button>
@@ -258,6 +253,20 @@ export function MemoryPanel({ agentId, agentName, refreshToken, onClose }: Memor
             })
           : null}
       </div>
+
+      <ConfirmDialog
+        open={pendingForget !== null}
+        title="遗忘这条记忆？"
+        message={pendingForget ? `「${pendingForget.text.slice(0, 40)}${pendingForget.text.length > 40 ? '…' : ''}」将被删除，无法恢复。` : ''}
+        danger
+        confirmLabel="遗忘"
+        onConfirm={() => {
+          const target = pendingForget;
+          setPendingForget(null);
+          if (target) void remove(target).then(() => toast('已遗忘'));
+        }}
+        onCancel={() => setPendingForget(null)}
+      />
     </section>
   );
 }
