@@ -1600,14 +1600,14 @@ border-color: var(--danger);
   margin-top: calc(-1 * var(--sp-1));
 }
 
-/* 合并组里的后续行沿用左侧头像列的对齐：留出头像宽度的占位，
-   气泡才不会因为少了头像而错位。 */
+/* 合并组里的后续行沿用头像列的对齐：留出头像宽度（34）+ 行 gap（12）的占位，
+   气泡才不会因为少了头像而错位。私聊对方与群聊（含群里的主人）头像都在左侧，
+   保持左缩进；只有私聊里的主人头像在右侧，占位挪到右边。 */
 .msg-row.compact .msg-content-col {
   margin-left: 46px;
 }
 
-.msg-row.compact.dm-user .msg-content-col,
-.msg-row.compact.group-stream .msg-content-col {
+.msg-row.compact.dm-user .msg-content-col {
   margin-left: 0;
   margin-right: 46px;
 }
