@@ -3,6 +3,7 @@ import { strict as assert } from 'node:assert';
 import {
   controlNoticeState,
   controlStatusText,
+  repairOutcomeMessage,
   resumeOutcomeMessage,
   retryOutcomeMessage,
   type ControlNoticeInput,
@@ -25,6 +26,8 @@ describe('controlNoticeState：控制状态条', () => {
   it('控制存储损坏优先：这是最要命的状态', () => {
     const state = controlNoticeState({ ...base, faulted: true, autoActivation: 'paused', held: 3 });
     assert.equal(state?.kind, 'faulted');
+    assert.deepEqual(state?.actions, ['repair'], '损坏态要给出修复入口（OPT-06）');
+    assert.match(state?.detail ?? '', /保护模式/);
     assert.equal(state?.actions.includes('resume'), false, '存储损坏时不让点恢复——恢复也无从谈起');
   });
 
@@ -105,5 +108,13 @@ describe('操作结果反馈', () => {
   it('重试成功带回条数，失败不含糊', () => {
     assert.match(retryOutcomeMessage(true, 3), /3/);
     assert.match(retryOutcomeMessage(false, 0), /没成功/);
+  });
+});
+
+describe('修复控制数据的结果文案（OPT-06）', () => {
+  it('成功时说明修好并要核对，失败时给下一步', () => {
+    assert.match(repairOutcomeMessage(true, 3), /3 位同事/);
+    assert.match(repairOutcomeMessage(true, 3), /已暂停/);
+    assert.match(repairOutcomeMessage(false), /备份数据目录/);
   });
 });

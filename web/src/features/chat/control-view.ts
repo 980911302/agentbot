@@ -22,7 +22,7 @@ export interface ControlNoticeInput {
 }
 
 export type ControlNoticeKind = 'faulted' | 'stopping' | 'paused' | 'failed' | 'pending';
-export type ControlAction = 'resume' | 'retry';
+export type ControlAction = 'resume' | 'retry' | 'repair';
 
 export interface ControlNoticeState {
   kind: ControlNoticeKind;
@@ -35,15 +35,16 @@ export interface ControlNoticeState {
 /**
  * 状态条判定。优先级从高到低：
  *   存储损坏 > 停止中 > 已暂停 > 有失败来信 > 有来信积压。
- * 存储损坏时不给操作——恢复入口救不了一个坏存储，别让用户点了没反应。
+ * 存储损坏时只给「修复控制数据」这一个出口（OPT-06）：损坏文件会先被改名备份，
+ * 再以空状态重建，所有同事置为已暂停，需要逐个核对。
  */
 export function controlNoticeState(input: ControlNoticeInput): ControlNoticeState | null {
   const waiting = Math.max(input.held, input.pendingMail);
   if (input.faulted) {
     return {
       kind: 'faulted',
-      detail: '控制存储已损坏，自动处理已停；需要修复后才能恢复。',
-      actions: [],
+      detail: '控制数据损坏，已进入保护模式：修好之前不写、不自动执行。',
+      actions: ['repair'],
     };
   }
   if (input.stopInFlight) {
@@ -97,6 +98,13 @@ export function controlStatusText(input: ControlNoticeInput): ControlStatusText 
     pending: '有来信待处理',
   }[state.kind];
   return { text, kind: state.kind };
+}
+
+/** 修复控制数据的结果反馈（Toast）：说清「修好了」和「接下来要核对什么」 */
+export function repairOutcomeMessage(ok: boolean, pausedAgents = 0): string {
+  return ok
+    ? `控制数据已修复，${pausedAgents} 位同事已置为「已暂停」：核对无误后再逐个恢复自动处理`
+    : '修复失败：控制数据仍不可用。请先备份数据目录再重试';
 }
 
 /** 恢复自动处理的结果反馈（Toast） */

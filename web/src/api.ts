@@ -201,6 +201,15 @@ export async function fetchAgentInbox(agentId: string): Promise<AgentInboxView> 
 }
 
 /** 恢复自动处理（POST /api/agents/:id/resume） */
+/** 修复损坏的控制存储（OPT-06）：必须带确认字段，防止误触 */
+export async function repairControlStore(): Promise<{ ok: boolean; corruptBackup?: string; pausedAgents: number; faulted: boolean }> {
+  return request('/api/control/repair', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ confirm: 'repair' }),
+  });
+}
+
 export async function resumeAgent(agentId: string): Promise<unknown> {
   return request(`/api/agents/${encodeURIComponent(agentId)}/resume`, {
     method: 'POST',

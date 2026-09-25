@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import { expect, test } from '@playwright/test';
 
 /**
@@ -93,4 +94,46 @@ test('响应式回归：1024 右侧面板是覆盖层，<768 侧栏抽屉可开�
   await expect(page.locator('.app-sidebar')).toHaveCSS('visibility', 'visible');
   await page.keyboard.press('Escape');
   await expect(page.locator('.app')).not.toHaveClass(/drawer-open/);
+});
+
+/**
+ * OPT-06：控制数据损坏 → 状态条给出修复入口 → 修复后同事置为已暂停。
+ * 这条链路要在**写坏控制存储**的环境里跑，不能污染共享的 webServer，
+ * 所以自带一个临时预览进程（固定端口，跑完杀掉）。
+ */
+test('控制数据损坏：状态条给出修复入口，修复后同事变为已暂停', async ({ page }) => {
+  const port = 4711;
+  const child = spawn('node', ['--import', 'tsx', 'test/fixtures/ui-preview.ts'], {
+    env: { ...process.env, AGENT_PREVIEW_PORT: String(port), AGENT_PREVIEW_CORRUPT_CONTROL: '1' },
+    stdio: 'ignore',
+  });
+  try {
+    const base = `http://127.0.0.1:${port}/`;
+    await expect
+      .poll(async () => (await fetch(`${base}api/health`).catch(() => null))?.ok ?? false, {
+        timeout: 30_000,
+      })
+      .toBe(true);
+
+    await page.goto(base);
+    await page.locator('.channel-item', { hasText: '普通私聊' }).first().click();
+
+    const notice = page.locator('.control-notice');
+    await expect(notice).toBeVisible();
+    await expect(notice).toContainText('保护模式');
+    await expect(notice).toHaveClass(/faulted/);
+
+    // 二次确认：先弹确认框，确认后才真的修复
+    await notice.getByRole('button', { name: '修复控制数据' }).click();
+    const dialog = page.getByRole('dialog', { name: '修复控制数据？' });
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole('button', { name: '修复' }).click();
+
+    await expect(page.locator('.ui-toast-message')).toContainText('控制数据已修复');
+    // 修复后不再是「损坏」态，而是需要核对的「已暂停」
+    await expect(page.locator('.control-notice.faulted')).toBeHidden({ timeout: 15_000 });
+    await expect(notice).toContainText('已暂停');
+  } finally {
+    child.kill('SIGTERM');
+  }
 });

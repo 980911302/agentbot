@@ -15,7 +15,8 @@
  *   9. 交互卡-待回答           发送「请主人定方向」挂起选项卡
  */
 import { randomUUID } from 'node:crypto';
-import { resolve } from 'node:path';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
 import { createAgentServer } from '../../src/server/http.js';
 import { FakeProvider } from '../fakes/fake-provider.js';
 import { tempDataDir } from '../fakes/test-env.js';
@@ -66,6 +67,12 @@ const provider = new FakeProvider({
 
 // 固定端口给 Playwright 的 webServer 探活用（缺省 0 = 随机端口）
 const port = Number(process.env.AGENT_PREVIEW_PORT ?? 0);
+// OPT-06：起服务前把控制存储写坏，用来看「控制数据损坏 → 修复」那条链路
+const corruptControl = process.env.AGENT_PREVIEW_CORRUPT_CONTROL === '1';
+if (corruptControl) {
+  await mkdir(join(temp.dir, 'control'), { recursive: true });
+  await writeFile(join(temp.dir, 'control', 'state.json'), '{"controlSeq": 5, 坏掉的控制数据');
+}
 const server = await createAgentServer({
   port,
   rootDir: temp.dir,
@@ -310,7 +317,8 @@ await say(
   { type: 'text', text: '好，我停下自动处理，等你复核后再继续。' },
   actor(paused),
 );
-await runtime.send(paused.id, '停');
+// 损坏模式下控制存储不可写，「停」会抛；跳过这一步（那条链路由 test/control-repair.test.ts 覆盖）
+if (!corruptControl) await runtime.send(paused.id, '停');
 
 // ── 7. 模型报错：实时失败（不落库，需在界面里对这位同事发「触发模型错误」） ──
 const failing = await createAgent('模型报错·失败演示', '#6b7280', '界面验收：模型报错时的错误行');
@@ -350,8 +358,11 @@ for (let i = 0; i < 210; i += 1) {
 const interactive = await createAgent('交互卡·待回答', '#ec4899', '界面验收：选项卡等待用户回答');
 await say(interactive.id, 'user', { type: 'text', text: '请主人定方向，再开工。' });
 // 与 HTTP 路由同款：受理后不等待回合——这一回合会挂在等回答上，界面里才答得了
-const interactiveAccepted = await runtime.acceptMessage(interactive.id, '请主人定方向');
-void interactiveAccepted.execute().catch(() => undefined);
+// 损坏模式下受理会被控制面拒绝（这正是保护模式该有的行为），跳过
+if (!corruptControl) {
+  const interactiveAccepted = await runtime.acceptMessage(interactive.id, '请主人定方向');
+  void interactiveAccepted.execute().catch(() => undefined);
+}
 
 // ── 10. 忙碌态：对这位同事发含「慢回复演示」的话，回合被拖住（UI-07）──
 const busy = await createAgent(
