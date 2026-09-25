@@ -15,7 +15,8 @@ import { InboxProcessor } from '../server/runtime/inbox-processor.js';
 import { RoomDispatcher } from '../server/runtime/room-dispatcher.js';
 import type { AgentRuntimeOptions } from '../server/runtime/types.js';
 import type { createRuntimeStorage } from './storage-layer.js';
-import type { RuntimeHost, RuntimeSharedState } from './host.js';
+import type { RuntimeSharedState } from './host.js';
+import type { RuntimeHost } from '../server/runtime/host.js';
 
 /** 智能体互传的链深度上限：工具自己判超限，装配这里只给默认值 */
 export const DEFAULT_MAX_AGENT_DEPTH = 3;

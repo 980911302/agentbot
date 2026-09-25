@@ -1,4 +1,6 @@
 import { createRuntimeAssembly } from '../app/bootstrap.js';
+import type { createDelegationWaitBridge } from './runtime/delegation-wait-bridge.js';
+import type { createWaitCoordinator } from './runtime/wait-coordinator.js';
 import type { WaitRequest } from './runtime/send-to-agent-service.js';
 import { ActivationCoordinator } from './runtime/activation-coordinator.js';
 import { DeliveryService } from './runtime/delivery-service.js';
@@ -187,6 +189,10 @@ export class AgentRuntime {
   readonly roomFlowService: RoomFlowService;
   readonly roomFlowScheduler: RoomFlowScheduler;
   readonly roomFlowRouter: RoomFlowRouter;
+  /** 持久等待生命周期（E4.3，OPT-03 从门面搬出） */
+  private readonly waitLifecycle: ReturnType<typeof createWaitCoordinator>;
+  /** 委派与同事回信的等待闭环（E4.4，OPT-03 从门面搬出） */
+  private readonly delegationWaits: ReturnType<typeof createDelegationWaitBridge>;
   private readonly runExecutions = new Map<string, Promise<SendResult>>();
   /** 到点扫描兜底定时器（E4.3）；unref 不拉着进程 */
   private waitTimer?: NodeJS.Timeout;
@@ -204,6 +210,7 @@ export class AgentRuntime {
       {
         isBusy: (agentId) => this.isBusy(agentId),
         watchInbox: (agentId) => this.inboxScheduler.watch(agentId),
+        acceptMessage: (agentId, text, messageOptions) => this.acceptMessage(agentId, text, messageOptions),
         drainInbox: (agentId, drainOptions) => this.drainInbox(agentId, drainOptions),
         runTurn: (agentId, task, turn, turnOptions) => this.runTurn(agentId, task, turn, turnOptions),
         membersOf: (roomId) => this.membersOf(roomId),
@@ -265,6 +272,8 @@ export class AgentRuntime {
     this.tools = deps.tools;
     this.inboxScheduler = deps.inboxScheduler;
     this.waitTimer = deps.waitTimer;
+    this.waitLifecycle = deps.waitLifecycle;
+    this.delegationWaits = deps.delegationWaits;
   }
 
   async close(): Promise<void> {
@@ -1141,360 +1150,45 @@ export class AgentRuntime {
     return this.options.settings?.ownerName ?? this.options.ownerName ?? DEFAULT_OWNER_NAME;
   }
 
-  // ── 持久等待：WorkWait（E4.3，设计 §4.3 / §7.2）────────────
-  //
-  // 等待是一条记录，不是一段悬挂的 Promise：
-  //   建        —— 落盘 WorkWait + 工作置 waiting + 用户卡登记到界面；
-  //   结束当前执行 —— 提问类工具让位（stopReason=waiting），执行位立刻释放；
-  //   唤醒      —— 用户答题 / 同事回信 / 到点，各开一次新的 Run 接着做；
-  //   重启      —— 读回 pending、重建待答卡、补上错过的到点，绝不序列化 Promise。
+  // ── 持久等待与委派闭环（E4.3/E4.4，实现在 runtime/wait-coordinator.ts 与
+  //    runtime/delegation-wait-bridge.ts；这里只留门面）────────────
 
   /** 界面/快照用的卡片列表（含重启后重建的持久卡） */
-  listInteractions(agentId?: string): InteractionRequest[] {
-    return this.broker.list(agentId ? { agentId } : undefined);
-  }
+  listInteractions(agentId?: string): InteractionRequest[] { return this.waitLifecycle.listInteractions(agentId); }
 
-  /**
-   * 落一条等待并把工作置为 waiting。
-   * dueAt 缺省时：用户卡给一个明确的答复期限（到点只判过期）；其余等待不设期限。
-   */
-  private async beginWait(input: WaitRequest): Promise<WorkWait> {
-    if (input.kind === 'user') {
-      const existing = await this.waits.listPending({ agentId: input.agentId, kind: 'user' });
-      if (existing.length > 0) throw new Error('这个同事已经有一张等回答的卡了，先回答或作废它再问');
-    }
-    const ttl = this.options.waitUserTimeoutMs ?? DEFAULT_USER_WAIT_TTL_MS;
-    const wait = await this.waits.create({
-      ...input,
-      ...(input.kind === 'user' && input.dueAt === undefined ? { dueAt: Date.now() + ttl } : {}),
-    });
-    await this.markWorkWaiting(wait.workId, wait.condition);
-    if (wait.kind === 'user' && wait.card) {
-      const agent = await this.registry.get(wait.agentId);
-      const card = this.toInteractionCard(wait, agent?.name ?? wait.agentId);
-      if (card) {
-        this.broker.expose(card);
-        this.events.publish({
-          kind: 'agent',
-          agentId: wait.agentId,
-          payload: { type: 'interaction', request: card },
-        });
-      }
-    }
-    return wait;
-  }
+  refreshWaitCards(): Promise<number> { return this.waitLifecycle.refreshWaitCards(); }
 
-  /** 提问类工具（widget / secret-request）的持久等待通道：进 ToolContext，工具不认识存储 */
-  private async requestUserWaitCard(
-    agentId: string,
-    input: {
-      kind: 'choice' | 'secret';
-      question: string;
-      detail?: string;
-      options?: Array<{ id: string; label: string }>;
-      name?: string;
-    },
-  ): Promise<{ id: string }> {
-    const work = await this.works.openWorkOf(agentId);
-    // 交互 id 与存储 id 分开：答案必须带这个 id 才能完成对应等待
-    const correlationId = randomUUID();
-    await this.beginWait({
-      agentId,
-      ...(work ? { workId: work.id } : {}),
-      kind: 'user',
-      correlationId,
-      card: {
-        question: input.question,
-        ...(input.detail ? { detail: input.detail } : {}),
-        ...(input.options ? { options: input.options } : {}),
-        ...(input.name ? { name: input.name } : {}),
-      },
-      condition: `等用户回答「${input.question}」`,
-    });
-    return { id: correlationId };
-  }
-
-  /** 持久等待 → 线上卡片形状（重启恢复与实时推送共用同一份映射） */
-  private toInteractionCard(wait: WorkWait, agentName: string): InteractionRequest | undefined {
-    if (!wait.card) return undefined;
-    const card = wait.card;
-    return {
-      id: wait.correlationId,
-      kind: card.name ? 'secret' : 'choice',
-      question: card.question,
-      ...(card.detail ? { detail: card.detail } : {}),
-      ...(card.options ? { options: card.options.map((option) => ({ ...option })) } : {}),
-      ...(card.name ? { name: card.name } : {}),
-      agentId: wait.agentId,
-      agentName,
-      createdAt: wait.createdAt,
-      // 卡片不设隐性 5 分钟超时：有业务期限就用 dueAt，否则给一个明确的远界
-      expiresAt: wait.dueAt ?? wait.createdAt + (this.options.waitUserTimeoutMs ?? DEFAULT_USER_WAIT_TTL_MS),
-    };
-  }
-
-  /** 重启恢复：从持久等待重建待答卡（不序列化 Promise），返回重建张数 */
-  async refreshWaitCards(): Promise<number> {
-    const pending = await this.waits.listPending({ kind: 'user' });
-    const cards: InteractionRequest[] = [];
-    for (const wait of pending) {
-      const agent = await this.registry.get(wait.agentId);
-      const card = this.toInteractionCard(wait, agent?.name ?? wait.agentId);
-      if (card) cards.push(card);
-    }
-    this.broker.hydrate(cards);
-    return cards.length;
-  }
-
-  /**
-   * 到点扫描（启动扫描 + 兜底定时器共用，不引入调度框架）：
-   *   time 到点 → 满足条件并唤醒（进程不在时错过，重启补上）；
-   *   user 到点 → 明确过期（超时被当作没答，不是回答）。
-   */
-  async sweepDueWaits(now?: number): Promise<{ satisfied: number; expired: number }> {
-    const { satisfied, expired } = await this.waits.sweepDue(now);
-    for (const wait of expired) {
-      this.broker.retire(wait.correlationId);
-      this.events.publish({
-        kind: 'agent',
-        agentId: wait.agentId,
-        payload: { type: 'interaction_closed', id: wait.correlationId, answered: false },
-      });
-      await this.releaseWorkIfSettled(wait.workId);
-    }
-    for (const wait of satisfied) {
-      await this.releaseWorkIfSettled(wait.workId);
-      await this.wakeWait(wait, `定时等待到点：${wait.condition ?? wait.correlationId}。接着做。`).catch(
-        (error) => console.warn(`定时等待唤醒失败：${messageOf(error)}`),
-      );
-    }
-    return { satisfied: satisfied.length, expired: expired.length };
-  }
+  sweepDueWaits(now?: number): Promise<{ satisfied: number; expired: number }> { return this.waitLifecycle.sweepDueWaits(now); }
 
   /** 用户答题：带交互 id 的明确答案才能完成对应等待；迟到回答返回明确状态 */
-  async answerInteraction(
-    id: string,
-    answer: { value?: string; secret?: string },
-  ): Promise<{ ok: boolean; status: string; message?: string; runId?: string }> {
-    const found = await this.waits.findByCorrelation(id);
-    const wait = found.find((item) => item.status === 'pending' && item.kind === 'user');
-    if (!wait) {
-      // 同回合内的同步等待（工具未接持久通道时的兼容路径）
-      if (id && this.broker.resolve(id, answer)) return { ok: true, status: 'resolved' };
-      const last = found[0];
-      if (!last || last.status === 'pending') return { ok: false, status: 'unknown', message: '这个交互已经结束或不存在' };
-      return { ok: false, status: last.status, message: WAIT_TERMINAL_MESSAGES[last.status] };
-    }
-    let resultRef: string;
-    if (wait.card?.name) {
-      const secret = answer.secret?.trim();
-      if (!secret) return { ok: false, status: 'pending', message: `需要 secret（${wait.card.name}）` };
-      // 明文只进 SecretStore；等待里只留引用
-      await this.secrets.put(wait.card.name, secret);
-      resultRef = `secret:${wait.card.name}`;
-    } else {
-      if (answer.value === undefined) return { ok: false, status: 'pending', message: '需要 value（选项）或 secret（密钥）' };
-      resultRef = `choice:${answer.value}`;
-    }
-    const outcome = await this.waits.resolve(wait.id, resultRef);
-    if (!outcome.ok) return { ok: false, status: outcome.status, message: outcome.message };
-    this.broker.retire(id);
-    this.events.publish({
-      kind: 'agent',
-      agentId: wait.agentId,
-      payload: { type: 'interaction_closed', id, answered: true },
-    });
-    await this.releaseWorkIfSettled(wait.workId);
-    const runId = await this.wakeWait(wait, answerSummary(wait, answer));
-    return { ok: true, status: 'resolved', ...(runId ? { runId } : {}) };
+  answerInteraction(id: string, answer: { value?: string; secret?: string }): Promise<{ ok: boolean; status: string; message?: string; runId?: string }> {
+    return this.waitLifecycle.answerInteraction(id, answer);
   }
 
   /** 用户明确「跳过/放弃」这张卡：等待作废，不当作答案 */
-  async cancelInteraction(id: string): Promise<{ ok: boolean; status: string }> {
-    const found = await this.waits.findByCorrelation(id);
-    const wait = found.find((item) => item.status === 'pending' && item.kind === 'user');
-    if (!wait) {
-      const ok = this.broker.cancel(id);
-      return { ok, status: ok ? 'cancelled' : 'unknown' };
-    }
-    const outcome = await this.waits.cancel(wait.id, '用户放弃了这张卡');
-    this.broker.retire(id);
-    this.events.publish({
-      kind: 'agent',
-      agentId: wait.agentId,
-      payload: { type: 'interaction_closed', id, answered: false },
-    });
-    await this.releaseWorkIfSettled(wait.workId);
-    return { ok: outcome.ok, status: 'cancelled' };
+  cancelInteraction(id: string): Promise<{ ok: boolean; status: string }> { return this.waitLifecycle.cancelInteraction(id); }
+
+  /** 装配与内部接线用的等待入口（实现在 wait-coordinator） */
+  private beginWait(input: WaitRequest): Promise<WorkWait> { return this.waitLifecycle.beginWait(input); }
+
+  private requestUserWaitCard(agentId: string, input: { kind: 'choice' | 'secret'; question: string; detail?: string; options?: Array<{ id: string; label: string }>; name?: string }): Promise<{ id: string }> {
+    return this.waitLifecycle.requestUserWaitCard(agentId, input);
   }
 
-  /**
-   * 「用户新句作废未回答选项卡」（§7.2）：作废该卡并写入状态，再分析新句；
-   * 工作本身继续存在，是否还需要等待由新一轮判断。刷新/断线不走这里，所以不作废。
-   */
-  private async voidPendingUserWaits(agentId: string, emit?: AgentEventHandler): Promise<void> {
-    const pending = await this.waits.listPending({ agentId, kind: 'user' });
-    for (const wait of pending) {
-      await this.waits.cancel(wait.id, '用户发了新消息，这张卡作废');
-      this.broker.retire(wait.correlationId);
-      emit?.({ type: 'interaction_closed', id: wait.correlationId, answered: false });
-      await this.releaseWorkIfSettled(wait.workId);
-    }
+  private voidPendingUserWaits(agentId: string, emit?: AgentEventHandler): Promise<void> { return this.waitLifecycle.voidPendingUserWaits(agentId, emit); }
+
+  private resolveAgentWaitsForReply(agentId: string, peerAgentId: string, resultRef: string, threadId?: string): Promise<void> {
+    return this.delegationWaits.resolveAgentWaitsForReply(agentId, peerAgentId, resultRef, threadId);
   }
 
-  /**
-   * 同事回信唤醒（E4.4）：先按**线程键**精确命中「哪一次请求」，一封回信只满足
-   * 对应的那一次等待；信里没有线程键（旧数据/直接 enqueue）时才退回旧行为——
-   * 等这位同事的等待**只有一条**才算数，多条就不猜。信被确认处理后 resolve 并唤醒工作。
-   */
-  private async resolveAgentWaitsForReply(
-    agentId: string,
-    peerAgentId: string,
-    resultRef: string,
-    threadId?: string,
-  ): Promise<void> {
-    for (const wait of await this.selectReplyWaits(agentId, peerAgentId, threadId)) {
-      const outcome = await this.waits.resolve(wait.id, resultRef);
-      if (outcome.ok) await this.releaseWorkIfSettled(wait.workId);
-    }
-    // 委派闭环：只有**反方向**（我派出去、对方回给我）的那条线程才算回信；
-// 对方收下请求信的 ack 会带着同一个线程键回来，那不是回信，不能把委派提前闭环。
-    // 这封信的发送方是 peer、收件方是我——问的是「peer 在回我派出去的活吗」。
-    if (threadId) {
-      const replyThread = await this.delegations.resolveReplyThread({
-        callerId: peerAgentId,
-        targetId: agentId,
-        threadId,
-      });
-      if (replyThread) await this.delegations.markReplied(replyThread.id).catch(() => undefined);
-    }
+  private workBriefForPeerReply(agentId: string, peerAgentId: string, threadId?: string): Promise<string | undefined> {
+    return this.delegationWaits.workBriefForPeerReply(agentId, peerAgentId, threadId);
   }
 
-  /** 一封同事回信该满足哪些等待：有线程键按线程精确匹配，没有时只在唯一等待上认 */
-  private async selectReplyWaits(
-    agentId: string,
-    peerAgentId: string,
-    threadId?: string,
-  ): Promise<WorkWait[]> {
-    const forPeer = (await this.waits.listPending({ agentId, kind: 'agent' })).filter((wait) =>
-      isAgentWaitForPeer(wait.correlationId, peerAgentId),
-    );
-    if (threadId) return forPeer.filter((wait) => wait.threadId === threadId);
-    return forPeer.length === 1 ? forPeer : [];
+  private acceptDelegationLetter(agentId: string, letter: { id: string; fromAgentId: string; text: string; correlationId?: string }): Promise<string | undefined> {
+    return this.delegationWaits.acceptDelegationLetter(agentId, letter);
   }
 
-  /**
-   * 这封信是不是「等这位同事」这件事的唤醒事件（E4.3/E4.4）。
-   * 是就把等待归属的工作写进本轮 brief：来信那一轮本身就是唤醒后的新 Run，
-   * 只是它由收件箱驱动而没有 workLink——这里补上工作身份，模型才知道在接着做什么。
-   */
-  private async workBriefForPeerReply(
-    agentId: string,
-    peerAgentId: string,
-    threadId?: string,
-  ): Promise<string | undefined> {
-    const pending = (await this.selectReplyWaits(agentId, peerAgentId, threadId)).filter(
-      (wait) => wait.workId,
-    );
-    const workId = pending[0]?.workId;
-    if (!workId) return undefined;
-    const work = await this.works.get(workId);
-    if (!work || isTerminalWork(work.status)) return undefined;
-    const peerName = (await this.registry.get(peerAgentId))?.name ?? peerAgentId;
-    return [
-      `【当前工作】${work.title}（id=${work.id}，revision=${work.revision}）`,
-      `目标：${work.objective}`,
-      `你在等「${peerName}」的回信，这封信就是那个等待被满足的事件：这是**接着当前工作**的继续，不是一件新事。`,
-      '收尾时如实说明交付了什么；不要只凭一句话就把工作说成完成。',
-    ].join('\n');
-  }
-
-  /**
-   * 收件方接下一条委派（E4.4）：为它开一件**专属工作**并把 childWorkId 回填到委派。
-   * 专属：不走「接到已有工作」的判定，否则停止这条委派会连坐同事的独立工作。
-   * 判为闲聊则不建工作（childWorkId 留空），委派照常收下。
-   * 幂等：信被退回重投时复用已开的子工作，不为同一件委派开第二件；
-   * 已取消/已回信的委派也不再开工作（停止令先到就到此为止）。
-   */
-  private async acceptDelegationLetter(
-    agentId: string,
-    letter: { id: string; fromAgentId: string; text: string; correlationId?: string },
-  ): Promise<string | undefined> {
-    if (!letter.correlationId) return undefined;
-    const delegation = await this.delegations.get(letter.correlationId);
-    if (!delegation || delegation.toAgentId !== agentId) return undefined;
-    if (delegation.childWorkId) {
-      const existing = await this.works.get(delegation.childWorkId);
-      return existing ? this.delegationWorkBrief(existing) : undefined;
-    }
-    if (!isOpenDelegation(delegation)) return undefined;
-    await this.delegations.markAccepted(delegation.id).catch(() => undefined);
-    const work = await this.works.acceptDelegation({
-      agentId,
-      fromAgentId: delegation.fromAgentId,
-      messageId: letter.id,
-      text: letter.text,
-    });
-    if (!work) return undefined;
-    await this.delegations.attachChildWork(delegation.id, work.id).catch((error) => {
-      console.warn(`委派子工作未回填：${messageOf(error)}`);
-    });
-    return this.delegationWorkBrief(work);
-  }
-
-  /** 委派专属工作的身份，进本轮 brief：让模型知道只做这一件 */
-  private delegationWorkBrief(work: { id: string; title: string; objective: string; revision: number }): string {
-    return [
-      `【当前工作】${work.title}（id=${work.id}，revision=${work.revision}）`,
-      `目标：${work.objective}`,
-      '这是同事派来的活，已记为一件独立工作；只做这一件，别把别的活也算进来。',
-    ].join('\n');
-  }
-
-  /** 事件到达后新开一次执行（不占着旧执行位；执行在后台跑） */
-  private async wakeWait(wait: WorkWait, text: string): Promise<string | undefined> {
-    if (!(await this.registry.get(wait.agentId))) return undefined;
-    const work = wait.workId ? await this.works.get(wait.workId) : undefined;
-    if (work && isTerminalWork(work.status)) return undefined;
-    const accepted = await this.acceptMessage(wait.agentId, text, {
-      ...(wait.workId ? { workId: wait.workId } : {}),
-      waitAnswer: true,
-    });
-    void accepted.execute().catch((error) => {
-      console.warn(`等待唤醒的回合失败（${wait.workId ?? wait.agentId}）：${messageOf(error)}`);
-    });
-    return accepted.receipt.runId;
-  }
-
-  /** 进入 waiting：工作状态是事实，不是只写在等待记录里 */
-  private async markWorkWaiting(workId: string | undefined, condition?: string): Promise<void> {
-    if (!workId) return;
-    try {
-      const work = await this.works.get(workId);
-      if (!work || isTerminalWork(work.status) || work.status === 'waiting') return;
-      await this.works.update(workId, {
-        status: 'waiting',
-        ...(condition ? { nextAction: condition } : {}),
-      });
-    } catch (error) {
-      console.warn(`工作等待状态未写回（${workId}）：${messageOf(error)}`);
-    }
-  }
-
-  /** 等待都结束了就把工作放回 active——否则工作会永远卡在 waiting，无法收尾 */
-  private async releaseWorkIfSettled(workId: string | undefined): Promise<void> {
-    if (!workId) return;
-    try {
-      if ((await this.waits.pendingCountForWork(workId)) > 0) return;
-      const work = await this.works.get(workId);
-      if (!work || work.status !== 'waiting') return;
-      // nextAction 已被 markWorkWaiting 改写成「等谁/等什么」；条件满足了它就过期了，
-      // 留着会让模型以为还要继续等。清空后由接下来那一轮重新写下一步。
-      await this.works.update(workId, { status: 'active', nextAction: undefined });
-    } catch (error) {
-      console.warn(`工作等待结束状态未写回（${workId}）：${messageOf(error)}`);
-    }
-  }
 
   /** 当前主人级设置；没配 SettingsStore 时给一份只读的默认视图 */
   preferences() {

@@ -1,7 +1,9 @@
 import { createRuntimeStorage } from './storage-layer.js';
 import { createRuntimeServices } from './service-layer.js';
 import { createExecutionLayer } from './execution-layer.js';
-import type { RuntimeHost, RuntimeSharedState } from './host.js';
+import { createFacadeServices } from './facade-layer.js';
+import type { RuntimeSharedState } from './host.js';
+import type { RuntimeHost } from '../server/runtime/host.js';
 import type { AgentRuntimeOptions } from '../server/runtime/types.js';
 
 export type { RuntimeHost, RuntimeSharedState };
@@ -26,6 +28,7 @@ export function createRuntimeAssembly(
   const store = createRuntimeStorage(options, shared.events);
   const services = createRuntimeServices(options, host, shared, store);
   const execution = createExecutionLayer(options, host, shared, store, services);
+  const facade = createFacadeServices(options, host, shared, store, services);
 
-  return { ...store, ...services, ...execution };
+  return { ...store, ...services, ...execution, ...facade };
 }
