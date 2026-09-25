@@ -33,3 +33,7 @@ src/work/item.ts
 src/work/store.ts
 src/work/service.ts
 test/work-item.test.ts
+src/work/wait.ts
+src/work/wait-store.ts
+src/work/wait-service.ts
+test/work-wait.test.ts

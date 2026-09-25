@@ -1,5 +1,6 @@
 import type { Message } from '../shared/contracts/sse.js';
 import type { WorkItem, WorkStep } from '../work/item.js';
+import type { WorkWait, WorkWaitStatus } from '../work/wait.js';
 
 /**
  * Repository 接口边界（E3.1）。
@@ -72,6 +73,24 @@ export interface WorkRepositoryPort {
   update(work: WorkItem, expectedRevision: number): Promise<boolean>;
   appendStep(step: WorkStep): Promise<void>;
   listSteps(workId: string): Promise<WorkStep[]>;
+  clear(agentId: string): Promise<void>;
+}
+
+// ── 等待：工作等待外部条件的持久记录（E4.3） ──────────────
+export interface WorkWaitRepositoryPort {
+  /** 新建或整条覆盖 */
+  save(wait: WorkWait): Promise<void>;
+  get(waitId: string): Promise<WorkWait | undefined>;
+  listAll(): Promise<WorkWait[]>;
+  /** 某个同事的等待，最近更新的在前 */
+  listByAgent(agentId: string): Promise<WorkWait[]>;
+  /** 按关联键找（等谁 / 哪次请求 / 到点主题），可按状态过滤 */
+  findByCorrelation(correlationId: string, status?: WorkWaitStatus): Promise<WorkWait[]>;
+  /**
+   * 条件更新：现存状态必须等于 expectedStatus，否则拒绝（状态机与并发都靠它）。
+   * 返回是否更新成功。
+   */
+  update(wait: WorkWait, expectedStatus: WorkWaitStatus): Promise<boolean>;
   clear(agentId: string): Promise<void>;
 }
 

@@ -62,7 +62,7 @@ export class AgentLoop {
     const progress = this.deps.progress;
     try {
       const result = await this.execute(agent, built);
-      progress?.store.finish(progress.id, result.stopReason === 'final_answer' ? 'answered' : result.stopReason === 'cancelled' ? 'cancelled' : result.stopReason === 'parked' ? 'parked' : 'incomplete', result.stopReason, result.content);
+      progress?.store.finish(progress.id, result.stopReason === 'final_answer' ? 'answered' : result.stopReason === 'cancelled' ? 'cancelled' : result.stopReason === 'parked' || result.stopReason === 'waiting' ? 'parked' : 'incomplete', result.stopReason, result.content);
       return { ...result, ...(progress ? { taskId: progress.id } : {}) };
     } catch (error) {
       if (progress) progress.store.finish(progress.id, this.stale() ? 'parked' : this.deps.signal?.aborted ? 'cancelled' : 'failed', this.stale() ? 'parked' : this.deps.signal?.aborted ? 'cancelled' : 'failed', `本次执行未完成：${error instanceof Error ? error.message : String(error)}。待核对的工具意图不自动重放。`);
@@ -246,6 +246,12 @@ export class AgentLoop {
         conversation.push({ role: 'tool', content: result, toolCallId: call.id });
         recentResults.push(`${call.name}：${ok ? '执行返回成功（不代表验收通过）' : '失败/未执行'}\n${clipOutput(result, 500)}`);
         if (recentResults.length > 6) recentResults.shift();
+
+        if (this.deps.toolContext?.turnState?.parkRequested) {
+          // 持久等待已落盘（E4.3）：本回合到此为止，释放执行位；外部事件到达时另开一个 Run。
+          // 不 emit final（这不是收尾文本），run 状态由 chatRuns 记账为 parked。
+          return { content: '', iterations: iteration, stopReason: 'waiting', usedTools };
+        }
 
         if (this.deps.toolContext?.turnState?.endTurnRequested) {
           const finalContent = this.deps.toolContext.turnState.lastVisibleText ?? '';

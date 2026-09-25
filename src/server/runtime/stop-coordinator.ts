@@ -168,9 +168,9 @@ export class StopCoordinator {
     }
   }
 
-  /** 用户新句作废未答选项卡：不当答案，也不留悬挂卡片 */
+  /** 用户新句作废未答选项卡：不当答案，也不留悬挂卡片（持久卡的作废在 runtime，那里才认识 WorkWait） */
   voidPendingInteractions(agentId: string, emit?: AgentEventHandler): void {
-    const pending = this.deps.broker.list({ agentId });
+    const pending = this.deps.broker.pendingList({ agentId });
     for (const request of pending) {
       this.deps.broker.cancel(request.id);
       emit?.({ type: 'interaction_closed', id: request.id, answered: false });

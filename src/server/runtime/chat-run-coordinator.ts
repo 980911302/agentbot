@@ -199,7 +199,7 @@ export class ChatRunCoordinator {
         const result = await work();
         const reason = done(result).stopReason ?? 'final_answer';
         const status: ChatRunStatus =
-          reason === 'parked'
+          reason === 'parked' || reason === 'waiting'
             ? 'parked'
             : reason === 'cancelled' || reason === 'stopped'
               ? 'cancelled'

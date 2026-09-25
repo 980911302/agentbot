@@ -116,6 +116,8 @@ export type StopReason =
   | 'max_iterations'
   | 'tool_limit'
   | 'parked'
+  /** 主动让位给持久等待（E4.3）：本次执行结束、释放执行位；事件到达后新开一次执行 */
+  | 'waiting'
   | 'stopped'
   | 'cancelled'
   | 'duplicate';

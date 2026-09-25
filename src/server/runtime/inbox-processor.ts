@@ -57,6 +57,16 @@ export class InboxProcessor {
       settleTicket?: (ticketId: string) => Promise<void>;
       /** 确认了一条 stop-ack：通知等待中的停止令（ack 只是计数，不进模型） */
       onStopAck?: (agentId: string, item: InboxItem) => void;
+      /**
+       * 一批普通信确认处理完（E4.3）：运行时据此解决「等这位同事回信」的持久等待。
+       * 只在 ack 成功后调用——信被 nack 时等待不该被算作已满足。
+       */
+      onLettersHandled?: (agentId: string, letters: InboxItem[]) => Promise<void>;
+      /**
+       * 这批信里有没有「正在等这位同事」的持久等待（E4.3）：有就把等待归属的工作
+       * 写进本轮 brief，让这一轮明确是「接着那件工作继续」，而不是一封陌生的信。
+       */
+      workBriefForLetter?: (agentId: string, fromAgentId: string) => Promise<string | undefined>;
       /** 领取期限（毫秒） */
       leaseMs?: number;
       /** 每封信的处理上限 */
@@ -213,16 +223,23 @@ export class InboxProcessor {
       await session.checkpoint(ids, { messageId: task.id });
 
       try {
+        // 等这位同事回信的等待还在：这封信就是它的唤醒事件，把工作身份带进本轮
+        const workBrief = await this.deps.workBriefForLetter?.(agentId, letter.fromAgentId);
         const result = await this.deps.runTurn(
           agentId,
           task,
           {
-            brief: buildAgentBrief({
-              fromName: letter.fromName,
-              fromId: letter.fromAgentId,
-              depth,
-              maxDepth: this.deps.maxAgentChainDepth,
-            }),
+            brief: [
+              buildAgentBrief({
+                fromName: letter.fromName,
+                fromId: letter.fromAgentId,
+                depth,
+                maxDepth: this.deps.maxAgentChainDepth,
+              }),
+              workBrief,
+            ]
+              .filter(Boolean)
+              .join('\n\n'),
             toolContext: {
               agentChainDepth: depth,
               replyRoute: letter.replyRoute,
@@ -244,6 +261,8 @@ export class InboxProcessor {
         }
         await session.ack(ids);
         if (ticketId) await this.deps.settleTicket?.(ticketId);
+        // 信已经处理并确认：现在才算「等这位同事回信」这件事满足了（E4.3）
+        await this.deps.onLettersHandled?.(agentId, letters).catch(() => undefined);
         return result;
       } catch (error) {
         if (ticketId) await this.deps.settleTicket?.(ticketId);

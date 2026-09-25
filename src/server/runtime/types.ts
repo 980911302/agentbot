@@ -14,6 +14,7 @@ import type {
   RunTurnRecord,
   ToolInvocationRecord,
   WorkRepositoryPort,
+  WorkWaitRepositoryPort,
 } from '../../storage/ports.js';
 import type { RecoveryPlan } from '../../tools/policy.js';
 import type { Tool } from '../../tools/tool.js';
@@ -51,6 +52,10 @@ export interface AgentRuntimeOptions {
   settings?: SettingsStore;
   /** 工作账本存储（E4.1）；不传则自建 JSON 实现 */
   workRepository?: WorkRepositoryPort;
+  /** 等待账本存储（E4.3）；不传则自建 JSON 实现（work/waits.json） */
+  waitRepository?: WorkWaitRepositoryPort;
+  /** 用户问题卡的默认答复期限（毫秒，E4.3）；到点只判过期，不当已回答 */
+  waitUserTimeoutMs?: number;
   /** 交互代理（工具问用户 → 界面作答）；不传则自建 */
   broker?: InteractionBroker;
   /** 密钥存储；不传则自建 */
@@ -77,6 +82,10 @@ export interface SendOptions {
   roomSenderId?: string;
   /** 显式续接已停止任务，不自动重放副作用。 */
   resumeTaskId?: string;
+  /** 显式关联到某件工作（E4.3：用户答题/到点唤醒的回合用它接着原工作） */
+  workId?: string;
+  /** 这一轮是持久等待被满足后的唤醒：不当作「用户新句」，不作废其它待答卡 */
+  waitAnswer?: boolean;
   model?: string;
   onEvent?: AgentEventHandler;
   onRoomEvent?: RoomEventHandler;

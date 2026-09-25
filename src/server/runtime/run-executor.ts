@@ -89,6 +89,20 @@ export class RunExecutor {
         options: SendOptions,
       ) => Promise<void>;
       onMemory: (agentId: string, runId: string, added: MemoryRef[], merged: number) => void;
+      /**
+       * 提问类出口的持久等待通道（E4.3）：落 WorkWait 并返回交互 id。
+       * 注入后 SendToUser 的 widget/secret 不再同步 await，本回合以 waiting 让位。
+       */
+      requestUserWait?: (
+        agentId: string,
+        input: {
+          kind: 'choice' | 'secret';
+          question: string;
+          detail?: string;
+          options?: Array<{ id: string; label: string }>;
+          name?: string;
+        },
+      ) => Promise<{ id: string }>;
     },
   ) {
     this.ledger = deps.ledger;
@@ -401,6 +415,10 @@ export class RunExecutor {
       const turnState: TurnState = {
         workbench: { agentsCreated: 0, roomsCreated: 0 },
         treeId,
+        // E4.3：提问类出口走持久等待（没有注入时工具退回同回合同步等待）
+        ...(this.deps.requestUserWait
+          ? { requestUserWait: (input) => this.deps.requestUserWait!(agentId, input) }
+          : {}),
         registerChild: (child) => {
           if (!tree.children.some((item) => item.agentId === child.agentId && item.via === child.via)) {
             tree.children.push({ ...child, status: 'pending' });
@@ -564,6 +582,13 @@ export class RunExecutor {
         this.ledger.putTree(tree);
       } else if (result.stopReason === 'parked') {
         runtimeTurn.status = 'parked';
+      } else if (result.stopReason === 'waiting') {
+        // 主动让位给持久等待（E4.3）：这次执行到此结束、执行位已释放，
+        // 工作仍是 waiting。不能让「欠账续跑」把它当被插队的任务捡回去重跑，
+        // 所以按「本次执行已结束」收口；唤醒由匹配事件新开一次执行。
+        runtimeTurn.status = 'done';
+        tree.rootFinished = true;
+        this.finishTreeIfSettled(tree);
       }
       this.ledger.putTurn(runtimeTurn);
 

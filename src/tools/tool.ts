@@ -51,6 +51,21 @@ export interface TurnState {
   toolOutputChars?: number;
   /** 触及硬配额后只允许运行时交接，不继续反复请求被拒绝的工具。 */
   toolLimitReason?: string;
+  /**
+   * 提问类出口（widget / secret-request）的持久等待通道（E4.3）：
+   * 由运行时注入。调用它 = 把问题落成 WorkWait 并拿到交互 id；
+   * 本回合随后以「让位」收尾（parkRequested），不再同步 await 用户回答、不占执行位。
+   * 没有注入时（工具单测/旧接线）SendToUser 退回原来的同回合同步等待。
+   */
+  requestUserWait?(input: {
+    kind: 'choice' | 'secret';
+    question: string;
+    detail?: string;
+    options?: Array<{ id: string; label: string }>;
+    name?: string;
+  }): Promise<{ id: string }>;
+  /** 本回合因持久等待主动让位：agent-loop 立刻收尾，stopReason=waiting */
+  parkRequested?: boolean;
 }
 
 export function deliveryRequirementSatisfied(state: TurnState | undefined): boolean {

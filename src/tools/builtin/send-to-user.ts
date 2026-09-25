@@ -275,6 +275,20 @@ export function createSendToUserTool(input: {
         if (new Set(options.map((option) => option.id)).size !== options.length)
           throw new Error('widget 选项的 value/label 不得重复');
 
+        // E4.3：有持久等待通道就把「问什么」落成 WorkWait 并让位（释放执行位），
+        // 用户回答后由运行时新开一个回合接着做；没有通道时退回同回合同步等待（工具单测/旧接线）。
+        const park = context.turnState?.requestUserWait;
+        if (park) {
+          const card = await park({
+            kind: 'choice',
+            question: widget.prompt.trim(),
+            detail: widget.helpText,
+            options,
+          });
+          if (context.turnState) context.turnState.parkRequested = true;
+          return `已把问题卡交给用户（交互 ${card.id}）。本回合到此结束，用户回答后会接着做；不要重复提问。`;
+        }
+
         const agentName = await input.agentName(context.agentId);
         const promise = input.broker.request({
           kind: 'choice',
@@ -306,6 +320,20 @@ export function createSendToUserTool(input: {
         const secret = args.secret;
         const name = secret?.name?.trim();
         if (!secret || !name) throw new Error('secret.name 不能为空');
+
+        // E4.3：密钥卡的答案只进 SecretStore；等待里只留变量名，绝不存明文。
+        const park = context.turnState?.requestUserWait;
+        if (park) {
+          const card = await park({
+            kind: 'secret',
+            question: secret.label?.trim() || `请提供「${name}」`,
+            detail: secret.description,
+            name,
+          });
+          if (context.turnState) context.turnState.parkRequested = true;
+          return `已把密钥框交给用户（交互 ${card.id}）。本回合到此结束，用户提交后会接着做；不要重复索要。`;
+        }
+
         const agentName = await input.agentName(context.agentId);
         const promise = input.broker.request({
           kind: 'secret',
