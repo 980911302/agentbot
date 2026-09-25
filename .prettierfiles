@@ -37,3 +37,7 @@ src/work/wait.ts
 src/work/wait-store.ts
 src/work/wait-service.ts
 test/work-wait.test.ts
+src/work/delegation.ts
+src/work/delegation-store.ts
+src/work/delegation-service.ts
+test/delegation-stop.test.ts

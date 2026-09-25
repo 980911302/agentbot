@@ -1,4 +1,5 @@
 import type { Message } from '../shared/contracts/sse.js';
+import type { Delegation, DelegationStatus } from '../work/delegation.js';
 import type { WorkItem, WorkStep } from '../work/item.js';
 import type { WorkWait, WorkWaitStatus } from '../work/wait.js';
 
@@ -94,6 +95,20 @@ export interface WorkWaitRepositoryPort {
   clear(agentId: string): Promise<void>;
 }
 
+// ── 委派：谁把哪件事派给了谁（E4.4） ──────────────────
+export interface DelegationRepositoryPort {
+  /** 新建或整条覆盖 */
+  save(delegation: Delegation): Promise<void>;
+  get(delegationId: string): Promise<Delegation | undefined>;
+  /** 某位同事发起的委派，最近更新的在前 */
+  listFrom(agentId: string): Promise<Delegation[]>;
+  /**
+   * 条件更新：现存状态必须等于 expectedStatus，否则拒绝（状态机与并发都靠它）。
+   * 返回是否更新成功。
+   */
+  update(delegation: Delegation, expectedStatus: DelegationStatus): Promise<boolean>;
+}
+
 // ── 投递：智能体间 1:1 收件箱（含停止令信） ──────────
 /** 投递生命周期（E3.3）：pending → claimed → handled；失败按策略回 pending 或进 failed */
 export type DeliveryStatus = 'pending' | 'claimed' | 'handled' | 'failed';
@@ -136,10 +151,17 @@ export interface DeliveryItem {
   /** stop = 停止令（排最前、不进模型）；stop-ack = 下级回报；room = 排队的群回合；缺省 = 普通信 */
   kind?: 'message' | 'stop' | 'stop-ack' | 'room';
   treeId?: string;
+  /**
+   * 精确停止（E4.4）：本次停止令的 id 与它指向的子工作。
+   * 接收者只取消「这个 (cancelId, childWorkId)」对应的那件委派；
+   * 回执按同一对键去重，不按收到几封信计数。
+   */
+  cancelId?: string;
+  childWorkId?: string;
   /** kind=room 的群上下文 */
   room?: DeliveryRoomContext;
   createdAt: number;
-  /** 原消息 / 关联引用：每封信保留作者与关联（E3.3） */
+  /** 原消息 / 关联引用：每封信保留作者与关联（E3.3）；E4.4 起 1:1 信里是委派线程键 */
   messageId?: string;
   correlationId?: string;
   /** 缺省视为 pending（兼容没有生命周期字段的旧数据） */
@@ -321,6 +343,11 @@ export interface RunTurnRecord {
   kind: 'normal' | 'stop';
   text: string;
   treeId: string;
+  /**
+   * 这一轮由哪封委派信触发（E4.4）：值就是 Delegation.id。
+   * 精确停止靠它把「被派的那棵树」和本同事的独立工作分开。
+   */
+  correlationId?: string;
   status: 'running' | 'parked' | 'done' | 'cancelled' | 'incomplete' | 'failed' | 'resuming';
   /** 开始执行时取得的 epoch（E3.6）：旧执行的迟到写入凭它被拒 */
   leaseEpoch?: number;

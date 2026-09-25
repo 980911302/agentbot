@@ -57,7 +57,10 @@ import { JsonWorkRepository } from '../work/store.js';
 import { isTerminalWork, titleFrom } from '../work/item.js';
 import { WaitService, WAIT_TERMINAL_MESSAGES } from '../work/wait-service.js';
 import { JsonWorkWaitRepository } from '../work/wait-store.js';
-import { agentWaitKey, answerSummary, type WorkWait } from '../work/wait.js';
+import { agentWaitKey, answerSummary, isAgentWaitForPeer, type WorkWait } from '../work/wait.js';
+import { DelegationService } from '../work/delegation-service.js';
+import { JsonDelegationRepository } from '../work/delegation-store.js';
+import { isOpenDelegation } from '../work/delegation.js';
 import type { InteractionRequest } from '../shared/contracts/sse.js';
 import { resolveProjectOwner } from '../tools/builtin/memory.js';
 import { ToolRegistry } from '../tools/registry.js';
@@ -139,6 +142,8 @@ export class AgentRuntime {
   readonly works: WorkService;
   /** 等待服务（E4.3）：WorkWait 的唯一状态转换入口；重启读回、到点扫描 */
   readonly waits: WaitService;
+  /** 委派服务（E4.4）：parentWorkId/childWorkId/correlationId；精确停止与精确唤醒共用 */
+  readonly delegations: DelegationService;
   readonly memory: MemoryStore;
   readonly compaction: CompactionStore;
   readonly rooms: RoomStore;
@@ -224,6 +229,8 @@ export class AgentRuntime {
     // 等待账本（E4.3）：等谁/到点/等回答落成 WorkWait，重启后还能接上
     const waitRepository = options.waitRepository ?? new JsonWorkWaitRepository(options.dataDir);
     this.waits = new WaitService({ repository: waitRepository });
+    // 委派账本（E4.4）：谁把哪件事派给谁 + 线程键，精确停止/唤醒都读它
+    this.delegations = new DelegationService({ repository: new JsonDelegationRepository(options.dataDir) });
     this.memory = options.memoryStore ?? new MemoryStore(options.dataDir);
     this.compaction = new CompactionStore(options.dataDir);
     this.rooms = new RoomStore(options.dataDir);
@@ -285,6 +292,26 @@ export class AgentRuntime {
       stopAckTimeoutMs: options.stopAckTimeoutMs ?? 30_000,
       activation: this.activation,
       effects: this.effects,
+      // E4.4：精确停止读委派账本；子工作随委派停、等待随委派作废
+      delegations: this.delegations,
+      cancelWork: async (workId, reason) => {
+        await this.works.close(workId, 'cancelled', reason).catch((error) => {
+          // 已经收尾的工作不重复关（幂等）；其它错误记一笔即可，不拦停止
+          if (!String(messageOf(error)).includes('已经结束')) {
+            console.warn(`停止时关工作失败（${workId}）：${messageOf(error)}`);
+          }
+        });
+      },
+      onDelegationCancelled: async (delegation) => {
+        await this.waits.cancelByThread(delegation.id, '这条委派已被停止');
+      },
+      // 迟到的 stop-ack 把 needs_attention 更新掉（设计 §7.1）
+      onStopAcksSettled: async (stopId, remaining) => {
+        if (!stopId) return;
+        await this.activation
+          .settleStop(stopId, remaining.length > 0 ? 'needs_attention' : 'settled', remaining)
+          .catch(() => undefined);
+      },
     });
 
     this.roomFlowRouter = new RoomFlowRouter({
@@ -345,15 +372,23 @@ export class AgentRuntime {
       maxAgentChainDepth: this.options.maxAgentChainDepth ?? DEFAULT_MAX_AGENT_DEPTH,
       stopCoordinator: this.stopCoordinator,
       // stop-ack 由这里确认并登记给等待中的停止令，不再靠 take 去信箱里抢
-      onStopAck: (agentId, item) => this.stopCoordinator.noteStopAck(agentId, item.fromAgentId, item.treeId),
-      // 同事回信已确认处理：解决「等这位同事」的持久等待并唤醒工作（E4.3）
+      onStopAck: (agentId, item) =>
+        this.stopCoordinator.noteStopAck(agentId, item.fromAgentId, item.treeId, {
+          ...(item.cancelId ? { cancelId: item.cancelId } : {}),
+          ...(item.childWorkId ? { childWorkId: item.childWorkId } : {}),
+          ...(item.correlationId ? { correlationId: item.correlationId } : {}),
+        }),
+      // 同事回信已确认处理：按线程键精确解决「等这位同事回信」的等待（E4.3/E4.4）
       onLettersHandled: async (agentId, letters) => {
         for (const letter of letters) {
-          await this.resolveAgentWaitsForReply(agentId, letter.fromAgentId, `letter:${letter.id}`);
+          await this.resolveAgentWaitsForReply(agentId, letter.fromAgentId, `letter:${letter.id}`, letter.correlationId);
         }
       },
       // 这封信是不是某个等待的唤醒事件：是就把那份工作写进本轮 brief
-      workBriefForLetter: (agentId, fromAgentId) => this.workBriefForPeerReply(agentId, fromAgentId),
+      workBriefForLetter: (agentId, fromAgentId, correlationId) =>
+        this.workBriefForPeerReply(agentId, fromAgentId, correlationId),
+      // 这封信是一条委派：收件方为它开一件工作并回填 childWorkId（E4.4）
+      acceptDelegation: (agentId, letter) => this.acceptDelegationLetter(agentId, letter),
       runTurn: (agentId, task, turn, options) =>
         this.runTurn(agentId, task, { extraTools: [], ...turn }, options),
       // 排队的群回合：事件按 roomId 归属（前端据此路由到群频道）
@@ -1352,6 +1387,14 @@ export class AgentRuntime {
           const target = await this.registry.get(targetId);
           signal?.throwIfAborted();
           if (!sender || !target) throw new Error('发信方或收件方不存在');
+          // E4.4：这次投递是「回某次委派」还是「新派一件事」？
+          // 回信复用原委派线程键，让发起方能只唤醒「那一次请求」；
+          // 新派则由这封信自己的投递 id 当线程键（投影时落定）。
+          const replyThread = await this.delegations.resolveReplyThread({
+            callerId,
+            targetId,
+            ...(correlationId ? { threadId: correlationId } : {}),
+          });
           const submitted = await this.deliveries.submit({
             actorId: callerId,
             inputId: correlationId ?? `${callerId}:${targetId}`,
@@ -1361,8 +1404,32 @@ export class AgentRuntime {
             ...(images?.length ? { images } : {}),
             priority,
             depth: depth ?? 1,
+            ...(replyThread ? { correlationId: replyThread.id } : {}),
           });
           if (submitted.kind !== 'accepted') throw new Error(submitted.code);
+          // E4.4：先记委派、再让信可见——收件方认领这封信时要能查到「这是哪条委派」，
+          // 否则它就成了没主的一次投递，childWorkId 也就永远回填不上。
+          // 线程键 = 请求信投递 id；重试/重复提交时幂等复用原记录。
+          const threadId = submitted.receipt.deliveryId;
+          const waitingWork = await this.works.openWorkOf(callerId);
+          if (threadId) {
+            await this.delegations
+              .recordOutbound({
+                id: threadId,
+                fromAgentId: callerId,
+                toAgentId: targetId,
+                ...(waitingWork && !isTerminalWork(waitingWork.status)
+                  ? { parentWorkId: waitingWork.id }
+                  : {}),
+                requestMessageId: threadId,
+              })
+              .catch((error) => console.warn(`委派未记账：${messageOf(error)}`));
+          }
+          if (replyThread) {
+            await this.delegations
+              .markReplied(replyThread.id)
+              .catch((error) => console.warn(`委派回信状态未写回：${messageOf(error)}`));
+          }
           await this.projector.project(submitted.receipt.actionId, {
             from: {
               kind: 'agent',
@@ -1384,15 +1451,15 @@ export class AgentRuntime {
           if (letter) await this.archiveLetter(letter);
           this.inboxScheduler.watch(targetId);
           // E4.3：记一条「在等这位同事回信」的持久等待——重启后仍然知道在等谁；
-          // 对方回信被确认处理时 resolve 并唤醒工作（见 resolveAgentWaitsForReply）。
+          // 对方回信被确认处理时按线程键精确 resolve 并唤醒工作（见 resolveAgentWaitsForReply）。
           // 没有关联的工作时不记（没有可唤醒的对象，投递本身照常）。
-          const waitingWork = await this.works.openWorkOf(callerId);
           if (waitingWork && !isTerminalWork(waitingWork.status)) {
             await this.beginWait({
               agentId: callerId,
               workId: waitingWork.id,
               kind: 'agent',
               correlationId: agentWaitKey(targetId),
+              ...(threadId ? { threadId } : {}),
               condition: `等「${target.name}」回复「${titleFrom(text)}」`,
             }).catch((error) => console.warn(`同事等待未记录：${messageOf(error)}`));
           }
@@ -1566,6 +1633,8 @@ export class AgentRuntime {
     workId?: string;
     kind: WorkWait['kind'];
     correlationId: string;
+    /** 「哪一次请求」的线程键（E4.4）：kind=agent 时是委派 id */
+    threadId?: string;
     card?: WorkWait['card'];
     condition?: string;
     dueAt?: number;
@@ -1754,29 +1823,58 @@ export class AgentRuntime {
   }
 
   /**
-   * 同事回信唤醒（E4.4 §4.6 的过渡实现）：投递还没有回复线程，
-   * 所以关联键按「等谁」——`agent:<同事 id>`；信被确认处理后 resolve 并唤醒工作。
+   * 同事回信唤醒（E4.4）：先按**线程键**精确命中「哪一次请求」，一封回信只满足
+   * 对应的那一次等待；信里没有线程键（旧数据/直接 enqueue）时才退回旧行为——
+   * 等这位同事的等待**只有一条**才算数，多条就不猜。信被确认处理后 resolve 并唤醒工作。
    */
   private async resolveAgentWaitsForReply(
     agentId: string,
     peerAgentId: string,
     resultRef: string,
+    threadId?: string,
   ): Promise<void> {
-    const found = await this.waits.findByCorrelation(agentWaitKey(peerAgentId));
-    for (const wait of found.filter((item) => item.status === 'pending' && item.agentId === agentId)) {
+    for (const wait of await this.selectReplyWaits(agentId, peerAgentId, threadId)) {
       const outcome = await this.waits.resolve(wait.id, resultRef);
       if (outcome.ok) await this.releaseWorkIfSettled(wait.workId);
     }
+    // 委派闭环：只有**反方向**（我派出去、对方回给我）的那条线程才算回信；
+// 对方收下请求信的 ack 会带着同一个线程键回来，那不是回信，不能把委派提前闭环。
+    // 这封信的发送方是 peer、收件方是我——问的是「peer 在回我派出去的活吗」。
+    if (threadId) {
+      const replyThread = await this.delegations.resolveReplyThread({
+        callerId: peerAgentId,
+        targetId: agentId,
+        threadId,
+      });
+      if (replyThread) await this.delegations.markReplied(replyThread.id).catch(() => undefined);
+    }
+  }
+
+  /** 一封同事回信该满足哪些等待：有线程键按线程精确匹配，没有时只在唯一等待上认 */
+  private async selectReplyWaits(
+    agentId: string,
+    peerAgentId: string,
+    threadId?: string,
+  ): Promise<WorkWait[]> {
+    const forPeer = (await this.waits.listPending({ agentId, kind: 'agent' })).filter((wait) =>
+      isAgentWaitForPeer(wait.correlationId, peerAgentId),
+    );
+    if (threadId) return forPeer.filter((wait) => wait.threadId === threadId);
+    return forPeer.length === 1 ? forPeer : [];
   }
 
   /**
-   * 这封信是不是「等这位同事」这件事的唤醒事件（E4.3）。
+   * 这封信是不是「等这位同事」这件事的唤醒事件（E4.3/E4.4）。
    * 是就把等待归属的工作写进本轮 brief：来信那一轮本身就是唤醒后的新 Run，
    * 只是它由收件箱驱动而没有 workLink——这里补上工作身份，模型才知道在接着做什么。
    */
-  private async workBriefForPeerReply(agentId: string, peerAgentId: string): Promise<string | undefined> {
-    const pending = (await this.waits.findByCorrelation(agentWaitKey(peerAgentId))).filter(
-      (wait) => wait.status === 'pending' && wait.agentId === agentId && wait.workId,
+  private async workBriefForPeerReply(
+    agentId: string,
+    peerAgentId: string,
+    threadId?: string,
+  ): Promise<string | undefined> {
+    const pending = (await this.selectReplyWaits(agentId, peerAgentId, threadId)).filter(
+      (wait) => wait.workId,
     );
     const workId = pending[0]?.workId;
     if (!workId) return undefined;
@@ -1788,6 +1886,48 @@ export class AgentRuntime {
       `目标：${work.objective}`,
       `你在等「${peerName}」的回信，这封信就是那个等待被满足的事件：这是**接着当前工作**的继续，不是一件新事。`,
       '收尾时如实说明交付了什么；不要只凭一句话就把工作说成完成。',
+    ].join('\n');
+  }
+
+  /**
+   * 收件方接下一条委派（E4.4）：为它开一件**专属工作**并把 childWorkId 回填到委派。
+   * 专属：不走「接到已有工作」的判定，否则停止这条委派会连坐同事的独立工作。
+   * 判为闲聊则不建工作（childWorkId 留空），委派照常收下。
+   * 幂等：信被退回重投时复用已开的子工作，不为同一件委派开第二件；
+   * 已取消/已回信的委派也不再开工作（停止令先到就到此为止）。
+   */
+  private async acceptDelegationLetter(
+    agentId: string,
+    letter: { id: string; fromAgentId: string; text: string; correlationId?: string },
+  ): Promise<string | undefined> {
+    if (!letter.correlationId) return undefined;
+    const delegation = await this.delegations.get(letter.correlationId);
+    if (!delegation || delegation.toAgentId !== agentId) return undefined;
+    if (delegation.childWorkId) {
+      const existing = await this.works.get(delegation.childWorkId);
+      return existing ? this.delegationWorkBrief(existing) : undefined;
+    }
+    if (!isOpenDelegation(delegation)) return undefined;
+    await this.delegations.markAccepted(delegation.id).catch(() => undefined);
+    const work = await this.works.acceptDelegation({
+      agentId,
+      fromAgentId: delegation.fromAgentId,
+      messageId: letter.id,
+      text: letter.text,
+    });
+    if (!work) return undefined;
+    await this.delegations.attachChildWork(delegation.id, work.id).catch((error) => {
+      console.warn(`委派子工作未回填：${messageOf(error)}`);
+    });
+    return this.delegationWorkBrief(work);
+  }
+
+  /** 委派专属工作的身份，进本轮 brief：让模型知道只做这一件 */
+  private delegationWorkBrief(work: { id: string; title: string; objective: string; revision: number }): string {
+    return [
+      `【当前工作】${work.title}（id=${work.id}，revision=${work.revision}）`,
+      `目标：${work.objective}`,
+      '这是同事派来的活，已记为一件独立工作；只做这一件，别把别的活也算进来。',
     ].join('\n');
   }
 

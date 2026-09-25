@@ -106,7 +106,12 @@ export function createSendToAgentTool(options: {
           ...(attachments.length ? { images: attachments } : {}),
           priority: target.kind === 'agent' && priority === true,
           callerId: context.agentId,
-          correlationId: context.authorization?.inputId ?? context.turnState?.treeId,
+          // E4.4：回信要带上「哪一次请求」的线程键（本回合由哪封委派信触发）；
+          // 没有线程时退回原来的可观测关联。
+          correlationId:
+            context.turnState?.replyCorrelationId ??
+            context.authorization?.inputId ??
+            context.turnState?.treeId,
           chainId: context.authorization?.chainId,
           depth: (context.agentChainDepth ?? 0) + 1,
           signal: context.signal,

@@ -46,6 +46,8 @@ export class InboxProcessor {
             agentChainDepth: number;
             replyRoute?: import('../../shared/contracts/room-flow.js').RoomReplyRoute;
           };
+          /** 这封信的委派线程键（E4.4）：回信要带回「哪一次请求」 */
+          replyCorrelationId?: string;
         },
         options: SendOptions,
       ) => Promise<TurnResult>;
@@ -65,8 +67,21 @@ export class InboxProcessor {
       /**
        * 这批信里有没有「正在等这位同事」的持久等待（E4.3）：有就把等待归属的工作
        * 写进本轮 brief，让这一轮明确是「接着那件工作继续」，而不是一封陌生的信。
+       * correlationId 是这封信的委派线程键（E4.4）：先按它精确命中，再退回旧行为。
        */
-      workBriefForLetter?: (agentId: string, fromAgentId: string) => Promise<string | undefined>;
+      workBriefForLetter?: (
+        agentId: string,
+        fromAgentId: string,
+        correlationId?: string,
+      ) => Promise<string | undefined>;
+      /**
+       * 这封信是一条委派（E4.4）：收件方为此开一件工作并回填 childWorkId，
+       * 返回可以进本轮 brief 的工作身份。失败不能让信处理不下去。
+       */
+      acceptDelegation?: (
+        agentId: string,
+        letter: InboxItem,
+      ) => Promise<string | undefined>;
       /** 领取期限（毫秒） */
       leaseMs?: number;
       /** 每封信的处理上限 */
@@ -101,8 +116,22 @@ export class InboxProcessor {
         try {
           await this.deps.stopCoordinator.stopFromParent(
             agentId,
-            { text: stop.text, createdAt: stop.createdAt, treeId: stop.treeId },
-            { agentId: stop.fromAgentId, name: stop.fromName, treeId: stop.treeId },
+            {
+              text: stop.text,
+              createdAt: stop.createdAt,
+              treeId: stop.treeId,
+              correlationId: stop.correlationId,
+              cancelId: stop.cancelId,
+              childWorkId: stop.childWorkId,
+            },
+            {
+              agentId: stop.fromAgentId,
+              name: stop.fromName,
+              treeId: stop.treeId,
+              correlationId: stop.correlationId,
+              cancelId: stop.cancelId,
+              childWorkId: stop.childWorkId,
+            },
           );
           await session.ack([stop.id]);
         } catch (error) {
@@ -223,8 +252,19 @@ export class InboxProcessor {
       await session.checkpoint(ids, { messageId: task.id });
 
       try {
-        // 等这位同事回信的等待还在：这封信就是它的唤醒事件，把工作身份带进本轮
-        const workBrief = await this.deps.workBriefForLetter?.(agentId, letter.fromAgentId);
+        // 这封信是一条委派：收件方为它开一件工作并回填 childWorkId（E4.4）。
+        // 失败不能拦住这封信：没有 childWorkId 只是停止时少一个精确靶点。
+        const delegationBrief = await this.deps.acceptDelegation?.(agentId, letter).catch((error) => {
+          console.warn(`委派未记账（不影响本轮）：${messageOf(error)}`);
+          return undefined;
+        });
+        // 等这位同事回信的等待还在：这封信就是它的唤醒事件，把工作身份带进本轮。
+        // 带线程键时按「哪一次请求」精确命中，避免一封回信解决掉等同一同事的别的等待。
+        const workBrief = await this.deps.workBriefForLetter?.(
+          agentId,
+          letter.fromAgentId,
+          letter.correlationId,
+        );
         const result = await this.deps.runTurn(
           agentId,
           task,
@@ -236,6 +276,7 @@ export class InboxProcessor {
                 depth,
                 maxDepth: this.deps.maxAgentChainDepth,
               }),
+              delegationBrief,
               workBrief,
             ]
               .filter(Boolean)
@@ -244,6 +285,8 @@ export class InboxProcessor {
               agentChainDepth: depth,
               replyRoute: letter.replyRoute,
             },
+            // E4.4：回信时把这份线程键带回去，发起方才知道是「哪一次请求」的回音
+            ...(letter.correlationId ? { replyCorrelationId: letter.correlationId } : {}),
           },
           { ...options, ...(authorization ? { authorization } : {}) },
         );

@@ -42,6 +42,8 @@ export interface CreateWaitInput {
   workId?: string;
   kind: WorkWaitKind;
   correlationId: string;
+  /** 「哪一次请求」的精确线程键（E4.4）：kind=agent 时是委派 id */
+  threadId?: string;
   card?: WorkWaitCard;
   condition?: string;
   dueAt?: number;
@@ -79,6 +81,7 @@ export class WaitService {
       agentId: input.agentId,
       createdAt: at,
       updatedAt: at,
+      ...(input.threadId ? { threadId: input.threadId } : {}),
       ...(input.card ? { card: input.card } : {}),
       ...(input.condition ? { condition: input.condition } : {}),
       ...(input.dueAt !== undefined ? { dueAt: input.dueAt } : {}),
@@ -91,11 +94,12 @@ export class WaitService {
     return this.deps.repository.get(waitId);
   }
 
-  /** 所有没结束的等待；按工作或同事过滤（唤醒与界面都用它） */
+  /** 所有没结束的等待；按工作 / 同事 / 种类 / 线程过滤（唤醒与界面都用它） */
   async listPending(filter?: {
     workId?: string;
     agentId?: string;
     kind?: WorkWaitKind;
+    threadId?: string;
   }): Promise<WorkWait[]> {
     const all = await this.deps.repository.listAll();
     return all.filter(
@@ -103,7 +107,8 @@ export class WaitService {
         wait.status === 'pending' &&
         (!filter?.workId || wait.workId === filter.workId) &&
         (!filter?.agentId || wait.agentId === filter.agentId) &&
-        (!filter?.kind || wait.kind === filter.kind),
+        (!filter?.kind || wait.kind === filter.kind) &&
+        (!filter?.threadId || wait.threadId === filter.threadId),
     );
   }
 
@@ -154,6 +159,20 @@ export class WaitService {
   /** 作废某个关联键下所有未结束的等待；返回被作废的那些 */
   async cancelByCorrelation(correlationId: string, reason?: string): Promise<WorkWait[]> {
     const pending = await this.deps.repository.findByCorrelation(correlationId, 'pending');
+    const cancelled: WorkWait[] = [];
+    for (const wait of pending) {
+      const outcome = await this.cancel(wait.id, reason);
+      if (outcome.ok) cancelled.push(outcome.wait);
+    }
+    return cancelled;
+  }
+
+  /**
+   * 作废某一次请求的等待（E4.4）：停止一条委派时，对应的「等它回信」不再有意义。
+   * 只动这一条线程，不动这位同事别的等待。
+   */
+  async cancelByThread(threadId: string, reason?: string): Promise<WorkWait[]> {
+    const pending = await this.listPending({ threadId });
     const cancelled: WorkWait[] = [];
     for (const wait of pending) {
       const outcome = await this.cancel(wait.id, reason);

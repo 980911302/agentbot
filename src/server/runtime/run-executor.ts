@@ -148,6 +148,10 @@ export class RunExecutor {
         brief: [continuation.brief, turn.brief].filter(Boolean).join('\n\n'),
         persistAssistantText: continuation.persistAssistantText,
         posts,
+        // E4.4：续跑仍然属于「被派的那条线程」——回信与精确停止都还要靠它
+        ...(continuation.replyCorrelationId
+          ? { replyCorrelationId: continuation.replyCorrelationId }
+          : {}),
         toolContext: {
           agentChainDepth: continuation.agentChainDepth,
           ...(continuation.room ? { room: { ...continuation.room, posts } } : {}),
@@ -214,6 +218,8 @@ export class RunExecutor {
       /** 内部续跑回合（欠账补跑）：不算用户来源，忙时退避 */
       resume?: boolean;
       resumeTaskId?: string;
+      /** 触发本回合那封委派信的线程键（E4.4）：进 turnState 供回信携带 */
+      replyCorrelationId?: string;
       signal?: AbortSignal;
     },
     options: SendOptions = {},
@@ -266,6 +272,8 @@ export class RunExecutor {
       treeId,
       status: 'running',
       createdAt: Date.now(),
+      // E4.4：这一轮由哪封委派信触发；精确停止靠它只掐这棵树
+      ...(turn.replyCorrelationId ? { correlationId: turn.replyCorrelationId } : {}),
     };
     const tree: TaskTree = {
       id: treeId,
@@ -351,6 +359,7 @@ export class RunExecutor {
         images: task.images,
         agentChainDepth: turn.toolContext?.agentChainDepth ?? 0,
         persistAssistantText: turn.persistAssistantText !== false,
+        ...(turn.replyCorrelationId ? { replyCorrelationId: turn.replyCorrelationId } : {}),
         ...(turn.toolContext?.room
           ? {
               room: {
@@ -415,6 +424,8 @@ export class RunExecutor {
       const turnState: TurnState = {
         workbench: { agentsCreated: 0, roomsCreated: 0 },
         treeId,
+        // E4.4：本回合由哪封委派信触发；SendToAgent 回信时带上它，唤醒才精确
+        ...(turn.replyCorrelationId ? { replyCorrelationId: turn.replyCorrelationId } : {}),
         // E4.3：提问类出口走持久等待（没有注入时工具退回同回合同步等待）
         ...(this.deps.requestUserWait
           ? { requestUserWait: (input) => this.deps.requestUserWait!(agentId, input) }

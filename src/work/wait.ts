@@ -43,6 +43,13 @@ export interface WorkWait {
    *   external  → 调用方给的业务键（外部事件按它匹配）
    */
   correlationId: string;
+  /**
+   * 「哪一次请求」的精确线程键（E4.4）：kind=agent 时就是那条委派的 id
+   * （= 请求信的投递 id）。correlationId 只回答「等谁」，两位同事之间可能同时
+   * 有多件事在等；threadId 让一封回信只满足对应的那一次。
+   * 旧数据 / 没有线程的信缺省为空，唤醒时退回「唯一等待才认」。
+   */
+  threadId?: string;
   /** 业务到期时间：time 到点唤醒；user 卡到点明确过期（≠ 用户已回答） */
   dueAt?: number;
   status: WorkWaitStatus;
@@ -81,6 +88,14 @@ export function canTransitionWait(from: WorkWaitStatus, to: WorkWaitStatus): boo
 /** 同事回信等待的关联键：等的是「这位同事」 */
 export function agentWaitKey(peerAgentId: string): string {
   return `agent:${peerAgentId}`;
+}
+
+/**
+ * 这条等待是不是在等这位同事（不看是哪一次请求）。
+ * 精确唤醒先按 threadId 命中；没有线程键的旧信只有这一条时才算数。
+ */
+export function isAgentWaitForPeer(correlationId: string, peerAgentId: string): boolean {
+  return correlationId === agentWaitKey(peerAgentId);
 }
 
 /** 定时等待的关联键 */

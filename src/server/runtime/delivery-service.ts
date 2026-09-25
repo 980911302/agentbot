@@ -21,6 +21,11 @@ export interface DeliverySubmitInput {
   roomRecipients?: Array<{ id: string; name: string; color?: string; avatar?: string; summoned: boolean; everyone?: boolean }>;
   /** 群投递所属的广播窗口（roundId）。缺省时投影用 actionId 自己当一轮。 */
   roundId?: string;
+  /**
+   * 委派线程键（E4.4）：回信时显式携带「哪一次请求」。
+   * 派活信缺省留空，投影时用这封信自己的投递 id 当线程键。
+   */
+  correlationId?: string;
 }
 
 export interface DeliveryServiceOptions {
@@ -102,6 +107,7 @@ export class DeliveryService {
         roomRecipients: input.roomRecipients,
         recipientDeliveryIds: receipt.recipientDeliveryIds,
         ...(input.roundId ? { roundId: input.roundId } : {}),
+        ...(input.correlationId ? { correlationId: input.correlationId } : {}),
         projectionState: 'pending',
       };
       result = { kind: 'accepted', receipt, projectionStatus: 'pending' };

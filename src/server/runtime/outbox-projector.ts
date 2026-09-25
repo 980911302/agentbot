@@ -20,6 +20,8 @@ export interface OutboxRecord {
   roomRecipients?: Array<{ id: string; name: string; color?: string; avatar?: string; summoned: boolean; everyone?: boolean }>;
   /** 群投递所属广播窗口；由发起投递时所在回合带入，缺省回退到 actionId */
   roundId?: string;
+  /** 委派线程键（E4.4）：回信显式带；派活信缺省用投递 id */
+  correlationId?: string;
   projectionState?: 'pending' | 'visible' | 'failed';
   projected?: boolean;
 }
@@ -53,6 +55,9 @@ export class OutboxProjector {
       depth: record.depth ?? 0,
       kind: 'message',
       ...(record.chainId ? { chainId: record.chainId } : {}),
+      // E4.4：1:1 信带上委派线程键。派活信没有显式线程时就是它自己的投递 id——
+      // 收件方回信时把它带回来，发起方就能只唤醒「那一次请求」。
+      correlationId: record.correlationId ?? deliveryId,
     });
     await this.deps.correspondence.record({
       id: deliveryId,

@@ -88,6 +88,12 @@ export interface StopOperation {
   targetEffectIds: string[];
   state: 'stopping' | 'settled' | 'needs_attention';
   pendingEffects: Array<{ id: string; reason: string }>;
+  /**
+   * 还没回 stop-ack 的下级委派（E4.4）：childWorkId ?? 委派 id。
+   * 有它时 state=needs_attention，界面/调用方必须如实说「仍有 N 项未确认」，
+   * 不能显示成「全部停了」；迟到的回执会更新这份列表。
+   */
+  pendingAcks?: string[];
 }
 
 export type ResumeSelection =

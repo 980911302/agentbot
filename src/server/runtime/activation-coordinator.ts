@@ -356,12 +356,19 @@ export class ActivationCoordinator {
     });
   }
 
-  async settleStop(stopId: string, state: StopOperation['state'] = 'settled'): Promise<void> {
+  async settleStop(
+    stopId: string,
+    state: StopOperation['state'] = 'settled',
+    pendingAcks?: string[],
+  ): Promise<void> {
     await this.store.transact((draft) => {
       const stop = draft.stops[stopId];
       if (!stop) return 'skip';
       stop.state = state;
       if (state === 'settled') stop.pendingEffects = [];
+      // 未确认的下级委派（E4.4）：needs_attention 时如实列出；结清就清空
+      if (state === 'settled') delete stop.pendingAcks;
+      else if (pendingAcks) stop.pendingAcks = [...pendingAcks];
     });
   }
 

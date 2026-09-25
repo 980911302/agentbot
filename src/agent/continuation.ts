@@ -18,5 +18,7 @@ export interface RunContinuation {
   flowId?: string;
   flowGrantId?: string;
   replyRoute?: import('../shared/contracts/room-flow.js').RoomReplyRoute;
+  /** 触发这一轮的委派线程键（E4.4）：被插队后续跑时，回信仍要能认到「哪一次请求」 */
+  replyCorrelationId?: string;
   room?: { roomId: string; roomName: string; roundId: string; limit: number; live?: boolean };
 }

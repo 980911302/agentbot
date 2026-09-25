@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { WorkRepositoryPort } from '../storage/ports.js';
 import {
   clarificationQuestion,
+  classifyUserMessage,
   isOpenWork,
   isTerminalWork,
   linkUserMessage,
@@ -170,6 +171,39 @@ export class WorkService {
   /** 该同事当前「手头那件」未完成的工作（最近更新的优先） */
   async openWorkOf(agentId: string): Promise<WorkItem | undefined> {
     return pickOpenWork(await this.deps.repository.listByAgent(agentId));
+  }
+
+  /**
+   * 收件方为一条**委派**开的工作（E4.4）：委派自带明确范围，所以不走
+   * 「接到已有工作」的判定——那会把同事的独立工作接过来，停止委派时就会连坐。
+   * 判为闲聊（纯问候/短应答）则不建工作，childWorkId 留空。
+   */
+  async acceptDelegation(input: {
+    agentId: string;
+    fromAgentId: string;
+    messageId: string;
+    text: string;
+    now?: number;
+  }): Promise<WorkItem | null> {
+    if (classifyUserMessage(input.text) !== 'work') return null;
+    const at = this.now(input.now);
+    const work: WorkItem = {
+      id: randomUUID(),
+      ownerAgentId: input.agentId,
+      originMessageId: input.messageId,
+      originChannel: { kind: 'dm', id: input.fromAgentId },
+      title: titleFrom(input.text),
+      objective: input.text.trim(),
+      acceptance: [],
+      status: 'active',
+      progressSummary: '接下了同事派来的活，尚未开工',
+      revision: 1,
+      artifactIds: [],
+      createdAt: at,
+      updatedAt: at,
+    };
+    await this.deps.repository.save(work);
+    return work;
   }
 
   async get(workId: string): Promise<WorkItem | undefined> {

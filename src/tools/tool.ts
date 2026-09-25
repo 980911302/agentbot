@@ -29,6 +29,11 @@ export interface TurnState {
   workbench: { agentsCreated: number; roomsCreated: number };
   /** 本回合的任务树 id（见 docs/架构设计.md「插话、停止和等待」：派活必须记账） */
   treeId?: string;
+  /**
+   * 触发本回合那封委派信的线程键（E4.4）：回信时带上它，
+   * 收信方就能把回信认到「哪一次请求」上，而不是只认「等谁」。
+   */
+  replyCorrelationId?: string;
   /** 记一笔"派给谁"：停止令要沿这张表往下传 */
   registerChild?(child: { agentId: string; via: 'dm' | 'room'; roomId?: string }): void;
   /** 标记真正的子任务已收尾；协作投递不使用。 */
