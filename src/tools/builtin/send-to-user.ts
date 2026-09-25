@@ -69,10 +69,24 @@ export function createSendToUserTool(input: {
       type: 'object',
       properties: {
         type: { type: 'string', enum: ['text', 'attachment', 'widget', 'secret-request'] },
-        content: { type: 'string', maxLength: 20000, description: 'type=text 时的正文，用真实换行；最多 20000 字符' },
-        url: { type: 'string', description: 'type=attachment：工作区或允许交付目录中的文件路径（file:// 前缀可省）' },
-        to: { type: 'string', enum: ['room', 'dm'], description: '群回合必填："room" 公开发到当前群，"dm" 私发给主人；私聊回合可省略' },
-        end_turn: { type: 'boolean', description: '最终一条设 true' },
+        content: {
+          type: 'string',
+          maxLength: 20000,
+          description: 'type=text 时的正文，用真实换行；最多 20000 字符',
+        },
+        url: {
+          type: 'string',
+          description: 'type=attachment：工作区或允许交付目录中的文件路径（file:// 前缀可省）',
+        },
+        to: {
+          type: 'string',
+          enum: ['room', 'dm'],
+          description: '群回合必填："room" 公开发到当前群，"dm" 私发给主人；私聊回合可省略',
+        },
+        end_turn: {
+          type: 'boolean',
+          description: '最终一条设 true；提问类（widget / secret-request）会忽略它——回答要回到模型继续处理',
+        },
         delivery_refs: {
           type: 'array',
           maxItems: 8,
@@ -86,13 +100,19 @@ export function createSendToUserTool(input: {
             prompt: { type: 'string', description: '要问的一句话' },
             options: {
               type: 'array',
-              minItems: 2, maxItems: 6,
+              minItems: 2,
+              maxItems: 6,
               description: '2~6 个选项，label 必填',
-              items: { type: 'object', required: ['label'], properties: {
-                label: { type: 'string' },
-                value: { type: 'string' },
-                style: { type: 'string', description: 'default | primary | danger' },
-              } },
+              // 原先声明过 style（default|primary|danger）但从未实现、也没贯通到交互卡，
+              // 属「接受了却静默丢弃」——按 E5.8 的原则从 schema 移除（要配色就先做贯通）。
+              items: {
+                type: 'object',
+                required: ['label'],
+                properties: {
+                  label: { type: 'string' },
+                  value: { type: 'string' },
+                },
+              },
             },
             helpText: { type: 'string', description: '补充说明' },
             multiSelect: { type: 'boolean', description: '暂不支持多选，传 true 会报错' },
@@ -118,33 +138,44 @@ export function createSendToUserTool(input: {
       const flowService = context.flowService ?? input.flowService;
 
       if (inGroup && !args.to) {
-        throw new ControlError('群回合必须显式指定 to:"room" 或 to:"dm"；私发给主人使用 to:"dm"', 'DESTINATION_REQUIRED');
+        throw new ControlError(
+          '群回合必须显式指定 to:"room" 或 to:"dm"；私发给主人使用 to:"dm"',
+          'DESTINATION_REQUIRED',
+        );
       }
       if (!inGroup && args.to === 'room' && !replyRoute) {
         throw new ControlError('当前不在群回合且无受信群流程路由，不能发到群', 'INVALID_DESTINATION');
       }
-      const destination = (inGroup || replyRoute) ? (args.to ?? 'dm') : 'dm';
-      const finish = (visibleText?: string) => {
+      const destination = inGroup || replyRoute ? (args.to ?? 'dm') : 'dm';
+      /**
+       * 收尾。endTurn 默认跟 args.end_turn，但**提问类输入（widget / secret-request）必须传 false**：
+       * 这两类的返回值就是用户的回答，agent-loop 见到 endTurnRequested 会立刻返回、不再问模型
+       * （agent-loop.ts 的 tool 结果入队后即返回），等于把刚拿到的回答丢掉（bug_zdrxbvtxbh4o）。
+       */
+      const finish = (visibleText?: string, opts: { endTurn?: boolean } = {}) => {
         if (!context.turnState) return;
         if (visibleText) context.turnState.lastVisibleText = visibleText;
-        if (args.end_turn) context.turnState.endTurnRequested = true;
+        if (opts.endTurn ?? args.end_turn) context.turnState.endTurnRequested = true;
       };
 
       if (type === 'text') {
         const text = args.content?.trim();
         if (!text) throw new Error('content 不能为空');
         let outgoing = text;
-        const finalize = input.finalizeReply ?? ((payload) => new ReplyFinalizer({
-          lookup: async () => undefined,
-          canView: () => false,
-        }).finalize({
-          actorId: payload.actorId,
-          inputId: payload.inputId ?? payload.actorId,
-          content: payload.content,
-          deliveryRefs: payload.deliveryRefs,
-          allowedReceiptIds: payload.allowedReceiptIds,
-          source: payload.source,
-        }));
+        const finalize =
+          input.finalizeReply ??
+          ((payload) =>
+            new ReplyFinalizer({
+              lookup: async () => undefined,
+              canView: () => false,
+            }).finalize({
+              actorId: payload.actorId,
+              inputId: payload.inputId ?? payload.actorId,
+              content: payload.content,
+              deliveryRefs: payload.deliveryRefs,
+              allowedReceiptIds: payload.allowedReceiptIds,
+              source: payload.source,
+            }));
         if (finalize) {
           const verdict = await finalize({
             actorId: context.agentId,
@@ -187,7 +218,10 @@ export function createSendToUserTool(input: {
               throw new ControlError(proposalResult.reason ?? '候选行动被协议拒绝', 'PROPOSAL_REJECTED');
             }
             if (proposalResult.status === 'stale') {
-              throw new ControlError(proposalResult.reason ?? '流程状态已演进，旧版本行动已作废', 'PROPOSAL_STALE');
+              throw new ControlError(
+                proposalResult.reason ?? '流程状态已演进，旧版本行动已作废',
+                'PROPOSAL_STALE',
+              );
             }
             finish(outgoing);
             return `已向受控流程提交候选行动（flow: ${replyRoute.flowId}，grant: ${replyRoute.grantId}）${args.end_turn ? '，回合结束' : ''}`;
@@ -238,7 +272,8 @@ export function createSendToUserTool(input: {
           .map((option) => ({ id: option.value ?? option.label, label: option.label }))
           .filter((option) => option.label);
         if (options.length < 2) throw new Error('widget 至少要 2 个选项');
-        if (new Set(options.map(option => option.id)).size !== options.length) throw new Error('widget 选项的 value/label 不得重复');
+        if (new Set(options.map((option) => option.id)).size !== options.length)
+          throw new Error('widget 选项的 value/label 不得重复');
 
         const agentName = await input.agentName(context.agentId);
         const promise = input.broker.request({
@@ -256,7 +291,7 @@ export function createSendToUserTool(input: {
           const answer = await promise;
           context.emit?.({ type: 'interaction_closed', id: answer.id, answered: true });
           const chosen = options.find((option) => option.id === answer.value);
-          finish();
+          finish(undefined, { endTurn: false });
           return chosen ? `用户选了：${chosen.label}` : `用户回答：${answer.value ?? '(空)'}`;
         } catch (error) {
           if (pending) context.emit?.({ type: 'interaction_closed', id: pending.id, answered: false });
@@ -288,7 +323,7 @@ export function createSendToUserTool(input: {
           if (!answer.secret) throw new Error('没有收到内容');
           await input.secrets.put(name, answer.secret);
           context.emit?.({ type: 'interaction_closed', id: answer.id, answered: true });
-          finish();
+          finish(undefined, { endTurn: false });
           return `用户已提供「${name}」并保存（我看不到明文）。之后引用这个名字即可，不要要求用户再发一遍。`;
         } catch (error) {
           if (pending) context.emit?.({ type: 'interaction_closed', id: pending.id, answered: false });

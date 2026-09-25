@@ -142,6 +142,61 @@ describe('SendToUser（见 docs/工具参考.md）', () => {
     assert.equal(stored, 'sk-abc');
   });
 
+  it('提问类输入带 end_turn 也不结束回合：回答要回到模型（bug_zdrxbvtxbh4o）', async () => {
+    // widget
+    const ts1 = { workbench: { agentsCreated: 0, roomsCreated: 0 } } as { endTurnRequested?: boolean };
+    const pending = runTool(
+      tool,
+      {
+        type: 'widget',
+        end_turn: true,
+        widget: { prompt: '选哪个？', options: [{ label: 'A' }, { label: 'B' }] },
+      },
+      context({ turnState: ts1 as never }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const request = broker.list({ agentId: 'a1' }).at(-1);
+    broker.resolve(request!.id, { value: request!.options![0]!.id });
+    assert.match(await pending, /用户选了：A/);
+    assert.notEqual(ts1.endTurnRequested, true, '提问类不能顺带收尾，否则工具刚拿到的回答会被丢掉');
+
+    // secret-request 同理
+    const ts2 = { workbench: { agentsCreated: 0, roomsCreated: 0 } } as { endTurnRequested?: boolean };
+    const asking = runTool(
+      tool,
+      { type: 'secret-request', end_turn: true, secret: { label: '给个 token', name: 'turn_token' } },
+      context({ turnState: ts2 as never }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const secretCard = broker.list({ agentId: 'a1' }).at(-1);
+    broker.resolve(secretCard!.id, { secret: 'sk-turn' });
+    await asking;
+    assert.notEqual(ts2.endTurnRequested, true, 'secret-request 也不能顺带收尾');
+  });
+
+  it('text 带 end_turn 仍然收尾（这条语义没被改坏）', async () => {
+    const ts = {
+      workbench: { agentsCreated: 0, roomsCreated: 0 },
+      persistOutgoing: async () => undefined,
+    } as { endTurnRequested?: boolean };
+    await runTool(
+      tool,
+      { type: 'text', content: '我说完了', end_turn: true },
+      context({ turnState: ts as never }),
+    );
+    assert.equal(ts.endTurnRequested, true);
+  });
+
+  it('widget 选项不再声明未实现的 style（bug_4q9zkqw5cg3p）', () => {
+    const schema = tool.parameters as {
+      properties: { widget: { properties: { options: { items: { properties: Record<string, unknown> } } } } };
+    };
+    const optionProps = schema.properties.widget.properties.options.items.properties;
+    assert.equal(Object.hasOwn(optionProps, 'style'), false, '未实现的字段不该留在 schema 里');
+    assert.ok(Object.hasOwn(optionProps, 'label'));
+    assert.ok(Object.hasOwn(optionProps, 'value'));
+  });
+
   it('attachment：工作区文件交付到用户目录', async () => {
     await writeFile(join(dir, 'result.txt'), '交付内容', 'utf8');
     const sent: string[] = [];
