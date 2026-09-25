@@ -198,16 +198,20 @@ export function useWorkspace(deps: {
   }, []);
 
   const agentFlagsPollDisposed = useRef(false);
+  /** 同事列表的身份（id 序列）：列表到位或增删时立即重拉一次控制态 */
+  const agentIds = backendAgents.map((bot) => bot.id).join(',');
 
   useEffect(() => {
     agentFlagsPollDisposed.current = false;
-    void pollAgentFlags();
+    // 冷启动那一刻 agentsRef 还是空的，按空列表拉到的 flags 是空对象；等列表到位再拉一次，
+    // 否则暂停横幅/待处理数要等下一次 15 秒轮询（bug_ob1vlpotsy48）
+    if (agentIds) void pollAgentFlags();
     const timer = window.setInterval(() => void pollAgentFlags(), 15000);
     return () => {
       agentFlagsPollDisposed.current = true;
       window.clearInterval(timer);
     };
-  }, [pollAgentFlags]);
+  }, [pollAgentFlags, agentIds]);
 
   return {
     backendAgents,
