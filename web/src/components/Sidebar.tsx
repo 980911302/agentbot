@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { IconCompose, IconPlus, IconSearch, IconTrash, IconUsers } from '../icons';
 import { BotAvatar } from './BotAvatar';
 import { Menu, MenuItem } from './ui/Menu.js';
@@ -111,6 +111,8 @@ export function Sidebar({
   const searchRef = useRef<HTMLInputElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   const pinDropRef = useRef<HTMLDivElement | null>(null);
+  const pinnedSectionRef = useRef<HTMLElement | null>(null);
+  const previousPinRectsRef = useRef<Map<string, DOMRect>>(new Map());
   const dragPreviewRef = useRef<HTMLDivElement | null>(null);
   const draggingIdRef = useRef<string | null>(null);
   const draggingSourceRef = useRef<'list' | 'pinned' | null>(null);
@@ -120,6 +122,36 @@ export function Sidebar({
   const closeMenu = useCallback(() => setMenu(null), []);
 
   useEffect(() => () => dragPreviewRef.current?.remove(), []);
+
+  useLayoutEffect(() => {
+    const previous = previousPinRectsRef.current;
+    previousPinRectsRef.current = new Map();
+    if (previous.size === 0 || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const section = pinnedSectionRef.current;
+    if (!section) return;
+    const styles = getComputedStyle(section);
+    const duration = Number.parseFloat(styles.getPropertyValue('--dur-base')) || 220;
+    const easing = styles.getPropertyValue('--ease').trim() || 'ease';
+    for (const card of section.querySelectorAll<HTMLElement>('.pinned-channel-item')) {
+      const before = previous.get(card.dataset.channelId ?? '');
+      if (!before) continue;
+      const after = card.getBoundingClientRect();
+      const dx = before.left - after.left;
+      const dy = before.top - after.top;
+      if (Math.abs(dx) + Math.abs(dy) < 1) continue;
+      card.animate(
+        [{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'translate(0, 0)' }],
+        { duration, easing },
+      );
+    }
+  }, [pinnedIds]);
+
+  const capturePinnedPositions = useCallback(() => {
+    previousPinRectsRef.current = new Map(
+      [...(pinnedSectionRef.current?.querySelectorAll<HTMLElement>('.pinned-channel-item') ?? [])]
+        .map((card) => [card.dataset.channelId ?? '', card.getBoundingClientRect()]),
+    );
+  }, []);
 
   useEffect(() => {
     try {
@@ -273,10 +305,11 @@ export function Sidebar({
   );
 
   const togglePinned = useCallback((id: string) => {
+    capturePinnedPositions();
     setPinnedIds((current) => current.includes(id)
       ? current.filter((item) => item !== id)
       : [...current, id]);
-  }, []);
+  }, [capturePinnedPositions]);
 
   const finishDrag = () => {
     dragPreviewRef.current?.remove();
@@ -292,6 +325,7 @@ export function Sidebar({
 
   const pinChannelAt = (id: string | null, index: number) => {
     if (id && channels.some((channel) => channel.id === id && channel.kind !== 'room')) {
+      capturePinnedPositions();
       setPinnedIds((current) => insertPinned(current, id, index));
     }
     finishDrag();
@@ -356,6 +390,7 @@ export function Sidebar({
     return (
       <div
         key={channel.id}
+        data-channel-id={channel.id}
         role="button"
         tabIndex={0}
         aria-current={isActive ? 'page' : undefined}
@@ -554,6 +589,7 @@ export function Sidebar({
           <>
             {pinnedChannels.length > 0 ? (
               <section
+                ref={pinnedSectionRef}
                 className="sidebar-pinned-section"
                 aria-label="置顶智能体"
                 onDragOver={(event) => {
@@ -604,6 +640,7 @@ export function Sidebar({
                 event.preventDefault();
                 event.stopPropagation();
                 const id = draggingIdRef.current;
+                capturePinnedPositions();
                 setPinnedIds((current) => current.filter((item) => item !== id));
                 finishDrag();
               }}
