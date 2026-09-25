@@ -777,12 +777,6 @@ z-index: var(--z-header);
   word-break: break-word;
 }
 
-.msg-bubble-box.error {
-  border-color: var(--danger);
-background: var(--danger-weak);
-  color: var(--danger);
-}
-
 /* ── RichText Markdown Rendering ──────────────────────────── */
 .rich-text-container {
   display: flex;
@@ -1610,11 +1604,29 @@ border-color: var(--danger);
   margin-top: var(--sp-1);
 }
 
-/* 错误行按规范用 danger-weak 底 + 重试入口，就地提示不遮挡 */
+/* 错误行按规范用 danger-weak 底 + 重试入口，就地提示不遮挡（规范 §11「错误：行内」）。
+   必须写在 .msg-bubble-box.dm-agent / .group-stream（padding: 2px 0、无底无边）之后：
+   同为两类选择器，靠顺序盖住，错误框才有自己的内边距与圆角。
+   字色 --danger-text 对 --bg-card 深浅两套均 ≥4.5:1（主题与CSS.md §3.2）。 */
 .msg-bubble-box.error {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
   border: 1px solid var(--danger-border);
+  border-radius: var(--r-md);
   background: var(--danger-weak);
   color: var(--danger-text);
+}
+
+.msg-error-icon {
+  flex: none;
+  /* 与首行文字垂直居中：(行高 1.72 × 14.5px − 16px) / 2 ≈ 4px */
+  margin-top: var(--sp-2);
+}
+
+.msg-error-body {
+  min-width: 0;
 }
 
 /* ── UI-05 控制状态条与顶栏状态文字 ─────────────────────────────

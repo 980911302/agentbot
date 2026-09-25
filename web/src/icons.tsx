@@ -194,6 +194,17 @@ export function IconPaperclip(props: IconProps) {
   );
 }
 
+/** 警示三角：错误消息统一由组件渲染这一个图标，正文里不再拼 ⚠️ */
+export function IconAlert(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" />
+      <path d="M12 9v4" />
+      <path d="M12 17h.01" />
+    </svg>
+  );
+}
+
 export function IconInfo(props: IconProps) {
   return (
     <svg {...base(props)}>
