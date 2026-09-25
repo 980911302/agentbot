@@ -157,7 +157,7 @@ describe('真实 Runtime 统一运行入口（假模型）', () => {
     const tmp = await tempDataDir('chat-private-route');
     try {
       const journal = new EventJournal(); const coordinator = new ChatRunCoordinator(tmp.dir, journal);
-      const { run: r } = coordinator.prepare({ channelId: 'room', roomId: 'room', agentId: 'a', kind: 'agent', source: 'room', input: '任务' });
+      const { run: r } = await coordinator.prepare({ channelId: 'room', roomId: 'room', agentId: 'a', kind: 'agent', source: 'room', input: '任务' });
       coordinator.bind(r).onEvent?.({ type: 'message', message: { id: 'private', agentId: 'a', role: 'assistant', content: { type: 'text', text: '私发' }, createdAt: 1 } });
       const event = journal.since(0).entries.find(e => e.kind === 'agent')!;
       assert.equal(event.agentId, 'a'); assert.equal(event.roomId, undefined); assert.equal(event.runId, r.runId);
@@ -205,6 +205,8 @@ describe('真实 Runtime 统一运行入口（假模型）', () => {
       await waitFor(() => provider.calls.length === 3, 'A 自动续跑');
       provider.releaseText(2, 'A续跑完成');
       await waitFor(() => runtime.chatRuns.list().filter(r => r.status === 'succeeded').length === 2, '续跑终态');
+      // OPT-01 起落盘先于发布：内存状态可能早于 done 事件，等事件而不是只等状态
+      await waitFor(() => runtime.events.since(0).entries.filter(e => e.kind === 'run' && (e.payload as any).phase === 'done').length === 3, '三条 done 事件');
       const resumed = runtime.chatRuns.list().find(r => r.source === 'resume')!;
       assert.ok(resumed); assert.equal(resumed.parentRunId, a.receipt.runId); assert.equal(resumed.taskId, a.receipt.taskId);
       const events = runtime.events.since(0).entries;
@@ -251,10 +253,10 @@ describe('真实 Runtime 统一运行入口（假模型）', () => {
     const tmp = await tempDataDir('chat-restart');
     try {
       const first = new ChatRunCoordinator(tmp.dir, new EventJournal());
-      const accepted = first.prepare({ channelId: 'a', agentId: 'a', kind: 'agent', source: 'user', input: '任务', clientMessageId: 'key' });
+      const accepted = await first.prepare({ channelId: 'a', agentId: 'a', kind: 'agent', source: 'user', input: '任务', clientMessageId: 'key' });
       const second = new ChatRunCoordinator(tmp.dir, new EventJournal());
       assert.equal(second.get(accepted.run.runId)?.status, 'interrupted');
-      const duplicate = second.prepare({ channelId: 'a', agentId: 'a', kind: 'agent', source: 'user', input: '任务', clientMessageId: 'key' });
+      const duplicate = await second.prepare({ channelId: 'a', agentId: 'a', kind: 'agent', source: 'user', input: '任务', clientMessageId: 'key' });
       assert.equal(duplicate.duplicate, true); assert.equal(duplicate.run.runId, accepted.run.runId);
     } finally { await tmp.cleanup(); }
   });
@@ -264,7 +266,7 @@ describe('真实 Runtime 统一运行入口（假模型）', () => {
     try {
       const journal = new EventJournal(); journal.subscribe(() => { throw new Error('socket closed'); });
       const coordinator = new ChatRunCoordinator(tmp.dir, journal);
-      const { run: r } = coordinator.prepare({ channelId: 'a', kind: 'agent', source: 'user', input: '任务' });
+      const { run: r } = await coordinator.prepare({ channelId: 'a', kind: 'agent', source: 'user', input: '任务' });
       const options = coordinator.bind(r, { onEvent: () => { throw new Error('UI error'); } });
       await coordinator.execute(r.runId, async () => { options.onEvent?.({ type: 'final', content: '完成' }); return {}; }, () => ({}));
       assert.equal(coordinator.get(r.runId)?.status, 'succeeded');

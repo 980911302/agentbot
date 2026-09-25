@@ -304,9 +304,9 @@ export class AgentRuntime {
       runTurn: (agentId, task, turn, options) =>
         this.runTurn(agentId, task, { extraTools: [], ...turn }, options),
       // 排队的群回合：事件按 roomId 归属（前端据此路由到群频道）
-      deliverRoom: (item, options) => {
+      deliverRoom: async (item, options) => {
         const roomId = item.room?.roomId ?? '';
-        const { run } = this.chatRuns.prepare({ channelId: roomId, roomId, kind: 'room', source: 'room',
+        const { run } = await this.chatRuns.prepare({ channelId: roomId, roomId, kind: 'room', source: 'room',
           input: item.text, messageId: item.checkpoint?.messageId });
         const scoped = this.chatRuns.bind(run, options);
         return this.chatRuns.execute(run.runId, () => this.roomDispatcher.deliverQueued(item, scoped),
@@ -726,7 +726,7 @@ export class AgentRuntime {
         text,
       });
     }
-    const { run, duplicate } = this.chatRuns.prepare({ channelId: agentId, agentId,
+    const { run, duplicate } = await this.chatRuns.prepare({ channelId: agentId, agentId,
       kind: stop ? 'stop' : 'agent', source: 'user', input: text,
       clientMessageId, messageId: randomUUID(), parentRunId: resumeTaskId,
     }, [options.model ?? '', options.resumeTaskId ?? '']);
@@ -749,7 +749,7 @@ export class AgentRuntime {
         await this.messages.append(task);
         opts.onEvent?.({ type: 'message', message: task });
         this.stopCoordinator.voidPendingInteractions(agentId, opts.onEvent);
-      } catch (error) { this.chatRuns.fail(run.runId, error); throw error; }
+      } catch (error) { await this.chatRuns.fail(run.runId, error); throw error; }
     }
 
     const executeOnce = async (): Promise<SendResult> => {
@@ -855,7 +855,7 @@ export class AgentRuntime {
           await this.roomFlowService.pauseFlow(activeFlow.id, 'USER_STOP_COMMAND');
         }
       }
-      const { run, duplicate } = this.chatRuns.prepare({ channelId: roomId, roomId, kind: 'room',
+      const { run, duplicate } = await this.chatRuns.prepare({ channelId: roomId, roomId, kind: 'room',
         source: options.roomSenderId ? 'agent' : 'user', input: text, clientMessageId: options.clientMessageId, messageId: randomUUID(),
       }, [options.model ?? '', options.ownerName ?? '', options.excludeAgentIds ?? [], options.roomSenderId ?? '']);
 

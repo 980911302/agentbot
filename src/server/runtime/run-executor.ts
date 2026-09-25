@@ -115,12 +115,12 @@ export class RunExecutor {
     const source = turn.resume ? 'resume' : task.source ?? 'user';
     const run = parent?.kind === 'agent' && parent.agentId === agentId && parent.messageId === task.id
       ? parent
-      : this.deps.chatRuns.prepare({
+      : (await this.deps.chatRuns.prepare({
         channelId: task.roomId ?? agentId, agentId, roomId: task.roomId, kind: 'agent', source,
         input: task.content.type === 'text' ? task.content.text : '',
         parentRunId: turn.resumeTaskId ?? parent?.runId,
         messageId: task.id,
-      }).run;
+      })).run;
     const scoped = this.deps.chatRuns.bind(run, options);
     if (turn.resume && turn.continuation?.room?.live && turn.toolContext?.room) {
       const continuation = turn.continuation;
@@ -634,7 +634,7 @@ export class RunExecutor {
         createdAt: Date.now(),
         source: 'agent',
       };
-      const { run } = this.deps.chatRuns.prepare({ channelId: agentId, agentId, kind: 'stop', source: 'resume',
+      const { run } = await this.deps.chatRuns.prepare({ channelId: agentId, agentId, kind: 'stop', source: 'resume',
         input: root?.text ?? '', parentRunId: root?.id });
       await this.deps.chatRuns.execute(run.runId, async () => {
         const notice = { ...message, runId: run.runId };
