@@ -1,7 +1,7 @@
 import { stat } from 'node:fs/promises';
-import { extname } from 'node:path';
 import { resolveProjectOwner } from './memory.js';
 import { defineTool } from '../tool.js';
+import type { AgentProfilePatch } from '../../shared/contracts/agent-profile.js';
 import type { MemoryStore, WriteMemoryInput } from '../../memory/store.js';
 import type { MemoryScope, MemoryTier } from '../../memory/types.js';
 
@@ -12,6 +12,9 @@ import type { MemoryScope, MemoryTier } from '../../memory/types.js';
  *         avatar（set/clear）、project（join/leave，只管自己的 projectIds）。
  * 明确不支持并报错：routine / skill / channel（对应产品能力未上线）。
  *
+ * 资料与头像一律经 `updateProfile`（唯一资料服务，E5.1）：
+ * name / title / description / instructions 四个字段分开写，clear 有明确的清空语义。
+ *
  * Grok 的 tier 命名映射：profile→portrait、log→log、note→scratch。
  */
 
@@ -20,18 +23,7 @@ const TIER_MAP: Record<string, MemoryTier> = { profile: 'portrait', log: 'log', 
 
 export function createUpdateStateTools(input: {
   memory: MemoryStore;
-  updateAgent: (
-    agentId: string,
-    patch: {
-      name?: string;
-      title?: string;
-      instructions?: string;
-      color?: string;
-      avatar?: string;
-      hidden?: boolean;
-      projectIds?: string[];
-    },
-  ) => Promise<unknown>;
+  updateProfile: (agentId: string, patch: AgentProfilePatch) => Promise<unknown>;
 }) {
   const memoryWrite = async (
     context: { agentId: string; projectIds: string[] },
@@ -111,6 +103,7 @@ export function createUpdateStateTools(input: {
       name?: string;
       description?: string;
       title?: string;
+      instructions?: string;
       avatar_color?: string;
       // settings
       hidden_from_sidebar?: boolean;
@@ -121,9 +114,9 @@ export function createUpdateStateTools(input: {
       description: [
         '改你自己的持久状态：记忆、资料、设置、头像、项目归属。优先用它，不要直接改文件。',
         'target=memory：write（fact/tier=profile|log|note/scope=agent|user|project）或 forget（必须给原文）。',
-        'target=profile：set（name / description=职责 / title=一句话简介 / avatar_color）。',
+        'target=profile：set（name=显示名 / title=一句话头衔 / description=职责描述 / instructions=进系统提示词的长职责 / avatar_color）。',
         'target=settings：set（hidden_from_sidebar）。',
-        'target=avatar：set（path，已有图片的绝对路径）或 clear。',
+        'target=avatar：set（path，已有图片的绝对路径，会复制进数据目录的头像目录）或 clear（删掉文件并清空字段）。',
         'target=project：join / leave（project=项目 slug）。',
         'routine / skill / channel 暂不支持，会明确报错。',
       ].join(' '),
@@ -140,11 +133,12 @@ export function createUpdateStateTools(input: {
           scope: { type: 'string', enum: ['agent', 'user', 'project'] },
           project: { type: 'string', description: 'memory/project：项目 slug' },
           name: { type: 'string', description: 'profile：显示名' },
-          description: { type: 'string', description: 'profile：职责描述' },
-          title: { type: 'string', description: 'profile：一句话简介' },
+          title: { type: 'string', description: 'profile：一句话头衔' },
+          description: { type: 'string', description: 'profile：职责描述（会写进你的身份说明）' },
+          instructions: { type: 'string', description: 'profile：进「你的职责」段的长职责文本' },
           avatar_color: { type: 'string', description: 'profile：头像颜色 #rrggbb' },
           hidden_from_sidebar: { type: 'boolean', description: 'settings：是否从侧边栏隐藏' },
-          path: { type: 'string', description: 'avatar：图片绝对路径（<5MB）' },
+          path: { type: 'string', description: 'avatar：图片绝对路径（<5MB），会复制到头像目录' },
         },
         required: ['target', 'action'],
       },
@@ -160,23 +154,21 @@ export function createUpdateStateTools(input: {
 
         if (target === 'profile') {
           if (action !== 'set') throw new Error(`profile 只支持 set，收到：${action}`);
-          const patch: {
-            name?: string;
-            title?: string;
-            instructions?: string;
-            color?: string;
-          } = {};
+          // 四个字段各写各的：description 是身份说明里的「职责描述」，
+          // instructions 是「你的职责」段，不再互相顶替（E5.1）。
+          const patch: AgentProfilePatch = {};
           if (args.name) patch.name = args.name;
           if (args.title) patch.title = args.title;
-          if (args.description) patch.instructions = args.description;
+          if (args.description) patch.description = args.description;
+          if (args.instructions) patch.instructions = args.instructions;
           if (args.avatar_color) {
             if (!/^#[0-9a-f]{6}$/i.test(args.avatar_color)) throw new Error('avatar_color 必须是 #rrggbb');
             patch.color = args.avatar_color;
           }
           if (Object.keys(patch).length === 0) {
-            throw new Error('profile set 至少给 name / description / title / avatar_color 之一');
+            throw new Error('profile set 至少给 name / title / description / instructions / avatar_color 之一');
           }
-          await input.updateAgent(context.agentId, patch);
+          await input.updateProfile(context.agentId, patch);
           return '资料已更新（改名即刻生效，下一轮对话就是新名字）。';
         }
 
@@ -185,24 +177,23 @@ export function createUpdateStateTools(input: {
           if (typeof args.hidden_from_sidebar !== 'boolean') {
             throw new Error('settings set 目前只支持 hidden_from_sidebar（布尔）');
           }
-          await input.updateAgent(context.agentId, { hidden: args.hidden_from_sidebar });
+          await input.updateProfile(context.agentId, { hidden: args.hidden_from_sidebar });
           return args.hidden_from_sidebar ? '已从侧边栏隐藏（仍能聊天、仍跑任务）' : '已重新显示在侧边栏';
         }
 
         if (target === 'avatar') {
+          // clear 的语义明确：删掉头像文件 + 字段置空；set 把图片复制进数据目录的头像目录。
           if (action === 'clear') {
-            await input.updateAgent(context.agentId, { avatar: '' });
-            return '已清除头像，回到生成的脸。';
+            await input.updateProfile(context.agentId, { avatar: null });
+            return '已清除头像（文件已删除），回到生成的脸。';
           }
           if (action !== 'set') throw new Error(`avatar 只支持 set / clear，收到：${action}`);
           const path = args.path?.trim();
           if (!path) throw new Error('avatar set 需要 path');
-          if (!['.png', '.jpg', '.jpeg', '.webp', '.gif'].includes(extname(path).toLowerCase())) throw new Error('头像只支持 PNG/JPEG/WebP/GIF');
           const info = await stat(path).catch(() => null);
           if (!info?.isFile()) throw new Error(`找不到图片：${path}`);
-          if (info.size > 5 * 1024 * 1024) throw new Error('图片必须小于 5MB');
-          await input.updateAgent(context.agentId, { avatar: path });
-          return '头像已更新。';
+          await input.updateProfile(context.agentId, { avatar: { path } });
+          return '头像已更新（图片已复制进数据目录的头像目录）。';
         }
 
         if (target === 'project') {
@@ -218,7 +209,7 @@ export function createUpdateStateTools(input: {
               ? [...new Set([...current, slug])]
               : current.filter((item) => item !== slug);
           if (next.length > 20) throw new Error('最多参与 20 个项目');
-          await input.updateAgent(context.agentId, { projectIds: next });
+          await input.updateProfile(context.agentId, { projectIds: next });
           context.projectIds.splice(0, context.projectIds.length, ...next);
           return action === 'join' ? `已加入项目 ${slug}` : `已离开项目 ${slug}`;
         }

@@ -77,7 +77,10 @@ export interface BotSummary {
   /** 完整职责文本（进系统提示词的那份）；编辑资料时用 */
   instructions?: string;
   color: string;
+  /** 头像：数据目录头像目录的资源引用（`avatars/<文件名>`）；历史数据可能是 emoji */
   avatar?: string;
+  /** 头像资源地址（E5.1，带 updatedAt）；没有上传头像时为 null */
+  avatarUrl?: string | null;
   section?: string;
   hidden?: boolean;
   status: BotStatus;

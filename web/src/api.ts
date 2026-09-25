@@ -699,3 +699,35 @@ export async function testModelSettings(data: {
     body: JSON.stringify(data),
   });
 }
+
+// ── 头像（E5.1）：新增函数一律追加到文件末尾，减少与并行改动的冲突 ──
+
+/**
+ * 上传头像：图片读成 data URL 交给资源接口，服务端落盘到数据目录的头像目录。
+ * 返回的资源地址带 updatedAt，可直接用作 <img src> 做即时预览。
+ */
+export async function uploadBotAvatar(
+  id: string,
+  dataUrl: string,
+): Promise<{ avatar: string; avatarUrl: string | null }> {
+  const data = await request<{ agent: { avatar?: string }; avatarUrl: string | null }>(
+    `/api/agents/${encodeURIComponent(id)}/avatar`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ dataUrl }),
+    },
+  );
+  return { avatar: data.agent.avatar ?? '', avatarUrl: data.avatarUrl };
+}
+
+/** 清空头像：明确语义——删掉文件并把字段置空（不是「没传」） */
+export async function clearBotAvatar(
+  id: string,
+): Promise<{ avatar: string; avatarUrl: string | null }> {
+  const data = await request<{ agent: { avatar?: string }; avatarUrl: string | null }>(
+    `/api/agents/${encodeURIComponent(id)}/avatar`,
+    { method: 'DELETE' },
+  );
+  return { avatar: data.agent.avatar ?? '', avatarUrl: data.avatarUrl };
+}

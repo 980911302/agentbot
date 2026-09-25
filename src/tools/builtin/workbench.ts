@@ -75,10 +75,17 @@ export function createWorkbenchTools(workbench: Workbench) {
     },
   });
 
-  const updateAgent = defineTool<{ agent_id: string; name?: string; description?: string }>({
+  const updateAgent = defineTool<{
+    agent_id: string;
+    name?: string;
+    title?: string;
+    description?: string;
+    instructions?: string;
+  }>({
     name: 'UpdateAgent',
     description: [
-      '修改已有同事的名字和/或职责。只改传入的字段，不能清空、不能删除。',
+      '修改已有同事的资料。只改传入的字段，不能清空、不能删除。',
+      'name=显示名；title=一句话头衔；description=职责描述（进身份说明）；instructions=进系统提示词的长职责。',
       'agent_id 用 id 定位；也可以给一个已存在的名字让它按名字找。',
     ].join(' '),
     parameters: {
@@ -86,7 +93,9 @@ export function createWorkbenchTools(workbench: Workbench) {
       properties: {
         agent_id: { type: 'string', description: '要改的同事 id（或已存在的名字）' },
         name: { type: 'string', description: '新名字' },
-        description: { type: 'string', description: '新的职责与人设' },
+        title: { type: 'string', description: '一句话头衔' },
+        description: { type: 'string', description: '职责描述（身份说明里那一行）' },
+        instructions: { type: 'string', description: '进系统提示词的长职责' },
       },
       required: ['agent_id'],
     },
@@ -96,11 +105,15 @@ export function createWorkbenchTools(workbench: Workbench) {
       }
       const record = await workbench.updateAgent(args.agent_id, {
         name: args.name,
-        instructions: args.description,
+        title: args.title,
+        description: args.description,
+        instructions: args.instructions,
       });
       const changed = [
         args.name ? `名字→${record.name}` : null,
-        args.description ? '职责已更新' : null,
+        args.title ? '头衔已更新' : null,
+        args.description ? '职责描述已更新' : null,
+        args.instructions ? '长职责已更新' : null,
       ].filter(Boolean);
       return changed.length > 0
         ? `已更新「${record.name}」：${changed.join('，')}`

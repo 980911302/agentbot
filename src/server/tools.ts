@@ -8,6 +8,7 @@ import { createMemoryTools } from '../tools/builtin/memory.js';
 import { createWebTools } from '../tools/builtin/web.js';
 import { ArtifactService } from '../tools/services/artifact-service.js';
 import type { BackgroundProcesses } from '../tools/services/background-processes.js';
+import type { AgentProfilePatch } from '../shared/contracts/agent-profile.js';
 import type { InteractionBroker } from '../interaction/broker.js';
 import type { MemoryStore } from '../memory/store.js';
 import type { SecretStore } from '../secret/store.js';
@@ -17,19 +18,11 @@ import type { FinalizeResult } from './runtime/reply-finalizer.js';
 export interface AgentToolAccess {
   /** 工具需要知道同事叫什么（弹卡片时显示） */
   agentName: (agentId: string) => Promise<string>;
-  /** 更新自己的资料 / 设置 / 头像 / 项目（update_state 用） */
-  updateAgent: (
-    agentId: string,
-    patch: {
-      name?: string;
-      title?: string;
-      instructions?: string;
-      color?: string;
-      avatar?: string;
-      hidden?: boolean;
-      projectIds?: string[];
-    },
-  ) => Promise<unknown>;
+  /**
+   * 更新自己的资料 / 设置 / 头像 / 项目（update_state 用）。
+   * 走唯一资料服务（E5.1）：字段语义、清空语义、头像落盘都由它定义，工具不另写一套。
+   */
+  updateProfile: (agentId: string, patch: AgentProfilePatch) => Promise<unknown>;
   finalizeReply?: (input: {
     actorId: string;
     inputId?: string;
@@ -62,7 +55,7 @@ export interface AgentToolOptions {
  * 平台层（CreateAgent / SendToAgent / Task 族等）在 runtime 里挂载，
  * 因为它们需要 registry / rooms / provider 这些运行时依赖。
  *
- * DI：需要运行时的两个回调（agentName / updateAgent）通过 bind 注入，
+ * DI：需要运行时的两个回调（agentName / updateProfile）通过 bind 注入，
  * 不再有模块级 runtimeRef 全局可变状态。
  */
 export function createAgentTools(options: AgentToolOptions): {
@@ -98,7 +91,7 @@ export function createAgentTools(options: AgentToolOptions): {
     }),
     ...createUpdateStateTools({
       memory: options.memory,
-      updateAgent: (agentId, patch) => requireAccess().updateAgent(agentId, patch),
+      updateProfile: (agentId, patch) => requireAccess().updateProfile(agentId, patch),
     }),
     ...createMemoryTools(options.memory),
   ];

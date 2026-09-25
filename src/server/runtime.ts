@@ -26,6 +26,7 @@ import type {
 } from '../agent/types.js';
 import { AgentLoop } from '../agent/agent-loop.js';
 import { AgentRegistry } from '../agent/registry.js';
+import { AgentProfileService } from '../agent/profile-service.js';
 import { createWorkbenchTools } from '../tools/builtin/workbench.js';
 import { Workbench } from '../workbench/service.js';
 import { InteractionBroker } from '../interaction/broker.js';
@@ -140,6 +141,8 @@ interface TurnInput {
  */
 export class AgentRuntime {
   readonly registry: AgentRegistry;
+  /** 资料唯一写入口（E5.1）：路由与工具都经它改 name/title/description/instructions/头像 */
+  readonly profiles: AgentProfileService;
   readonly messages: MessageStore;
   /** 工作服务（E4.1）：WorkItem 的唯一状态转换入口 */
   readonly works: WorkService;
@@ -214,6 +217,7 @@ export class AgentRuntime {
     this.chatRuns = new ChatRunCoordinator(options.dataDir, this.events);
     this.ledger = new JsonRunLedger(options.dataDir);
     this.registry = new AgentRegistry(options.dataDir, []);
+    this.profiles = new AgentProfileService(this.registry, options.dataDir);
     this.control = RuntimeControlStore.openSync(options.dataDir, {
       // 接近软上限时告警：真撞上去 transact 会直接拒绝，同事之间的投递就失败了
       onNearLimit: (bytes, limit) => {
@@ -339,6 +343,7 @@ export class AgentRuntime {
     // 工作台：智能体在对话里替用户改工作台（建同事、建群、拉人、代群发言）
     this.workbench = new Workbench({
       registry: this.registry,
+      profiles: this.profiles,
       rooms: this.rooms,
       messages: this.messages,
       // 新建同事务必登记 enabled，否则重启后会被迁移逻辑当成旧智能体暂停

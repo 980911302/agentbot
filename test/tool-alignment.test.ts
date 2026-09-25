@@ -233,7 +233,7 @@ describe('update_state（1.5 子集）', () => {
   it('memory write / forget（原文精确匹配）', async () => {
     const [tool] = createUpdateStateTools({
       memory,
-      updateAgent: async () => undefined,
+      updateProfile: async () => undefined,
     });
     const reply = await runTool(
       tool,
@@ -257,22 +257,23 @@ describe('update_state（1.5 子集）', () => {
     );
   });
 
-  it('profile set 走 registry 更新；routine 明确不支持', async () => {
+  it('profile set 走资料服务；description 与 instructions 分开写；routine 明确不支持', async () => {
     const patches: Array<Record<string, unknown>> = [];
     const [tool] = createUpdateStateTools({
       memory,
-      updateAgent: async (_agentId, patch) => {
+      updateProfile: async (_agentId, patch) => {
         patches.push(patch);
         return undefined;
       },
     });
     const reply = await runTool(
       tool,
-      { target: 'profile', action: 'set', name: '新名字', description: '新职责' },
+      { target: 'profile', action: 'set', name: '新名字', description: '新职责', instructions: '长职责' },
       context(),
     );
     assert.match(reply, /资料已更新/);
-    assert.deepEqual(patches[0], { name: '新名字', instructions: '新职责' });
+    // E5.1：description 不再顶替 instructions，四个字段各写各的
+    assert.deepEqual(patches[0], { name: '新名字', description: '新职责', instructions: '长职责' });
 
     await assert.rejects(() => runTool(tool, { target: 'routine', action: 'create' }, context()), /暂不支持/);
   });
@@ -476,7 +477,8 @@ describe('工作台改名（A 组）', () => {
       { agent_id: 'a2', name: '乙', description: '新职责' },
       context(),
     );
-    assert.match(updated, /职责已更新/);
+    // E5.1：UpdateAgent 的 description 写 description 字段（不再借 instructions 顶替）
+    assert.match(updated, /职责描述已更新/);
 
     const room = await runTool(createChannel!, { name: '新群', member_ids: ['a1', 'a2'] }, context());
     assert.match(room, /id=room-2/);

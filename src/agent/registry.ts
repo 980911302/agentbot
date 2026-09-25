@@ -22,13 +22,24 @@ export interface CreateAgentInput {
   projectIds?: string[];
 }
 
-/** `update` 只接受这几个字段，且遵循「合并写入、禁止空覆盖」 */
-export type AgentPatch = Partial<
-  Pick<
-    AgentRecord,
-    'name' | 'title' | 'description' | 'instructions' | 'toolNames' | 'color' | 'avatar' | 'section' | 'hidden' | 'projectIds'
-  >
->;
+/**
+ * `update` 只接受这几个字段，且遵循「合并写入、禁止空覆盖」。
+ *
+ * 清理语义（E5.1）三态可区分：undefined = 未传（保持原值）；null = 主动清空（置空串）；
+ * 空字符串 = 未传（历史语义，avatar 例外：空串历史上就等于清空，保留）。
+ */
+export interface AgentPatch {
+  name?: string | null;
+  title?: string | null;
+  description?: string | null;
+  instructions?: string | null;
+  toolNames?: string[];
+  color?: string | null;
+  avatar?: string | null;
+  section?: string | null;
+  hidden?: boolean;
+  projectIds?: string[];
+}
 
 import type { AgentRegistryPort } from '../storage/ports.js';
 
@@ -158,15 +169,16 @@ export class AgentRegistry implements AgentRegistryPort {
 
   /**
    * 合并写入：未传的字段保持原值。
-   * 空字符串等同「没传」，避免把资料抹空（规格：禁止空覆盖）。
+   * 空字符串等同「没传」，避免把资料抹空（规格：禁止空覆盖）；null 是显式的「清空」。
    */
   async update(id: string, patch: AgentPatch): Promise<AgentRecord | undefined> {
     await this.load();
     const record = this.agents.find((agent) => agent.id === id);
     if (!record) return undefined;
 
-    const text = (value: string | undefined): string | undefined => {
+    const text = (value: string | null | undefined): string | undefined => {
       if (value === undefined) return undefined;
+      if (value === null) return ''; // 主动清空
       const trimmed = value.trim();
       return trimmed === '' ? undefined : trimmed;
     };
@@ -179,11 +191,18 @@ export class AgentRegistry implements AgentRegistryPort {
     if (description !== undefined) record.description = description;
     const instructions = text(patch.instructions);
     if (instructions !== undefined) record.instructions = instructions;
-    const avatar = patch.avatar === '' ? '' : text(patch.avatar);
+    // avatar：null 与空串都表示「清空」（空串是历史语义，保留）；未传则不动
+    const avatar =
+      patch.avatar === undefined
+        ? undefined
+        : patch.avatar === null || patch.avatar.trim() === ''
+          ? ''
+          : patch.avatar.trim();
     if (avatar !== undefined) record.avatar = avatar;
     const section = text(patch.section);
     if (section !== undefined) record.section = section;
-    if (patch.color !== undefined && patch.color.trim() !== '') record.color = patch.color.trim();
+    const color = text(patch.color);
+    if (color !== undefined) record.color = color;
     if (patch.toolNames !== undefined) {
       record.toolNames = [...patch.toolNames];
       record.toolPolicy = 'explicit';

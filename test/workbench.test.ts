@@ -4,10 +4,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { AgentRegistry } from '../src/agent/registry.js';
+import { AgentProfileService } from '../src/agent/profile-service.js';
 import { RoomStore } from '../src/room/store.js';
 import { MessageStore } from '../src/store/messages.js';
 import { ROOM_MEMBER_LIMIT } from '../src/room/types.js';
 import { Workbench, WorkbenchError } from '../src/workbench/service.js';
+import { tinyPngDataUrl } from './fakes/avatar-fixture.js';
 
 /** 覆盖 docs/工具参考.md 中的权限与写入规则 */
 describe('工作台写操作', () => {
@@ -28,6 +30,7 @@ describe('工作台写操作', () => {
 
     workbench = new Workbench({
       registry,
+      profiles: new AgentProfileService(registry, dir),
       rooms,
       messages,
       ownerName: '主人',
@@ -107,9 +110,15 @@ describe('工作台写操作', () => {
       await assert.rejects(() => workbench.updateAgent('not-exist', { title: 'x' }), WorkbenchError);
     });
 
-    it('可以改自己的资料', async () => {
-      const updated = await workbench.updateAgent(caller.id, { avatar: '🛠' });
-      assert.equal(updated.avatar, '🛠');
+    it('可以改自己的资料（头像走资料服务，落盘成 avatars/ 引用）', async () => {
+      const updated = await workbench.updateAgent(caller.id, { avatar: { dataUrl: tinyPngDataUrl() } });
+      assert.match(updated.avatar ?? '', /^avatars\/[A-Za-z0-9-]+\.png$/);
+    });
+
+    it('头像传 null 是明确清空：字段置空', async () => {
+      await workbench.updateAgent(caller.id, { avatar: { dataUrl: tinyPngDataUrl() } });
+      const cleared = await workbench.updateAgent(caller.id, { avatar: null });
+      assert.equal(cleared.avatar, '');
     });
   });
 

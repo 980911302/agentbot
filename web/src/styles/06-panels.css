@@ -1178,6 +1178,67 @@ button.tier-pill:hover {
     0 0 0 4px var(--accent);
 }
 
+/* ── 头像选择器（E5.1）：预览 + 上传 / 清除 ─────────────────────── */
+.agent-avatar-picker {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-3);
+  width: 100%;
+}
+
+.agent-avatar-picker-preview {
+  display: grid;
+  place-items: center;
+  width: 96px;
+  height: 96px;
+  border-radius: var(--r-lg);
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  overflow: hidden;
+}
+
+.agent-avatar-picker-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.agent-avatar-picker-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+
+/* 文件输入：视觉隐藏，保留可聚焦与 programmatic click（不用 display:none） */
+.agent-avatar-picker-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.agent-avatar-picker-hint {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-tertiary);
+  text-align: center;
+}
+
+.agent-avatar-picker-error {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--danger);
+  text-align: center;
+}
+
+/* 简介只有一两句，别占职责那块的高度 */
+.profile-drawer-textarea-short {
+  min-height: 68px;
+}
+
 /* ── 资料吸底保存条（UI-06 / 规范 5.10） ────────────────────────── */
 .profile-save-bar {
   display: flex;

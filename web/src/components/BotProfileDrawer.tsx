@@ -10,6 +10,8 @@ import {
   type AvatarColor,
   type AvatarShape,
 } from './LivingAvatar';
+import { AgentAvatarPicker } from './AgentAvatarPicker';
+import { Button } from './ui';
 import { faceStateFromStatus } from '../features/chat/ui-chrome';
 import { ensureNotifyPermission } from '../notify';
 import type { BotSummary } from '../types';
@@ -30,9 +32,28 @@ interface BotProfileDrawerProps {
   ) => Promise<string | null>;
 }
 
+/** 资料基线：判断「有没有未保存的改动」用，四个文本字段与配色各算一份 */
+function baselineOf(bot: BotSummary) {
+  return {
+    name: bot.name || '',
+    title: bot.title || '',
+    description: bot.description || '',
+    instructions: bot.instructions || bot.role || '',
+    color: bot.color || AVATAR_COLOR_HEX.violet,
+  };
+}
+
+/**
+ * 智能体资料抽屉（E5.1）。
+ *
+ * 名字 / 头衔 / 简介 / 职责四个字段分开写（分别对应 name / title / description / instructions），
+ * 头像走资源接口（`/api/agents/:id/avatar`，上传与清除都是明确语义）。
+ * 保存仍走 App 传来的 onSave（PATCH /api/bots/:id → 同一个资料服务）。
+ */
 export function BotProfileDrawer({ bot, onClose, onSave }: BotProfileDrawerProps) {
   const [name, setName] = useState(bot.name || '');
   const [title, setTitle] = useState(bot.title || '');
+  const [description, setDescription] = useState(bot.description || '');
   const [instructions, setInstructions] = useState(bot.instructions || bot.role || '');
   const [color, setColor] = useState(bot.color || AVATAR_COLOR_HEX.violet);
   const [shape, setShape] = useState<AvatarShape>(() => loadAvatarShape(bot.id));
@@ -45,28 +66,41 @@ export function BotProfileDrawer({ bot, onClose, onSave }: BotProfileDrawerProps
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    setName(bot.name || '');
-    setTitle(bot.title || '');
-    setInstructions(bot.instructions || bot.role || '');
-    setColor(bot.color || AVATAR_COLOR_HEX.violet);
+    const baseline = baselineOf(bot);
+    setName(baseline.name);
+    setTitle(baseline.title);
+    setDescription(baseline.description);
+    setInstructions(baseline.instructions);
+    setColor(baseline.color);
     setShape(loadAvatarShape(bot.id));
     const saved = localStorage.getItem(`agentbot.notify.${bot.id}`);
     setNotify(saved !== null ? saved === 'true' : true);
     setError(null);
-  }, [bot.id, bot.name, bot.title, bot.instructions, bot.role, bot.color]);
+  }, [bot.id, bot.name, bot.title, bot.description, bot.instructions, bot.role, bot.color]);
 
-  const latestValues = useRef({ name, title, instructions, color });
-  latestValues.current = { name, title, instructions, color };
+  const latestValues = useRef({ name, title, description, instructions, color });
+  latestValues.current = { name, title, description, instructions, color };
+
+  const baseline = baselineOf(bot);
 
   /** 是否有未保存改动（名字留空视为没改好，不出保存条） */
   const isDirty =
-    (name.trim() !== '' && name !== bot.name) ||
-    title !== (bot.title || '') ||
-    instructions !== (bot.instructions || bot.role || '') ||
-    color !== (bot.color || AVATAR_COLOR_HEX.violet);
+    (name.trim() !== '' && name !== baseline.name) ||
+    title !== baseline.title ||
+    description !== baseline.description ||
+    instructions !== baseline.instructions ||
+    color !== baseline.color;
 
   const saveChanges = useCallback(
-    async (overrides?: Partial<{ name: string; title: string; instructions: string; color: string }>) => {
+    async (
+      overrides?: Partial<{
+        name: string;
+        title: string;
+        description: string;
+        instructions: string;
+        color: string;
+      }>,
+    ) => {
       const current = { ...latestValues.current, ...overrides };
       const trimmedName = current.name.trim();
       if (!trimmedName) return;
@@ -77,6 +111,7 @@ export function BotProfileDrawer({ bot, onClose, onSave }: BotProfileDrawerProps
         const failure = await onSave(bot.id, {
           name: trimmedName,
           title: current.title.trim(),
+          description: current.description.trim(),
           instructions: current.instructions.trim(),
           color: current.color,
         });
@@ -93,11 +128,12 @@ export function BotProfileDrawer({ bot, onClose, onSave }: BotProfileDrawerProps
   );
 
   useEffect(() => {
-    const isNameDiff = name.trim() !== '' && name !== bot.name;
-    const isTitleDiff = title !== (bot.title || '');
-    const isDutyDiff = instructions !== (bot.instructions || bot.role || '');
-    const isColorDiff = color !== (bot.color || AVATAR_COLOR_HEX.violet);
-    if (!isNameDiff && !isTitleDiff && !isDutyDiff && !isColorDiff) return;
+    const isNameDiff = name.trim() !== '' && name !== baseline.name;
+    const isTitleDiff = title !== baseline.title;
+    const isDescriptionDiff = description !== baseline.description;
+    const isDutyDiff = instructions !== baseline.instructions;
+    const isColorDiff = color !== baseline.color;
+    if (!isNameDiff && !isTitleDiff && !isDescriptionDiff && !isDutyDiff && !isColorDiff) return;
 
     const timer = setTimeout(() => {
       void saveChanges();
@@ -106,21 +142,24 @@ export function BotProfileDrawer({ bot, onClose, onSave }: BotProfileDrawerProps
   }, [
     name,
     title,
+    description,
     instructions,
     color,
-    bot.name,
-    bot.title,
-    bot.instructions,
-    bot.role,
-    bot.color,
+    baseline.name,
+    baseline.title,
+    baseline.description,
+    baseline.instructions,
+    baseline.color,
     saveChanges,
   ]);
 
   const discardChanges = () => {
-    setName(bot.name || '');
-    setTitle(bot.title || '');
-    setInstructions(bot.instructions || bot.role || '');
-    setColor(bot.color || AVATAR_COLOR_HEX.violet);
+    const reset = baselineOf(bot);
+    setName(reset.name);
+    setTitle(reset.title);
+    setDescription(reset.description);
+    setInstructions(reset.instructions);
+    setColor(reset.color);
     setError(null);
   };
 
@@ -151,7 +190,17 @@ export function BotProfileDrawer({ bot, onClose, onSave }: BotProfileDrawerProps
       {/* 滚动收在这一层：抽屉自己不滚，吸底保存条才能恒贴抽屉底边（UI-06 打回点） */}
       <div className="profile-drawer-body">
         <div className="profile-drawer-avatar-wrap">
-          <LivingAvatar size={76} color={avatarColor} shape={shape} state={faceStateFromStatus(bot.status)} />
+          <AgentAvatarPicker
+            bot={bot}
+            fallback={
+              <LivingAvatar
+                size={76}
+                color={avatarColor}
+                shape={shape}
+                state={faceStateFromStatus(bot.status)}
+              />
+            }
+          />
         </div>
 
         <div className="profile-drawer-form">
@@ -186,6 +235,21 @@ export function BotProfileDrawer({ bot, onClose, onSave }: BotProfileDrawerProps
           </div>
 
           <div className="profile-drawer-field">
+            <label className="profile-drawer-label" htmlFor="bot-profile-description">
+              简介
+            </label>
+            <textarea
+              id="bot-profile-description"
+              className="profile-drawer-textarea profile-drawer-textarea-short"
+              rows={2}
+              value={description}
+              placeholder="一两句话说明它是谁、负责什么"
+              onChange={(e) => setDescription(e.target.value)}
+              onBlur={() => void saveChanges()}
+            />
+          </div>
+
+          <div className="profile-drawer-field">
             <label className="profile-drawer-label" htmlFor="bot-profile-instructions">
               职责
             </label>
@@ -194,7 +258,7 @@ export function BotProfileDrawer({ bot, onClose, onSave }: BotProfileDrawerProps
               className="profile-drawer-textarea"
               rows={4}
               value={instructions}
-              placeholder="它负责什么、怎么看待任务"
+              placeholder="它负责什么、怎么看待任务（会写进它的系统提示词）"
               onChange={(e) => setInstructions(e.target.value)}
               onBlur={() => void saveChanges()}
             />
@@ -259,17 +323,12 @@ export function BotProfileDrawer({ bot, onClose, onSave }: BotProfileDrawerProps
       {isDirty ? (
         <div className="profile-save-bar" role="group" aria-label="未保存的修改">
           <span className="profile-save-hint">{saving ? '正在保存…' : '有未保存的修改'}</span>
-          <button type="button" className="btn ghost sm" onClick={discardChanges} disabled={saving}>
+          <Button variant="ghost" size="sm" disabled={saving} onClick={discardChanges}>
             撤销
-          </button>
-          <button
-            type="button"
-            className="btn primary sm"
-            onClick={() => void saveChanges()}
-            disabled={saving}
-          >
+          </Button>
+          <Button variant="primary" size="sm" loading={saving} onClick={() => void saveChanges()}>
             保存
-          </button>
+          </Button>
         </div>
       ) : null}
     </div>

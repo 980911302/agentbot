@@ -130,7 +130,7 @@ export async function createAgentServer(options: AgentServerOptions = {}): Promi
   // DI：工具需要的运行时回调在 runtime 建好后立即绑定（无模块级全局可变状态）
   bind({
     agentName: async (agentId) => (await runtime.registry.get(agentId))?.name ?? agentId,
-    updateAgent: (agentId, patch) => runtime.registry.update(agentId, patch),
+    updateProfile: (agentId, patch) => runtime.profiles.updateById(agentId, patch),
     finalizeReply: async (input) => {
       const finalizer = new ReplyFinalizer({
         lookup: async (id) => runtime.deliveryReceipt(id),

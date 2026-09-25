@@ -1,9 +1,12 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import type { MemoryScope, MemoryTier } from '../../memory/types.js';
+import { avatarUrlOf } from '../presenters.js';
 import { json, readJson } from '../transport/index.js';
 import { messageOf, readString, type RouteContext } from './context.js';
 import { handleSend } from './messages.js';
+import { parseProfileBody, respondProfileError } from './profile-payload.js';
+import { handleAgentAvatarWrite, serveAgentAvatar } from './agent-avatar.js';
 import type { WorkStatus } from '../../work/item.js';
 
 function parseScope(value: unknown): MemoryScope {
@@ -35,7 +38,7 @@ export async function handleAgentRoute(
   if (rest === '/' && method === 'GET') {
     const memory = await runtime.snapshotMemory(agentId);
     json(response, 200, {
-      agent: record,
+      agent: { ...record, avatarUrl: avatarUrlOf(record) },
       memory,
       messageCount: await runtime.messages.count(agentId),
       busy: runtime.isBusy(agentId),
@@ -43,20 +46,35 @@ export async function handleAgentRoute(
     return;
   }
 
+  // 资料 PATCH（E5.1）：字段集合与 /api/bots/:id 一致，都走同一个资料服务
+  // （name / title / description / instructions 分开；avatar 传 null 表示明确清空）
   if (rest === '/' && method === 'PATCH') {
     const body = await readJson(request);
-    const updated = await runtime.registry.update(agentId, {
-      name: readString(body.name),
-      instructions: readString(body.instructions),
-      toolNames: Array.isArray(body.toolNames)
-        ? body.toolNames.filter((item): item is string => typeof item === 'string')
-        : undefined,
-      projectIds: Array.isArray(body.projectIds)
-        ? body.projectIds.filter((item): item is string => typeof item === 'string')
-        : undefined,
-    });
-    json(response, 200, { agent: updated });
+    const { patch, errors } = parseProfileBody(body, { toolAndProjectIds: true });
+    if (errors.length > 0) {
+      json(response, 400, { error: errors.join('；') });
+      return;
+    }
+    try {
+      const updated = await runtime.profiles.updateById(agentId, patch);
+      json(response, 200, { agent: { ...updated, avatarUrl: avatarUrlOf(updated) } });
+    } catch (error) {
+      if (respondProfileError(response, error)) return;
+      throw error;
+    }
     return;
+  }
+
+  // 头像资源（E5.1）：GET 读图，POST 换图（dataUrl），DELETE 清空
+  if (rest === '/avatar') {
+    if (method === 'GET') {
+      await serveAgentAvatar(request, response, context, agentId);
+      return;
+    }
+    if (method === 'POST' || method === 'DELETE') {
+      await handleAgentAvatarWrite(request, response, context, agentId, method);
+      return;
+    }
   }
 
   if (rest === '/' && method === 'DELETE') {

@@ -60,7 +60,7 @@ async function makeTestRoomRuntime(prefix: string) {
 
   bind({
     agentName: async (agentId) => (await runtime.registry.get(agentId))?.name ?? agentId,
-    updateAgent: (agentId, patch) => runtime.registry.update(agentId, patch),
+    updateProfile: (agentId, patch) => runtime.profiles.updateById(agentId, patch),
     finalizeReply: async () => ({ kind: 'ok', verifiedWholeText: false, statusLines: [] }),
   });
 
