@@ -16,6 +16,8 @@ import { useModelSettings } from './use-model-settings.js';
 export interface SettingsDialogProps {
   theme: ThemePreference;
   endpoint: string;
+  /** 后端是否连得上：决定服务地址旁的状态点颜色 */
+  online?: boolean;
   toolCount: number;
   ownerName: string;
   open: boolean;
@@ -29,6 +31,7 @@ export interface SettingsDialogProps {
 export function SettingsDialog({
   theme,
   endpoint,
+  online = true,
   toolCount,
   ownerName,
   open,
@@ -72,6 +75,7 @@ export function SettingsDialog({
               theme={theme}
               ownerName={ownerName}
               endpoint={endpoint}
+              online={online}
               toolCount={toolCount}
               onTheme={onTheme}
               onOwnerName={onOwnerName}

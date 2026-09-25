@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Collapsible } from '../motion';
-import { IconCheck, IconChevronRight, IconTool } from '../icons';
+import { IconChevronRight, IconTool } from '../icons';
+import { formatToolDuration } from '../features/chat/tool-call-view';
 import type { ToolCallView } from '../types';
 
 function prettyArguments(raw: string): string {
@@ -37,8 +38,8 @@ export function ToolCallCard({ call }: { call: ToolCallView }) {
         aria-expanded={open}
         onClick={() => setOpen((value) => !value)}
       >
+        {/* 状态只由右侧徽标表达；外层「执行过程」摘要已有汇总状态点，这里不再重复画点 */}
         <div className="tool-card-left">
-          <span className={`tool-status-dot ${call.status}`} />
           <IconTool size={13} className="tool-card-icon" />
           <span className="tool-card-name">{call.name}</span>
         </div>
@@ -46,7 +47,7 @@ export function ToolCallCard({ call }: { call: ToolCallView }) {
         <div className="tool-card-right">
           <span className={`tool-card-badge ${call.status}`}>
             {statusLabel}
-            {call.durationMs !== undefined ? ` · ${call.durationMs}ms` : ''}
+            {formatToolDuration(call.durationMs) ? ` · ${formatToolDuration(call.durationMs)}` : ''}
           </span>
           <span className={`tool-card-chev${open ? ' open' : ''}`}>
             <IconChevronRight size={13} />
@@ -76,7 +77,7 @@ export function ToolCallCard({ call }: { call: ToolCallView }) {
                   }}
                   title="复制结果"
                 >
-                  {copied ? '✓ 已复制' : '复制'}
+                  {copied ? '已复制' : '复制'}
                 </button>
               </div>
               <pre className={`tool-code-pre out${call.status === 'error' ? ' error' : ''}`}>

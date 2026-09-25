@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as api from '../../api';
-import { formatClock } from '../../format';
+import { formatRelativeTime } from '../../format';
 import type { BotSummary, DisplayMessage, RoomView } from '../../types';
 import type { ChannelItem } from '../../components/Sidebar';
 import {
@@ -130,7 +130,7 @@ export function useWorkspace(deps: { activeChannelId: string }) {
       return data.rooms.map((room) => ({
         id: room.id,
         name: room.name,
-        time: formatClock(room.updatedAt),
+        time: formatRelativeTime(room.updatedAt),
         lastMessage: room.lastMessage?.text ?? '还没有人说话',
         color: room.members[0]?.color ?? '#b89b6a',
         role: `${room.members.length} 位成员`,
@@ -150,7 +150,7 @@ export function useWorkspace(deps: { activeChannelId: string }) {
         .map((bot) => ({
           id: bot.id,
           name: bot.name,
-          time: formatClock(Date.parse(bot.updatedAt)),
+          time: formatRelativeTime(Date.parse(bot.updatedAt)),
           lastMessage: bot.activity || bot.title || bot.role || '准备就绪',
           color: bot.color,
           role: bot.title || bot.role,

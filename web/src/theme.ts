@@ -20,6 +20,13 @@ export function resolveTheme(preference: ThemePreference, systemPrefersDark: boo
 
 const DARK_QUERY = '(prefers-color-scheme: dark)';
 
+/** 桌面端 preload 暴露的口子（desktop/preload.cjs）：浏览器里不存在 */
+declare global {
+  interface Window {
+    agentbotDesktop?: { setTheme?: (theme: Theme) => void };
+  }
+}
+
 function systemPrefersDark(): boolean {
   return window.matchMedia(DARK_QUERY).matches;
 }
@@ -55,6 +62,8 @@ export function useTheme(): {
       setTheme(next);
       document.documentElement.dataset.theme = next;
       document.documentElement.style.colorScheme = next;
+      // 桌面端：窗口底色与 Windows 标题栏跟着换
+      window.agentbotDesktop?.setTheme?.(next);
     };
 
     if (preference === 'system') {

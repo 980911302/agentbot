@@ -223,14 +223,13 @@
   /* 进出场容器（遮罩/弹窗/切页）的过渡放回 80ms：仍是淡入淡出，但不跳变。
      不改 transition-property——颜色/边框类反馈保持瞬时。 */
   .scrim,
-  .provider-settings-scrim,
-  .ui-modal-scrim,
-  .dialog,
-  .provider-settings-window,
-  .ui-modal,
-  .swap,
-  .drawer-panel,
-  .chat-message-list {
+.provider-settings-scrim,
+.ui-modal-scrim,
+.dialog,
+.provider-settings-window,
+.ui-modal,
+.swap,
+.chat-message-list {
     transition-duration: var(--dur-instant) !important;
   }
 
@@ -277,7 +276,7 @@
   background: var(--warn-weak);
   border: 1px solid var(--warn);
   color: var(--warn-text);
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   line-height: 1.4;
 }
 
@@ -285,7 +284,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
 }
 
 .interaction-agent {
@@ -295,30 +294,30 @@
 
 .interaction-kind {
   padding: 1px 8px;
-  border-radius: 99px;
+  border-radius: var(--r-full);
   border: 1px solid var(--border);
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: var(--fs-xs);
   color: var(--text-secondary);
 }
 
 .interaction-timer {
   margin-left: auto;
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: var(--fs-xs);
   color: var(--text-tertiary);
 }
 
 .interaction-question {
   margin: 0;
-  font-size: 14px;
-  font-weight: 550;
+  font-size: var(--fs-base);
+  font-weight: 500;
   line-height: 1.5;
 }
 
 .interaction-detail {
   margin: -6px 0 0;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--text-tertiary);
   line-height: 1.5;
 }
@@ -352,12 +351,12 @@
 }
 
 .interaction-option-label {
-  font-size: 13.5px;
-  font-weight: 540;
+  font-size: var(--fs-base);
+  font-weight: 500;
 }
 
 .interaction-option-desc {
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--text-tertiary);
 }
 
@@ -376,7 +375,7 @@
   outline: none;
   background: var(--bg);
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--fs-base);
   color: var(--text);
   transition: border-color var(--dur-fast) var(--ease);
 }
@@ -390,11 +389,28 @@
   letter-spacing: 0.08em;
 }
 
-.interaction-other .btn.primary.small {
+.interaction-other .btn.primary.sm {
   display: grid;
   place-items: center;
   min-width: 44px;
+  height: auto;
   padding: 8px 12px;
+}
+
+/* 提交后：选中的那一项保持高亮（其余置灰），并在下方回显一行「已选：…」 */
+.interaction-option.selected:disabled {
+  opacity: 1;
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.interaction-answered {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin: 0;
+  color: var(--ok-text);
+  font-size: var(--fs-sm);
 }
 
 .interaction-foot {
@@ -407,7 +423,7 @@
 
 .interaction-hint {
   flex: 1;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-tertiary);
 }
 
@@ -416,9 +432,9 @@
   align-items: center;
   gap: 4px;
   padding: 4px 10px;
-  border-radius: 99px;
+  border-radius: var(--r-full);
   border: 1px solid var(--border);
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--text-tertiary);
   transition: color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
 }

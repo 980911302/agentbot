@@ -1,10 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useClickOutside } from '../hooks';
-import { IconArrowUp, IconCheck, IconChevronDown, IconMic, IconPlus, IconTool } from '../icons';
+import { IconArrowUp, IconCheck, IconChevronDown } from '../icons';
 import { BotAvatar } from './BotAvatar';
 import { mentionCandidateList } from '../features/chat/ui-chrome';
-import { composerAreaSize, composerPlaceholder, createComposerDrafts } from '../features/chat/composer-view';
-import type { ModelOption, ToolInfo } from '../types';
+import {
+  INSERT_MENTION_EVENT,
+  composerAreaSize,
+  composerPlaceholder,
+  createComposerDrafts,
+  insertMentionText,
+  nextMenuIndex,
+} from '../features/chat/composer-view';
+import type { ModelOption } from '../types';
 
 export interface ChannelMemberItem {
   id: string;
@@ -22,7 +29,6 @@ interface ComposerProps {
   botName: string;
   model: string;
   models: ModelOption[];
-  tools: ToolInfo[];
   isGroup?: boolean;
   members?: ChannelMemberItem[];
   onSend: (text: string) => void;
@@ -36,7 +42,6 @@ export function Composer({
   botName,
   model,
   models,
-  tools,
   isGroup = false,
   members = [],
   onSend,
@@ -52,9 +57,7 @@ export function Composer({
     },
     [channelId],
   );
-  const [plusOpen, setPlusOpen] = useState(false);
   const [modelOpen, setModelOpen] = useState(false);
-  const [voiceToast, setVoiceToast] = useState(false);
 
   // Mention State
   const [mentionOpen, setMentionOpen] = useState(false);
@@ -64,10 +67,11 @@ export function Composer({
 
   const areaRef = useRef<HTMLTextAreaElement | null>(null);
 
-  const closePlus = useCallback(() => setPlusOpen(false), []);
   const closeModel = useCallback(() => setModelOpen(false), []);
-  const plusRef = useClickOutside<HTMLDivElement>(plusOpen, closePlus);
   const modelRef = useClickOutside<HTMLDivElement>(modelOpen, closeModel);
+  const modelTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const modelMenuRef = useRef<HTMLDivElement | null>(null);
+  const mentionListRef = useRef<HTMLDivElement | null>(null);
 
   const currentModel = models.find((option) => option.id === model);
   const currentLabel = currentModel?.label || model || '选择模型';
@@ -104,9 +108,56 @@ export function Composer({
     return () => window.removeEventListener('agentbot:use_prompt', onUsePrompt);
   }, [setValue]);
 
-  const handleVoiceClick = () => {
-    setVoiceToast(true);
-    window.setTimeout(() => setVoiceToast(false), 2000);
+  // 群里点消息上的名字：在光标处插入「@名字 」（ChatView 派发，见 INSERT_MENTION_EVENT）
+  useEffect(() => {
+    const onInsertMention = (event: Event) => {
+      const name = (event as CustomEvent<string>).detail;
+      const area = areaRef.current;
+      if (typeof name !== 'string' || !name || !area) return;
+      const current = area.value;
+      const next = insertMentionText(current, area.selectionStart ?? current.length, area.selectionEnd ?? current.length, name);
+      setValue(next.text);
+      window.requestAnimationFrame(() => {
+        area.focus();
+        area.setSelectionRange(next.cursor, next.cursor);
+        resize();
+      });
+    };
+    window.addEventListener(INSERT_MENTION_EVENT, onInsertMention);
+    return () => window.removeEventListener(INSERT_MENTION_EVENT, onInsertMention);
+  }, [setValue]);
+
+  // @ 列表：键盘移动选中项时把它滚进可视区
+  useEffect(() => {
+    if (!mentionOpen) return;
+    const active = mentionListRef.current?.querySelector<HTMLElement>('.mention-item.selected');
+    active?.scrollIntoView({ block: 'nearest' });
+  }, [mentionIndex, mentionOpen]);
+
+  // 模型菜单打开时把焦点放到当前选中项，便于直接用方向键
+  useEffect(() => {
+    if (!modelOpen) return;
+    const rows = modelMenuRef.current?.querySelectorAll<HTMLElement>('[role="menuitemradio"], [role="menuitem"]');
+    if (!rows?.length) return;
+    const selected = Array.from(rows).find((row) => row.getAttribute('aria-checked') === 'true');
+    (selected ?? rows[0])?.focus();
+  }, [modelOpen]);
+
+  const onModelMenuKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      setModelOpen(false);
+      modelTriggerRef.current?.focus();
+      return;
+    }
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp' && e.key !== 'Home' && e.key !== 'End') return;
+    const rows = Array.from(
+      modelMenuRef.current?.querySelectorAll<HTMLElement>('[role="menuitemradio"], [role="menuitem"]') ?? [],
+    );
+    if (!rows.length) return;
+    e.preventDefault();
+    const current = rows.indexOf(document.activeElement as HTMLElement);
+    rows[nextMenuIndex(current, rows.length, e.key)]?.focus();
   };
 
   const insertMention = (member: ChannelMemberItem) => {
@@ -202,15 +253,11 @@ export function Composer({
 
   return (
     <div className="composer-capsule-wrapper">
-      {voiceToast ? (
-        <div className="composer-voice-toast">语音输入功能适配中，请使用键盘输入</div>
-      ) : null}
-
       {/* Mention Auto-complete Popover：键盘上下选、Enter/Tab 插入、Esc 只关菜单 */}
       {mentionOpen && mentionCandidates.length > 0 ? (
         <div className="composer-mention-popover">
           <div className="mention-header" id="composer-mention-label">选择要 @ 的成员 ({mentionCandidates.length})</div>
-          <div className="mention-list" role="listbox" id="composer-mention-list" aria-labelledby="composer-mention-label">
+          <div ref={mentionListRef} className="mention-list" role="listbox" id="composer-mention-list" aria-labelledby="composer-mention-label">
             {mentionCandidates.map((member, idx) => (
               <button
                 type="button"
@@ -233,41 +280,6 @@ export function Composer({
 
       <div className="composer-capsule">
         <div className="capsule-row">
-        {/* Left Circular + Button */}
-        <div ref={plusRef} className="capsule-slot">
-          <button
-            type="button"
-            className={`capsule-plus-btn${plusOpen ? ' active' : ''}`}
-            aria-label="操作与工具"
-            title="查看工具"
-            onClick={() => setPlusOpen((open) => !open)}
-          >
-            <IconPlus size={16} />
-          </button>
-
-          {plusOpen ? (
-            <div className="menu up left capsule-menu">
-              <div className="menu-label">可用工具 ({tools.length})</div>
-              <div className="capsule-tools-list">
-                {tools.map((tool) => (
-                  <div className="menu-row read-only" key={tool.name}>
-                    <span className="menu-row-icon">
-                      <IconTool size={14} />
-                    </span>
-                    <span className="menu-row-text">
-                      <span className="menu-row-title">{tool.name}</span>
-                      <span className="menu-row-hint">{tool.description}</span>
-                    </span>
-                    <span className="menu-row-icon dim">
-                      <IconCheck size={13} />
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : null}
-        </div>
-
         {isGroup ? (
           <div className="capsule-group-tag" title="当前为群聊协作模式，输入 @ 唤醒指定成员">
             <span className="group-tag-dot" />
@@ -294,28 +306,18 @@ export function Composer({
           }
         />
 
-        {/* Right: Send / Mic——界面不做停止入口；打「停」走停止令全链（见 docs/架构设计.md「插话、停止和等待」） */}
-        {value.trim() || busy ? (
-          <button
-            type="button"
-            className="capsule-action-btn send"
-            aria-label={busy ? '插队发送' : '发送消息'}
-            title={busy ? '它正忙着——新句会插队开新回合' : '发送 (Enter)'}
-            onClick={submit}
-          >
-            <IconArrowUp size={18} />
-          </button>
-        ) : (
-          <button
-            type="button"
-            className="capsule-action-btn mic"
-            aria-label="语音输入"
-            title="语音输入"
-            onClick={handleVoiceClick}
-          >
-            <IconMic size={18} />
-          </button>
-        )}
+        {/* 发送：有内容才可点。界面不做停止入口；打「停」走停止令全链（见 docs/架构设计.md「插话、停止和等待」）。
+            不做语音、附件入口（docs/UI交互与视觉.md 输入区） */}
+        <button
+          type="button"
+          className="capsule-action-btn send"
+          aria-label={busy ? '插队发送' : '发送消息'}
+          title={busy ? '它正忙着——新句会插队开新回合' : '发送 (Enter)'}
+          disabled={!value.trim()}
+          onClick={submit}
+        >
+          <IconArrowUp size={18} />
+        </button>
         </div>
 
       {/* 底部行与输入框同属一张卡片（对齐白泽观智的输入区排法）：
@@ -323,8 +325,11 @@ export function Composer({
       <div className="composer-model-bar">
         <div ref={modelRef} className="composer-model-slot">
           <button
+            ref={modelTriggerRef}
             type="button"
             className={`composer-model-trigger${modelOpen ? ' open' : ''}`}
+            aria-haspopup="menu"
+            aria-expanded={modelOpen}
             aria-label="当前模型"
             title={currentModel && currentModel.label !== currentModel.id ? `实际调用：${currentModel.id}` : '选择模型'}
             onClick={() => {
@@ -337,7 +342,13 @@ export function Composer({
             <IconChevronDown size={12} />
           </button>
           {modelOpen ? (
-            <div className="menu up left composer-model-menu">
+            <div
+              ref={modelMenuRef}
+              className="menu up left composer-model-menu"
+              role="menu"
+              aria-label="选择模型"
+              onKeyDown={onModelMenuKeyDown}
+            >
               {models.length === 0 ? (
                 <div className="menu-row read-only">
                   <span className="menu-row-text">
@@ -350,6 +361,8 @@ export function Composer({
                   <button
                     type="button"
                     key={`${option.providerId ?? ''}:${option.modelConfigId ?? option.id}`}
+                    role="menuitemradio"
+                    aria-checked={option.id === model}
                     className={`menu-row${option.id === model ? ' selected' : ''}`}
                     onClick={() => {
                       onModelChange(option.id, option);
@@ -371,6 +384,7 @@ export function Composer({
               <div className="menu-divider" />
               <button
                 type="button"
+                role="menuitem"
                 className="menu-row composer-manage-models"
                 onClick={() => {
                   setModelOpen(false);

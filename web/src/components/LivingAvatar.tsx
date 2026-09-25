@@ -76,6 +76,12 @@ export const AVATAR_COLOR_HEX: Record<AvatarColor, string> = {
 
 const COLORS = AVATAR_COLOR_HEX;
 
+/**
+ * 旧版「默认古金」取值：历史数据里没选过颜色的智能体存的是这几种之一，
+ * BotAvatar 见到它们（或没有颜色）时改按身份分配默认色。身份色十六进制只准出现在本文件。
+ */
+export const LEGACY_DEFAULT_AVATAR_HEX: readonly string[] = ['#b89b6a', '#93784a', '#ad8a54', '#b8924e', '#8a5a32'];
+
 const SHAPE_STORAGE_PREFIX = 'agentbot.avatarShape.';
 const DEFAULT_AGENT_COLORS: AvatarColor[] = ['red', 'magenta', 'orange', 'yellow', 'blue', 'cyan', 'green', 'violet', 'brown'];
 

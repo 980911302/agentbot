@@ -12,6 +12,20 @@
       content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:*"
     />
     <title>AgentBot</title>
+    <!-- 首帧前按已存偏好定主题，避免深色用户先闪一下浅色；逻辑与 src/theme.ts 一致（键 agentbot.theme，默认浅色） -->
+    <script>
+      (function () {
+        var pref = 'light';
+        try {
+          var saved = window.localStorage.getItem('agentbot.theme');
+          if (saved === 'light' || saved === 'dark' || saved === 'system') pref = saved;
+        } catch (e) {}
+        var theme =
+          pref === 'system' ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : pref;
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.style.colorScheme = theme;
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

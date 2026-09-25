@@ -93,6 +93,7 @@ export function AppDialogs({
         openSection={settingsSection}
         theme={theme}
         endpoint={endpoint}
+        online={online}
         toolCount={tools.length}
         ownerName={ownerName}
         onTheme={onTheme}

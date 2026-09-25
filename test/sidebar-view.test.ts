@@ -5,6 +5,9 @@ import {
   channelStatusDot,
   nextSearchCursor,
   sidebarSections,
+  sidebarWidthByKey,
+  snapSidebarWidth,
+  unreadBadgeText,
   type SidebarSectionState,
 } from '../web/src/features/workspace/sidebar-view.ts';
 
@@ -34,27 +37,27 @@ describe('channelStatusDot', () => {
     assert.equal(channelStatusDot(agent('a')).kind, null);
   });
 
-  it('暂停盖过忙碌与来信：停了就不会再自动干活', () => {
+  it('暂停盖过其它状态：停了就不会再自动干活', () => {
     const channel = agent('a', { status: 'working', paused: true, pendingMail: 3, failedMail: 1 });
     const dot = channelStatusDot(channel);
     assert.equal(dot.kind, 'paused');
     assert.match(dot.title, /已暂停/);
-    assert.match(dot.title, /3 条待处理来信/);
+    assert.match(dot.title, /3 条消息等它处理/);
   });
 
-  it('忙碌用信息色；有失败来信优先于普通待处理', () => {
-    assert.equal(channelStatusDot(agent('a', { status: 'working' })).kind, 'busy');
-    assert.equal(channelStatusDot(agent('a', { failedMail: 2 })).kind, 'failed');
-    assert.equal(channelStatusDot(agent('a', { failedMail: 2 })).title, '有 2 条失败来信');
+  it('在干活不画点（只看脸）；没处理成功的消息优先于等待处理', () => {
+    assert.equal(channelStatusDot(agent('a', { status: 'working' })).kind, null);
+    assert.equal(channelStatusDot(agent('a', { failedMail: 2, pendingMail: 1 })).kind, 'failed');
+    assert.equal(channelStatusDot(agent('a', { failedMail: 2 })).title, '有 2 条消息没处理成功');
   });
 
-  it('有待处理来信是空心点，只有一条时文案用单数语义', () => {
+  it('有消息等处理是空心点', () => {
     const dot = channelStatusDot(agent('a', { pendingMail: 1 }));
     assert.equal(dot.kind, 'pending');
-    assert.equal(dot.title, '有 1 条待处理来信');
+    assert.equal(dot.title, '有 1 条消息等它处理');
   });
 
-  it('群里不显示暂停与来信点（群自己不会暂停）', () => {
+  it('群里不显示暂停与消息状态点（群自己不会暂停）', () => {
     assert.equal(channelStatusDot(room('r', { paused: true, failedMail: 2 })).kind, null);
   });
 });
@@ -112,5 +115,45 @@ describe('nextSearchCursor', () => {
 
   it('空结果保持无选中', () => {
     assert.equal(nextSearchCursor(1, 0, 1), -1);
+  });
+});
+
+describe('unreadBadgeText：未读数徽标', () => {
+  it('0 / 缺省 / 非法值不显示', () => {
+    assert.equal(unreadBadgeText(0), '');
+    assert.equal(unreadBadgeText(undefined), '');
+    assert.equal(unreadBadgeText(Number.NaN), '');
+  });
+
+  it('显示条数，超过 99 显示 99+', () => {
+    assert.equal(unreadBadgeText(3), '3');
+    assert.equal(unreadBadgeText(99), '99');
+    assert.equal(unreadBadgeText(120), '99+');
+  });
+});
+
+describe('sidebarWidthByKey：拖拽手柄的键盘调宽', () => {
+  it('左右方向键按 16px 步进，Shift 加速', () => {
+    assert.equal(sidebarWidthByKey(260, 'ArrowRight'), 276);
+    assert.equal(sidebarWidthByKey(260, 'ArrowLeft'), 244);
+    assert.equal(sidebarWidthByKey(260, 'ArrowRight', true), 308);
+  });
+
+  it('和拖拽同一套吸附：窄到 160 以下收成迷你，迷你再按右键回到 200', () => {
+    assert.equal(sidebarWidthByKey(200, 'ArrowLeft', true), 72);
+    assert.equal(sidebarWidthByKey(72, 'ArrowRight'), 200);
+    assert.equal(sidebarWidthByKey(450, 'ArrowRight'), 450);
+  });
+
+  it('Home / End 到两端，其它键不处理', () => {
+    assert.equal(sidebarWidthByKey(260, 'Home'), 72);
+    assert.equal(sidebarWidthByKey(260, 'End'), 450);
+    assert.equal(sidebarWidthByKey(260, 'a'), null);
+  });
+
+  it('snapSidebarWidth 夹在 200–450', () => {
+    assert.equal(snapSidebarWidth(100), 72);
+    assert.equal(snapSidebarWidth(180), 200);
+    assert.equal(snapSidebarWidth(999), 450);
   });
 });

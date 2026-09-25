@@ -127,11 +127,11 @@ export function useLiveView(input: {
   }, [input.busy]);
 
   const { reloadChannel, onArtifacts, onChannelChange } = input;
-  /** 切频道：补右侧「屏幕」的 artifacts，并让抽屉页签跟着频道类型走 */
+  /** 切频道：补时间线里的产出文件（artifacts），并让抽屉页签跟着频道类型走 */
   useEffect(() => {
     if (!activeChannelId) return undefined;
     let cancelled = false;
-    // 成员页只对群有意义，切到私聊时回到屏幕页
+    // 成员页只对群有意义，切到私聊时回到默认页
     onChannelChange(activeChannel.kind);
     void (async () => {
       try {

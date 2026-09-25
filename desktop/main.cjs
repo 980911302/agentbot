@@ -1,7 +1,8 @@
-const { app, BrowserWindow, dialog } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
+const { chromeColors, isExternalHttpUrl } = require('./window-chrome.cjs');
 
 const rootDir = path.resolve(__dirname, '..');
 let serverHandle = null;
@@ -74,20 +75,24 @@ async function createWindow() {
   const backendUrl = await startBackend();
   const target = process.env.AGENTBOT_DEV_URL || backendUrl;
 
+  // 首帧前页面还没告诉我们主题：按 web 端默认的浅色起，页面加载后经 preload 同步真实主题
+  const initial = chromeColors('light');
   const win = new BrowserWindow({
-    width: 1200,
+    // 默认 1280 宽：落在「三栏常驻」档（≥1280，docs/主题与CSS.md 断点），右侧面板不必一开就变覆盖层
+    width: 1280,
     height: 820,
     minWidth: 920,
     minHeight: 620,
     show: false,
-    backgroundColor: '#f7f3ec',
+    backgroundColor: initial.background,
     title: 'AgentBot',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden',
     trafficLightPosition: { x: 16, y: 18 },
     ...(process.platform === 'win32'
-      ? { titleBarOverlay: { color: '#f7f3ec', symbolColor: '#1a1a1a', height: 52 } }
+      ? { titleBarOverlay: { color: initial.background, symbolColor: initial.symbol, height: 52 } }
       : {}),
     webPreferences: {
+      preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -95,6 +100,29 @@ async function createWindow() {
   });
 
   win.once('ready-to-show', () => win.show());
+
+  // 页面切主题 → 窗口底色与 Windows 标题栏同步（只认本窗口发来的消息）
+  const onTheme = (event, theme) => {
+    if (event.sender !== win.webContents || win.isDestroyed()) return;
+    const colors = chromeColors(theme);
+    win.setBackgroundColor(colors.background);
+    if (process.platform === 'win32') {
+      win.setTitleBarOverlay({ color: colors.background, symbolColor: colors.symbol, height: 52 });
+    }
+  };
+  ipcMain.on('agentbot:theme', onTheme);
+  win.on('closed', () => ipcMain.removeListener('agentbot:theme', onTheme));
+
+  // 外链（Markdown 里的链接、target=_blank）交给系统浏览器，不在应用里开新窗口或把应用页面导走
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (isExternalHttpUrl(url, target)) void shell.openExternal(url);
+    return { action: 'deny' };
+  });
+  win.webContents.on('will-navigate', (event, url) => {
+    if (!isExternalHttpUrl(url, target)) return;
+    event.preventDefault();
+    void shell.openExternal(url);
+  });
   await win.loadURL(target);
   console.log(`[agentbot-desktop] window loaded ${target}`);
 

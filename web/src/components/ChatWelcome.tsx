@@ -50,9 +50,11 @@ export function ChatWelcome({
     );
   }
 
-  const duty = ('instructions' in (bot ?? {}) ? (bot as BotSummary).instructions : '')
-    || bot?.role
-    || '';
+  // 欢迎页只放一句简介：优先 title（一行简介）、再 description，最后退到 role；CSS 限三行。
+  // 不再铺开 instructions——那是整段职责提示词，写给模型看的，不是给人看的开场白。
+  const title = bot && 'title' in bot ? (bot as BotSummary).title : undefined;
+  const summary = bot && 'description' in bot ? (bot as BotSummary).description : undefined;
+  const duty = (title || summary || bot?.role || '').trim();
 
   return (
     <div className="chat-welcome chat-welcome--empty-dm">

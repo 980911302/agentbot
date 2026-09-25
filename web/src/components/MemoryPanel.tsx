@@ -11,7 +11,6 @@ interface MemoryPanelProps {
   agentId: string;
   agentName: string;
   refreshToken: number;
-  onClose: () => void;
 }
 
 const TIER_META: Record<MemoryTier, { label: string; hint: string }> = {
@@ -28,7 +27,7 @@ const SCOPE_HINT: Record<MemoryScope, string> = {
   project: '参与该项目的智能体可读',
 };
 
-export function MemoryPanel({ agentId, agentName, refreshToken, onClose }: MemoryPanelProps) {
+export function MemoryPanel({ agentId, agentName, refreshToken }: MemoryPanelProps) {
   const [snapshot, setSnapshot] = useState<MemorySnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -165,7 +164,7 @@ export function MemoryPanel({ agentId, agentName, refreshToken, onClose }: Memor
                   </option>
                 ))}
               </select>
-              <button type="button" className="btn primary small" onClick={() => void submit()}>
+              <button type="button" className="btn primary sm" onClick={() => void submit()}>
                 记住
               </button>
             </div>

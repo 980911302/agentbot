@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import type { ReactNode, WheelEvent as ReactWheelEvent } from 'react';
+import type { KeyboardEvent as ReactKeyboardEvent, ReactNode, WheelEvent as ReactWheelEvent } from 'react';
 import type { ArtifactView, BotSummary, DisplayMessage, InteractionRequest, RoomFlowView } from '../types';
 import { fetchRoomFlow, controlRoomFlow } from '../api';
 import { RichText } from '../markdown';
 import { BotAvatar } from './BotAvatar';
-import { IconArrowDown, IconCheck, IconShare, IconSidebar } from '../icons';
-import { MessageItem } from './MessageItem';
+import { IconArrowDown, IconCheck, IconMenu, IconShare, IconSidebar } from '../icons';
+import { MESSAGE_AVATAR_SIZE, MessageItem } from './MessageItem';
 import { ControlNotice } from './ControlNotice';
 import { InteractionCard } from './InteractionCard';
 import { CorrespondenceRow, CorrespondencePanel } from './CorrespondenceView';
@@ -16,6 +16,7 @@ import { headerMemberStack, memberPauseTag, roomFlowPhaseLabel } from '../featur
 import { ChatWelcome } from './ChatWelcome';
 import { toast } from './ui/Toast';
 import { conversationMarkdown } from '../features/chat/export-view';
+import { INSERT_MENTION_EVENT } from '../features/chat/composer-view';
 import type { MessageActor } from '../../../src/shared/contracts/message-identity';
 
 interface ChatViewProps {
@@ -98,6 +99,8 @@ export function ChatView({
   /** 脱离跟随期间新到了多少条，用于「回到底部」角标 */
   const [pendingCount, setPendingCount] = useState(0);
   const [awayFromBottom, setAwayFromBottom] = useState(false);
+  /** 用户点了提示上的 ×：本次离开底部期间不再显示，回到底部或来了新消息再出现 */
+  const [jumpDismissed, setJumpDismissed] = useState(false);
   const lastSeenCount = useRef(messages.length);
   const title = channelTitle || bot?.name || '对话';
   /** 顶栏控制状态文字（UI-05）：与底部状态条同一判定，不各说各话 */
@@ -113,7 +116,14 @@ export function ChatView({
   }));
   /** 群顶栏成员叠放（规范 5.6：最多 4 个 + 数量） */
   const memberStack = headerMemberStack(faces);
+  /** 点标题：私聊打开资料编辑，群里打开成员面板（以前群标题点了没反应） */
+  const titleAction = isGroup ? onOpenMembers : onOpenProfile;
+  const titleActionLabel = isGroup ? '查看群成员' : `打开${title}的资料`;
   const [peer, setPeer] = useState<MessageActor | null>(null);
+  /** 群里点发言者名字：交给输入条在光标处插入 @ */
+  const insertMention = (name: string) => {
+    window.dispatchEvent(new CustomEvent(INSERT_MENTION_EVENT, { detail: name }));
+  };
   useEffect(() => setPeer(null), [channelKey]);
 
   /** 导出会话：刚复制成功时按钮短暂换成对勾，文案同步改成「已复制」 */
@@ -240,12 +250,16 @@ export function ChatView({
     else if (shouldShowJump() === false) stickToBottom.current = true;
   };
 
-  /** 滚回底部附近就重新跟随 */
+  /** 滚动位置决定跟不跟随：拖滚动条、键盘翻页离开底部也算脱离（以前只认滚轮，
+   *  拖滚动条往上看时新消息一来又被拉回底部）；回到底部附近重新跟随 */
   const onScroll = () => {
     const away = shouldShowJump();
-    if (!away) stickToBottom.current = true;
+    stickToBottom.current = !away;
     setAwayFromBottom(away);
-    if (!away) setPendingCount(0);
+    if (!away) {
+      setPendingCount(0);
+      setJumpDismissed(false);
+    }
   };
 
   const jumpToBottom = () => {
@@ -275,6 +289,7 @@ export function ChatView({
     lastSeenCount.current = messages.length;
     if (added > 0 && !stickToBottom.current) {
       setPendingCount((count) => count + added);
+      setJumpDismissed(false);
     }
   }, [messages.length]);
 
@@ -283,6 +298,7 @@ export function ChatView({
     stickToBottom.current = true;
     setPendingCount(0);
     setAwayFromBottom(false);
+    setJumpDismissed(false);
     lastSeenCount.current = 0;
   }, [channelKey]);
 
@@ -293,11 +309,11 @@ export function ChatView({
           <button
             type="button"
             className="chat-header-icon-btn sidebar-toggle"
-            aria-label="打开侧边栏"
-            title="打开侧边栏"
+            aria-label="会话列表"
+            title="会话列表"
             onClick={onToggleSidebar}
           >
-            <IconSidebar size={17} />
+            <IconMenu size={17} />
           </button>
           {peer ? (
             <div className="correspondence-header-pair">
@@ -317,6 +333,9 @@ export function ChatView({
             title={busy ? (actionHint ?? '正在处理…') : (onOpenProfile ? '编辑智能体资料' : undefined)}
             onClick={onOpenProfile}
             role={onOpenProfile ? 'button' : undefined}
+            tabIndex={onOpenProfile ? 0 : undefined}
+            aria-label={onOpenProfile ? `打开${title}的资料` : undefined}
+            onKeyDown={onOpenProfile ? (event) => activateOnKey(event, onOpenProfile) : undefined}
           >
             <BotAvatar
               name={title}
@@ -334,18 +353,13 @@ export function ChatView({
             ) : null}
           </div>
           <div
-            className={`chat-header-title-box${onOpenProfile ? ' clickable' : ''}`}
-            onClick={onOpenProfile}
-            role={onOpenProfile ? 'button' : undefined}
-            tabIndex={onOpenProfile ? 0 : undefined}
-            aria-label={onOpenProfile ? `打开${title}的资料` : undefined}
-            onKeyDown={onOpenProfile ? (event) => {
-              if (event.key === 'Enter' || event.key === ' ') {
-                event.preventDefault();
-                onOpenProfile();
-              }
-            } : undefined}
-            title={onOpenProfile ? '编辑智能体资料' : undefined}
+            className={`chat-header-title-box${titleAction ? ' clickable' : ''}`}
+            onClick={titleAction}
+            role={titleAction ? 'button' : undefined}
+            tabIndex={titleAction ? 0 : undefined}
+            aria-label={titleAction ? titleActionLabel : undefined}
+            onKeyDown={titleAction ? (event) => activateOnKey(event, titleAction) : undefined}
+            title={titleAction ? titleActionLabel : undefined}
           >
             <div className="chat-header-title-row">
               <h2 className="chat-header-title">{title}</h2>
@@ -398,8 +412,8 @@ export function ChatView({
           <button
             type="button"
             className="chat-header-icon-btn"
-            aria-label="侧边栏与屏幕"
-            title="查看任务与环境详情"
+            aria-label="右侧面板"
+            title="右侧面板"
             onClick={onToggleInfo}
           >
             <IconSidebar size={17} />
@@ -447,7 +461,7 @@ export function ChatView({
           live={messages.flatMap(message => message.correspondence ? [message.correspondence] : [])} onClose={() => setPeer(null)} />
       ) : <>
       {/* 离开底部时显示一枚居中的回到底部提示；跳转与关闭使用独立按钮。 */}
-      {awayFromBottom ? (
+      {awayFromBottom && !jumpDismissed ? (
         <div className="floating-unread-pill">
           <button
             type="button"
@@ -461,7 +475,7 @@ export function ChatView({
           <button
             type="button"
             className="floating-unread-close"
-            onClick={() => setAwayFromBottom(false)}
+            onClick={() => setJumpDismissed(true)}
             title="关闭提示"
             aria-label="关闭回到最新消息提示"
           >
@@ -537,6 +551,7 @@ export function ChatView({
                   notice={message.role === 'assistant' && message.id === lastSpeakerId}
                   onRetry={onRetry}
                   onEdit={onEditMessage}
+                  onMention={isGroup ? insertMention : undefined}
                   compact={index > 0}
                 />
               ));
@@ -568,7 +583,7 @@ export function ChatView({
                 <BotAvatar
                   name={bot?.name || '助手'}
                   color={bot?.color || '#b89b6a'}
-                  size={34}
+                  size={MESSAGE_AVATAR_SIZE}
                   agentId={bot?.id}
                   status="thinking"
                 />
@@ -590,7 +605,7 @@ export function ChatView({
       {/* 忙碌提示：思考中的头像 + 一行「名字 正在…」，不做假气泡 */}
       {busy && !isGroup && !liveText ? (
         <div className="chat-status-line" role="status" aria-live="polite" title={actionHint ?? undefined}>
-          <BotAvatar name={bot?.name || '助手'} color={bot?.color || '#b89b6a'} size={24} agentId={bot?.id} status="thinking" />
+          <BotAvatar name={bot?.name || '助手'} color={bot?.color || '#b89b6a'} size={MESSAGE_AVATAR_SIZE} agentId={bot?.id} status="thinking" />
           <span className="chat-status-text">
             <span className="chat-status-name">{bot?.name || '助手'}</span>
             {bot?.activity ? `正在${bot.activity}` : '正在组织回复'}
@@ -610,6 +625,14 @@ export function ChatView({
       </>}
     </div>
   );
+}
+
+/** role=button 的非按钮元素：Enter / 空格触发 */
+function activateOnKey(event: ReactKeyboardEvent<HTMLElement>, action: () => void) {
+  if (event.key === 'Enter' || event.key === ' ') {
+    event.preventDefault();
+    action();
+  }
 }
 
 function ArtifactRow({ artifacts }: { artifacts: ArtifactView[] }) {

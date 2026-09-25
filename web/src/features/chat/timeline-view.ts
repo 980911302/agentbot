@@ -38,13 +38,14 @@ export function speakerName(message: DisplayMessage): string {
 
 /** 带工具调用的消息自己占一行，不并进相邻的气泡组 */
 function isMergeable(message: DisplayMessage): boolean {
-  return message.toolCalls.length === 0 && !message.correspondence;
+  return !message.correspondence;
 }
 
 /**
  * 同一发言者 3 分钟内的连续消息合成一组。
- * 换人、跨过 3 分钟、或中间夹了工具调用/思考块都断开——
- * 合并只针对「这个人连着说的几句」，工具过程不并进气泡。
+ * 换人、跨过 3 分钟、或中间夹了同事往来条都断开。
+ * 带工具调用的消息也参与合并：工具卡仍各自渲染，只是不再每条都重复头像、名字和时间
+ * （以前一次干活会刷出三四个完整的头部）。
  */
 export function mergeRun(
   messages: DisplayMessage[],

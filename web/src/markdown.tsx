@@ -7,7 +7,52 @@ export type Block =
   | { type: 'list'; ordered: boolean; items: string[] }
   | { type: 'quote'; content: string }
   | { type: 'hr' }
+  | { type: 'table'; header: string[]; align: TableAlign[]; rows: string[][] }
   | { type: 'paragraph'; content: string };
+
+export type TableAlign = 'left' | 'center' | 'right' | null;
+
+/** GFM 表格的分隔行：| --- | :---: | ---: |（至少一个竖线或两列） */
+const TABLE_SEPARATOR = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
+
+/** 把一行按竖线切成单元格：去掉首尾竖线，支持 \| 转义 */
+export function splitTableRow(line: string): string[] {
+  let body = line.trim();
+  if (body.startsWith('|')) body = body.slice(1);
+  if (body.endsWith('|') && !body.endsWith('\\|')) body = body.slice(0, -1);
+  const cells: string[] = [];
+  let current = '';
+  for (let index = 0; index < body.length; index += 1) {
+    const char = body[index]!;
+    if (char === '\\' && body[index + 1] === '|') {
+      current += '|';
+      index += 1;
+    } else if (char === '|') {
+      cells.push(current.trim());
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+  cells.push(current.trim());
+  return cells;
+}
+
+/** 这一行和下一行能不能组成表格的开头：表头带竖线，下一行是分隔行且列数一致 */
+function isTableStart(line: string, next: string | undefined): boolean {
+  if (!line.includes('|') || next === undefined || !TABLE_SEPARATOR.test(next)) return false;
+  if (!next.includes('|') && !line.trim().startsWith('|')) return false;
+  return splitTableRow(line).length === splitTableRow(next).length;
+}
+
+function tableAlign(cell: string): TableAlign {
+  const left = cell.startsWith(':');
+  const right = cell.endsWith(':');
+  if (left && right) return 'center';
+  if (right) return 'right';
+  if (left) return 'left';
+  return null;
+}
 
 /** 剥掉历史消息里残留的思维链段落，只留可见正文（复制用；渲染侧由 parseBlocks 丢弃）。
  *  实现在 features/chat/thinking.ts，与导出会话共用；这里保留导出，调用方不用改。 */
@@ -123,13 +168,29 @@ export function parseBlocks(text: string): Block[] {
       continue;
     }
 
-    // 7. Empty line
+    // 7. GFM table：表头 + 分隔行 + 若干数据行（遇到空行或不含竖线的行结束）
+    if (isTableStart(line, lines[i + 1])) {
+      const header = splitTableRow(line);
+      const align = splitTableRow(lines[i + 1]!).map(tableAlign);
+      i += 2;
+      const rows: string[][] = [];
+      while (i < lines.length && lines[i]!.trim() && lines[i]!.includes('|')) {
+        const cells = splitTableRow(lines[i]!);
+        // 列数不齐时补空或截断，按表头对齐
+        rows.push(header.map((_, column) => cells[column] ?? ''));
+        i += 1;
+      }
+      blocks.push({ type: 'table', header, align, rows });
+      continue;
+    }
+
+    // 8. Empty line
     if (!line.trim()) {
       i += 1;
       continue;
     }
 
-    // 8. Paragraph lines
+    // 9. Paragraph lines
     const paragraphLines: string[] = [];
     while (
       i < lines.length &&
@@ -141,7 +202,8 @@ export function parseBlocks(text: string): Block[] {
       !lines[i]!.startsWith('>') &&
       !/^(\s*)[-*+]\s+(\S.*)$/.test(lines[i]!) &&
       !/^(\s*)\d+\.\s+(\S.*)$/.test(lines[i]!) &&
-      !/^(---|___|\*\*\*)\s*$/.test(lines[i]!.trim())
+      !/^(---|___|\*\*\*)\s*$/.test(lines[i]!.trim()) &&
+      !isTableStart(lines[i]!, lines[i + 1])
     ) {
       paragraphLines.push(lines[i]!);
       i += 1;
@@ -161,43 +223,122 @@ export function parseBlocks(text: string): Block[] {
   return blocks;
 }
 
-function renderInline(text: string): ReactNode[] {
-  const pattern = /(\[[^\]]+\]\([^)]+\)|`[^`\n]+`|\*\*[^*]+?\*\*|\*[^*]+?\*)/g;
-  const parts = text.split(pattern);
+export type InlineToken =
+  | { kind: 'text'; text: string }
+  | { kind: 'code'; text: string }
+  | { kind: 'strong'; text: string }
+  | { kind: 'em'; text: string }
+  | { kind: 'link'; text: string; href: string }
+  | { kind: 'image'; alt: string; src: string };
 
-  return parts.map((part, index) => {
-    const linkMatch = part.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
-    if (linkMatch && linkMatch[1] && linkMatch[2]) {
-      return (
-        <a
-          key={index}
-          href={linkMatch[2]}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="rich-link"
-        >
-          {linkMatch[1]}
-        </a>
-      );
+const INLINE_PATTERN =
+  /(!\[[^\]]*\]\([^)\s]+\)|\[[^\]]+\]\([^)\s]+\)|`[^`\n]+`|\*\*[^*]+?\*\*|\*[^*]+?\*|https?:\/\/[A-Za-z0-9\-._~:/?#@!$&*+,;=%()[\]]+)/g;
+
+/** 只放行 http/https/mailto 链接；javascript: 等协议当普通文字 */
+export function safeHref(href: string): string | null {
+  const trimmed = href.trim();
+  return /^(https?:\/\/|mailto:)/i.test(trimmed) ? trimmed : null;
+}
+
+/**
+ * 图片能不能直接显示：CSP 的 img-src 只允许同源与 data:，
+ * 所以只有 data:image/*、同源相对路径才画 <img>；外链图片退化成链接，免得出一个裂图。
+ */
+export function inlineImageSrc(src: string): string | null {
+  const trimmed = src.trim();
+  if (/^data:image\//i.test(trimmed)) return trimmed;
+  if (trimmed.startsWith('/') && !trimmed.startsWith('//')) return trimmed;
+  return null;
+}
+
+/** 裸网址末尾的标点（中英文）不算网址的一部分 */
+function trimUrlTail(url: string): { url: string; tail: string } {
+  const match = url.match(/[.,;:!?)\]}'"，。；：！？、）》」』]+$/);
+  if (!match) return { url, tail: '' };
+  return { url: url.slice(0, -match[0].length), tail: match[0] };
+}
+
+/** 行内标记 → 片段：链接、图片、裸网址、行内代码、粗体、斜体；供渲染与单测共用 */
+export function tokenizeInline(text: string): InlineToken[] {
+  const tokens: InlineToken[] = [];
+  const pushText = (value: string) => {
+    if (!value) return;
+    const last = tokens.at(-1);
+    if (last?.kind === 'text') last.text += value;
+    else tokens.push({ kind: 'text', text: value });
+  };
+  for (const part of text.split(INLINE_PATTERN)) {
+    if (!part) continue;
+    const image = part.match(/^!\[([^\]]*)\]\(([^)\s]+)\)$/);
+    if (image) {
+      tokens.push({ kind: 'image', alt: image[1] ?? '', src: image[2] ?? '' });
+      continue;
     }
-
+    const link = part.match(/^\[([^\]]+)\]\(([^)\s]+)\)$/);
+    if (link && link[1] && link[2]) {
+      const href = safeHref(link[2]);
+      if (href) tokens.push({ kind: 'link', text: link[1], href });
+      else pushText(link[1]);
+      continue;
+    }
+    if (/^https?:\/\//i.test(part)) {
+      const { url, tail } = trimUrlTail(part);
+      tokens.push({ kind: 'link', text: url, href: url });
+      pushText(tail);
+      continue;
+    }
     if (part.startsWith('`') && part.endsWith('`') && part.length >= 2) {
-      return (
-        <code key={index} className="rich-inline-code">
-          {part.slice(1, -1)}
-        </code>
-      );
+      tokens.push({ kind: 'code', text: part.slice(1, -1) });
+      continue;
     }
-
     if (part.startsWith('**') && part.endsWith('**') && part.length >= 4) {
-      return <strong key={index}>{part.slice(2, -2)}</strong>;
+      tokens.push({ kind: 'strong', text: part.slice(2, -2) });
+      continue;
     }
-
     if (part.startsWith('*') && part.endsWith('*') && part.length >= 2) {
-      return <em key={index}>{part.slice(1, -1)}</em>;
+      tokens.push({ kind: 'em', text: part.slice(1, -1) });
+      continue;
     }
+    pushText(part);
+  }
+  return tokens;
+}
 
-    return <span key={index}>{part}</span>;
+function renderInline(text: string): ReactNode[] {
+  return tokenizeInline(text).map((token, index) => {
+    switch (token.kind) {
+      case 'link':
+        return (
+          <a key={index} href={token.href} target="_blank" rel="noopener noreferrer" className="rich-link">
+            {token.text}
+          </a>
+        );
+      case 'image': {
+        const src = inlineImageSrc(token.src);
+        if (src) return <img key={index} src={src} alt={token.alt} className="rich-image" loading="lazy" />;
+        const href = safeHref(token.src);
+        const label = `图片：${token.alt || token.src}`;
+        return href ? (
+          <a key={index} href={href} target="_blank" rel="noopener noreferrer" className="rich-link">
+            {label}
+          </a>
+        ) : (
+          <span key={index}>{label}</span>
+        );
+      }
+      case 'code':
+        return (
+          <code key={index} className="rich-inline-code">
+            {token.text}
+          </code>
+        );
+      case 'strong':
+        return <strong key={index}>{token.text}</strong>;
+      case 'em':
+        return <em key={index}>{token.text}</em>;
+      default:
+        return <span key={index}>{token.text}</span>;
+    }
   });
 }
 
@@ -221,7 +362,7 @@ function CodeBlock({ language, content }: { language: string; content: string })
           onClick={copy}
           title="复制代码"
         >
-          {copied ? '✓ 已复制' : '复制'}
+          {copied ? '已复制' : '复制'}
         </button>
       </div>
       <pre className="code-block-pre">
@@ -296,6 +437,33 @@ export function RichText({ text, mentionNames = [] }: { text: string; mentionNam
             );
           case 'hr':
             return <hr key={index} className="rich-hr" />;
+          case 'table':
+            return (
+              <div key={index} className="rich-table-wrap">
+                <table className="rich-table">
+                  <thead>
+                    <tr>
+                      {block.header.map((cell, column) => (
+                        <th key={column} style={block.align[column] ? { textAlign: block.align[column]! } : undefined}>
+                          {renderInline(cell)}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {block.rows.map((row, rowIndex) => (
+                      <tr key={rowIndex}>
+                        {row.map((cell, column) => (
+                          <td key={column} style={block.align[column] ? { textAlign: block.align[column]! } : undefined}>
+                            {renderInline(cell)}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            );
           case 'paragraph':
           default:
             if (mentionNames.length > 0 && block.type === 'paragraph') {

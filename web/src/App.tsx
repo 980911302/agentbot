@@ -127,7 +127,6 @@ export default function App() {
         members={live.liveMembers}
         model={session.model}
         models={session.models}
-        tools={session.tools}
         onSend={stream.send}
         onModelChange={(next, option) => void session.handleModelChange(next, option)}
         onManageModels={() => dialogs.openSettings('models')}
@@ -143,7 +142,6 @@ export default function App() {
       session.handleModelChange,
       session.model,
       session.models,
-      session.tools,
       stream.send,
     ],
   );
@@ -219,11 +217,10 @@ export default function App() {
           onEditMessage={stream.editPrompt}
         />
 
-        {/* 3. 右侧抽屉：Bot 的屏幕 / 它的记忆 / 资料 / 群成员 */}
+        {/* 3. 右侧抽屉：资料 / 记忆 / 手头工作 / 群成员 */}
         <WorkspaceDrawer
           mounted={dialogs.drawerPresence.mounted}
           presenceState={dialogs.drawerPresence.state}
-          screenFull={dialogs.screenFull}
           drawerTab={dialogs.drawerTab}
           onSelectTab={dialogs.setDrawerTab}
           panelLayout={layout.panelLayout}
@@ -231,8 +228,6 @@ export default function App() {
           onPanelResize={layout.onPanelResize}
           onPanelResizingChange={layout.setIsResizing}
           bot={live.botSummary}
-          messages={live.messages}
-          artifacts={chatView.artifacts}
           isGroup={activeChannel.kind === 'room'}
           room={activeRoom}
           agents={workspace.backendAgents}
@@ -246,9 +241,6 @@ export default function App() {
           }}
           onSaveProfile={actions.saveBotProfile}
           onCloseDrawer={dialogs.closeDrawer}
-          onClosePanel={dialogs.closeDrawerPanel}
-          onEnterFullscreen={dialogs.showFullscreen}
-          onExitFullscreen={dialogs.exitFullscreen}
         />
 
         {/* 4. 弹窗与提示条：新建 / 设置 / 删除确认 / 资料 / 改名 */}

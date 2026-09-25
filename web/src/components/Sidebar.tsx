@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { IconChevronRight, IconCompose, IconPlus, IconSearch, IconTrash } from '../icons';
+import { IconChevronRight, IconCompose, IconPlus, IconSearch, IconTrash, IconUsers } from '../icons';
 import { BotAvatar } from './BotAvatar';
 import { Menu, MenuItem } from './ui/Menu.js';
 import {
   channelStatusDot,
   nextSearchCursor,
   sidebarSections,
+  sidebarWidthByKey,
+  snapSidebarWidth,
+  unreadBadgeText,
   type SidebarSectionState,
 } from '../features/workspace/sidebar-view.js';
 
@@ -235,16 +238,10 @@ export function Sidebar({
 
       const onMouseMove = (moveEvent: MouseEvent) => {
         const delta = moveEvent.clientX - startX;
-        let newWidth = startWidth + delta;
+        const newWidth = startWidth + delta;
 
-        // 拉到小于 160px，自动吸附锁定为 72px (Mini 折叠模式)
-        if (newWidth < 160) {
-          newWidth = 72;
-        } else {
-          newWidth = Math.min(450, Math.max(200, newWidth));
-        }
-
-        onResize?.(newWidth);
+        // 拉到小于 160px，自动吸附锁定为 72px (Mini 折叠模式)；键盘调宽共用同一套吸附
+        onResize?.(snapSidebarWidth(newWidth));
       };
 
       const onMouseUp = () => {
@@ -266,6 +263,22 @@ export function Sidebar({
   const onDoubleClickResizer = useCallback(() => {
     onResize?.(isMini ? 260 : 72);
   }, [isMini, onResize]);
+
+  /** 手柄的键盘操作：左右方向键调宽（Shift 加速），Home/End 到两端，Enter 切换迷你 */
+  const onKeyDownResizer = useCallback(
+    (event: React.KeyboardEvent<HTMLDivElement>) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        onResize?.(isMini ? 260 : 72);
+        return;
+      }
+      const next = sidebarWidthByKey(width, event.key, event.shiftKey);
+      if (next === null) return;
+      event.preventDefault();
+      onResize?.(next);
+    },
+    [isMini, onResize, width],
+  );
 
   // 搜索时段是强制展开的，此时点段头不写持久态：否则用户以为是展开/收起，
   // 实际写进去的折叠态要等清空搜索才显现（验收打回点：折叠态不可见地写入）
@@ -295,11 +308,13 @@ export function Sidebar({
     const isActive = channel.id === activeId;
     const dot = channelStatusDot(channel);
     const isGroup = channel.isGroup || channel.kind === 'room';
+    const unread = unreadBadgeText(channel.unread);
     return (
       <div
         key={channel.id}
         role="button"
         tabIndex={0}
+        aria-current={isActive ? 'page' : undefined}
         draggable={!isGroup}
         className={`channel-item${isActive ? ' active' : ''}${index === effectiveCursor ? ' cursor' : ''}${pinned ? ' pinned-channel-item' : ''}${draggingChannelId === channel.id ? ' dragging' : ''}`}
         onDragStart={(event) => {
@@ -338,10 +353,8 @@ export function Sidebar({
           }
         }}
       >
-        <div
-          className={`channel-avatar-wrapper${channel.status === 'working' ? ' working' : ''}`}
-          title={channel.status === 'working' ? '正在干活' : undefined}
-        >
+        {/* 在干活只看脸（BotAvatar 的表情），不再叠脉冲圈和状态点 */}
+        <div className="channel-avatar-wrapper">
           <BotAvatar
             name={channel.name}
             color={channel.color || '#b89b6a'}
@@ -354,6 +367,12 @@ export function Sidebar({
           {dot.kind ? (
             <span className={`channel-status-dot ${dot.kind}`} title={dot.title} aria-label={dot.title} role="img" />
           ) : null}
+          {/* 迷你模式下信息列隐藏：未读数挪到头像右上角，和右下角的状态点分开 */}
+          {unread && isMini ? (
+            <span className="channel-unread corner" aria-label={`${channel.unread} 条未读`} role="img">
+              {unread}
+            </span>
+          ) : null}
         </div>
 
         <div className="channel-info-wrapper">
@@ -363,7 +382,11 @@ export function Sidebar({
               {isGroup ? <span className="channel-tag group">群</span> : null}
             </div>
             {!pinned ? <span className="channel-time">{channel.time}</span> : null}
-            {channel.unread ? <span className="channel-unread-dot" title={`${channel.unread} 条未读`} aria-label={`${channel.unread} 条未读`} role="img" /> : null}
+            {unread ? (
+              <span className="channel-unread" title={`${channel.unread} 条未读`} aria-label={`${channel.unread} 条未读`} role="img">
+                {unread}
+              </span>
+            ) : null}
           </div>
           {pinned && channel.role ? <span className="channel-tag pinned-role">{channel.role}</span> : null}
           {!pinned ? (
@@ -402,8 +425,8 @@ export function Sidebar({
             type="text"
             className="sidebar-search-input"
             value={query}
-            placeholder="搜索会话..."
-            aria-label="搜索智能体或群"
+            placeholder="搜索名字…"
+            aria-label="按名字搜索智能体或群"
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={onSearchKeyDown}
           />
@@ -445,7 +468,9 @@ export function Sidebar({
         ) : null}
         {!hasVisibleChannels ? (
           <div className="sidebar-empty">
-            <span className="sidebar-empty-icon">{keyword ? '🔍' : '🤖'}</span>
+            <span className="sidebar-empty-icon" aria-hidden="true">
+              {keyword ? <IconSearch size={22} /> : <IconUsers size={22} />}
+            </span>
             <span className="sidebar-empty-title">{keyword ? '没有叫这个名字的智能体或群' : '暂无智能体'}</span>
             <span className="sidebar-empty-hint">{keyword ? '换个名字试试' : '点击上方 + 开始创建'}</span>
           </div>
@@ -506,7 +531,7 @@ export function Sidebar({
           <div className="user-avatar-badge">
             {ownerName.trim().split(/\s+/).length >= 2
               ? (ownerName.trim().split(/\s+/)[0]![0]! + ownerName.trim().split(/\s+/)[1]![0]!).toUpperCase()
-              : (ownerName.trim().slice(0, 2).toUpperCase() || 'LZ')}
+              : (ownerName.trim().slice(0, 2).toUpperCase() || '我')}
           </div>
           <span className="user-name">{ownerName}</span>
         </button>
@@ -515,9 +540,17 @@ export function Sidebar({
       {/* 侧边栏拖拽手柄 */}
       <div
         className="sidebar-resizer"
-        title="拖动调整侧边栏宽度，向左拖拽可折叠为图标模式，双击快速切换"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="调整侧边栏宽度"
+        aria-valuemin={72}
+        aria-valuemax={450}
+        aria-valuenow={Math.round(width)}
+        tabIndex={0}
+        title="拖动或用左右方向键调整侧边栏宽度；向左到底折叠为图标模式，双击或 Enter 快速切换"
         onMouseDown={onMouseDownResizer}
         onDoubleClick={onDoubleClickResizer}
+        onKeyDown={onKeyDownResizer}
       />
 
       {menu ? (

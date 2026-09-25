@@ -209,7 +209,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: var(--fs-base);
-  font-weight: 550;
+  font-weight: 500;
   color: var(--text);
 }
 

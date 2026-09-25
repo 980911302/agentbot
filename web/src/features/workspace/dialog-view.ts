@@ -8,8 +8,14 @@
  *   3. 删除确认框的文案。
  */
 
-/** 右侧抽屉的页签（work 为 E4.7 的「手头工作」） */
-export type DrawerTab = 'screen' | 'memory' | 'members' | 'profile' | 'work';
+/**
+ * 右侧抽屉的页签（work 为 E4.7 的「手头工作」）。
+ * 以前还有「屏幕」页：文档明确不做云电脑预览 / 空壳电脑窗（UI交互与视觉.md），已移除，默认页改为「工作」。
+ */
+export type DrawerTab = 'memory' | 'members' | 'profile' | 'work';
+
+/** 打开面板时默认落在哪一页：它手头在做什么 */
+export const DEFAULT_DRAWER_TAB: DrawerTab = 'work';
 
 /** 设置弹窗的初始分区 */
 export type SettingsSection = 'general' | 'models';
@@ -32,7 +38,7 @@ export interface OverlayStackState {
   profileEdit: boolean;
   create: boolean;
   settings: boolean;
-  /** 右侧抽屉是否挂在 DOM 上（含退出动画）且不是全屏态 */
+  /** 右侧抽屉是否挂在 DOM 上（含退出动画） */
   drawer: boolean;
 }
 
@@ -59,32 +65,29 @@ export type DrawerIntent =
   | { action: 'close'; tab?: DrawerTab }
   | { action: 'setOpen'; open: boolean }
   | { action: 'setTab'; tab: DrawerTab }
-  /** fullscreen 省略 = 不动全屏态（顶栏开屏幕是这种） */
-  | { action: 'showTab'; tab: DrawerTab; fullscreen?: boolean }
-  | { action: 'setFullscreen'; fullscreen: boolean };
+  | { action: 'showTab'; tab: DrawerTab };
 
-/** 顶栏「侧边栏与屏幕」按钮：已开时在资料页就切回屏幕，否则关掉 */
-export function infoToggleIntent(screenOpen: boolean, drawerTab: DrawerTab): DrawerIntent {
-  if (!screenOpen) return { action: 'showTab', tab: 'screen' };
-  return drawerTab === 'profile' ? { action: 'setTab', tab: 'screen' } : { action: 'close' };
+/** 顶栏「右侧面板」按钮：关着就打开（保留上次页签）；开着时在资料页就切回默认页，否则关掉 */
+export function infoToggleIntent(panelOpen: boolean, drawerTab: DrawerTab): DrawerIntent {
+  if (!panelOpen) return { action: 'showTab', tab: drawerTab === 'profile' ? DEFAULT_DRAWER_TAB : drawerTab };
+  return drawerTab === 'profile' ? { action: 'setTab', tab: DEFAULT_DRAWER_TAB } : { action: 'close' };
 }
 
-/** 群顶栏成员叠放：已开成员页就关掉并回到屏幕页，否则打开成员页 */
-export function membersToggleIntent(screenOpen: boolean, drawerTab: DrawerTab): DrawerIntent {
-  if (screenOpen && drawerTab === 'members') return { action: 'close', tab: 'screen' };
-  return { action: 'showTab', tab: 'members', fullscreen: false };
+/** 群顶栏成员叠放 / 群标题：已开成员页就关掉并回到默认页，否则打开成员页 */
+export function membersToggleIntent(panelOpen: boolean, drawerTab: DrawerTab): DrawerIntent {
+  if (panelOpen && drawerTab === 'members') return { action: 'close', tab: DEFAULT_DRAWER_TAB };
+  return { action: 'showTab', tab: 'members' };
 }
 
 /** 私聊标题 / 快捷键 ⌘⇧I：已开资料页就关掉，否则打开资料页 */
-export function profileToggleIntent(screenOpen: boolean, drawerTab: DrawerTab): DrawerIntent {
-  if (screenOpen && drawerTab === 'profile') return { action: 'close' };
-  return { action: 'showTab', tab: 'profile', fullscreen: false };
+export function profileToggleIntent(panelOpen: boolean, drawerTab: DrawerTab): DrawerIntent {
+  if (panelOpen && drawerTab === 'profile') return { action: 'close' };
+  return { action: 'showTab', tab: 'profile' };
 }
 
-/** 快捷键 ⌘\：全屏时先退全屏；否则开合抽屉（不动页签） */
-export function panelToggleIntent(screenFull: boolean, screenOpen: boolean): DrawerIntent {
-  if (screenFull) return { action: 'setFullscreen', fullscreen: false };
-  return { action: 'setOpen', open: !screenOpen };
+/** 快捷键 ⌘\：开合抽屉（不动页签） */
+export function panelToggleIntent(panelOpen: boolean): DrawerIntent {
+  return { action: 'setOpen', open: !panelOpen };
 }
 
 export interface DeleteConfirmCopy {
@@ -110,10 +113,10 @@ export function deleteConfirmCopy(
   };
 }
 
-/** 切到私聊时成员页没有意义：回到屏幕页 */
+/** 切到私聊时成员页没有意义：回到默认页 */
 export function drawerTabOnChannelChange(
   kind: 'room' | 'agent' | undefined,
   current: DrawerTab,
 ): DrawerTab {
-  return kind !== 'room' && current === 'members' ? 'screen' : current;
+  return kind !== 'room' && current === 'members' ? DEFAULT_DRAWER_TAB : current;
 }

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { IconCheck, IconClose } from '../icons';
+import { IconAlert, IconCheck, IconClose } from '../icons';
+import { answeredLabel, formatCountdown, type InteractionAnswer } from '../features/chat/interaction-view';
 import type { InteractionRequest } from '../types';
 
 interface InteractionCardProps {
@@ -20,7 +21,9 @@ function secondsLeft(expiresAt: number, now: number): number {
 export function InteractionCard({ request, onAnswer }: InteractionCardProps) {
   const [freeText, setFreeText] = useState('');
   const [secret, setSecret] = useState('');
-  const [submitted, setSubmitted] = useState(false);
+  /** 提交了什么：非空即已提交，卡片据此停表、锁定并回显所选项 */
+  const [answer, setAnswer] = useState<InteractionAnswer | null>(null);
+  const submitted = answer !== null;
   const [now, setNow] = useState(() => Date.now());
   const inputRef = useRef<HTMLInputElement | null>(null);
 
@@ -28,19 +31,20 @@ export function InteractionCard({ request, onAnswer }: InteractionCardProps) {
     if (request.kind === 'secret') inputRef.current?.focus();
   }, [request.kind, request.id]);
 
-  // 倒计时：让用户知道这张卡片会过期
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, []);
-
   const left = secondsLeft(request.expiresAt, now);
   const expired = left <= 0;
 
-  const submit = (answer: { value?: string; secret?: string; cancelled?: boolean }) => {
+  // 倒计时：让用户知道这张卡片会过期；提交后或已超时就停表
+  useEffect(() => {
+    if (submitted || expired) return undefined;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [submitted, expired]);
+
+  const submit = (next: InteractionAnswer) => {
     if (submitted) return;
-    setSubmitted(true);
-    onAnswer(answer);
+    setAnswer(next);
+    onAnswer(next);
   };
 
   return (
@@ -48,16 +52,26 @@ export function InteractionCard({ request, onAnswer }: InteractionCardProps) {
       <div className="interaction-head">
         <span className="interaction-agent">{request.agentName}</span>
         <span className="interaction-kind">{request.kind === 'secret' ? '密钥' : '需要你确认'}</span>
-        <span className="interaction-timer">{expired ? '已超时' : `${left}s`}</span>
+        <span className="interaction-timer" title={submitted || expired ? undefined : '剩余时间'}>
+          {submitted ? '已提交' : expired ? '已超时' : formatCountdown(left)}
+        </span>
       </div>
 
       <p className="interaction-question">{request.question}</p>
       {request.detail ? <p className="interaction-detail">{request.detail}</p> : null}
 
-      {expired ? (
+      {expired && !submitted ? (
         <div className="interaction-expired-banner">
-          <span>⚠️ 该确认请求已超时，智能体已按预设逻辑继续或挂起</span>
+          <IconAlert size={14} aria-hidden="true" />
+          <span>该确认请求已超时，智能体已按预设逻辑继续或挂起</span>
         </div>
+      ) : null}
+
+      {answer ? (
+        <p className="interaction-answered" role="status">
+          <IconCheck size={14} aria-hidden="true" />
+          {answeredLabel(answer, request.options ?? [])}
+        </p>
       ) : null}
 
       {request.kind === 'choice' ? (
@@ -67,7 +81,8 @@ export function InteractionCard({ request, onAnswer }: InteractionCardProps) {
               <button
                 type="button"
                 key={option.id}
-                className="interaction-option"
+                className={`interaction-option${answer?.value === option.id ? ' selected' : ''}`}
+                aria-pressed={answer ? answer.value === option.id : undefined}
                 disabled={expired || submitted}
                 onClick={() => submit({ value: option.id })}
               >
@@ -93,7 +108,7 @@ export function InteractionCard({ request, onAnswer }: InteractionCardProps) {
             />
             <button
               type="button"
-              className="btn primary small"
+              className="btn primary sm"
               disabled={expired || submitted || !freeText.trim()}
               onClick={() => submit({ value: `自定义：${freeText.trim()}` })}
             >
@@ -117,7 +132,7 @@ export function InteractionCard({ request, onAnswer }: InteractionCardProps) {
           />
           <button
             type="button"
-            className="btn primary small"
+            className="btn primary sm"
             disabled={expired || submitted || !secret.trim()}
             onClick={() => submit({ secret: secret.trim() })}
           >

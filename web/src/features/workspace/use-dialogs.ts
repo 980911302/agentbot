@@ -3,6 +3,7 @@ import { usePresence } from '../../motion';
 import type { ChannelItem } from '../../components/Sidebar';
 import type { BotSummary } from '../../types';
 import {
+  DEFAULT_DRAWER_TAB,
   deleteConfirmCopy,
   drawerTabOnChannelChange,
   infoToggleIntent,
@@ -33,8 +34,7 @@ export function useDialogs(input: { busy: boolean }) {
   const [editingBot, setEditingBot] = useState<BotSummary | null>(null);
   const [renamingChannel, setRenamingChannel] = useState<ChannelItem | null>(null);
   const [screenOpen, setScreenOpen] = useState(false);
-  const [screenFull, setScreenFull] = useState(false);
-  const [drawerTab, setDrawerTab] = useState<DrawerTab>('screen');
+  const [drawerTab, setDrawerTab] = useState<DrawerTab>(DEFAULT_DRAWER_TAB);
   /** 单栏档侧栏抽屉开合（UI-09）：顶栏菜单按钮 / Esc 控制 */
   const [sidebarDrawerOpen, setSidebarDrawerOpen] = useState(false);
   /** 抽屉卸载前先播完退出动画 */
@@ -55,10 +55,7 @@ export function useDialogs(input: { busy: boolean }) {
       case 'showTab':
         setDrawerTab(intent.tab);
         setScreenOpen(true);
-        if (intent.fullscreen !== undefined) setScreenFull(intent.fullscreen);
         return;
-      case 'setFullscreen':
-        setScreenFull(intent.fullscreen);
     }
   }, []);
 
@@ -98,13 +95,8 @@ export function useDialogs(input: { busy: boolean }) {
 
   const closeEditBot = useCallback(() => setEditingBot(null), []);
 
-  /** 关闭右侧抽屉（含退出全屏）：tabs 的 × 与抽屉内关闭走这条 */
-  const closeDrawer = useCallback(() => {
-    setScreenOpen(false);
-    setScreenFull(false);
-  }, []);
-  /** 只关抽屉、不动全屏：抽屉内各面板的关闭 */
-  const closeDrawerPanel = useCallback(() => setScreenOpen(false), []);
+  /** 关闭右侧抽屉：页签栏的 × 与抽屉内关闭走这条 */
+  const closeDrawer = useCallback(() => setScreenOpen(false), []);
 
   const toggleInfo = useCallback(
     () => applyDrawerIntent(infoToggleIntent(screenOpen, drawerTab)),
@@ -118,23 +110,21 @@ export function useDialogs(input: { busy: boolean }) {
     () => applyDrawerIntent(profileToggleIntent(screenOpen, drawerTab)),
     [applyDrawerIntent, drawerTab, screenOpen],
   );
-  /** 快捷键 ⌘\：全屏时退全屏，否则开合抽屉（不动页签） */
+  /** 快捷键 ⌘\：开合抽屉（不动页签） */
   const togglePanel = useCallback(
-    () => applyDrawerIntent(panelToggleIntent(screenFull, screenOpen)),
-    [applyDrawerIntent, screenFull, screenOpen],
+    () => applyDrawerIntent(panelToggleIntent(screenOpen)),
+    [applyDrawerIntent, screenOpen],
   );
   /** 侧栏右键编辑智能体：切到它并打开资料页 */
   const openProfileDrawer = useCallback(
-    () => applyDrawerIntent({ action: 'showTab', tab: 'profile', fullscreen: false }),
+    () => applyDrawerIntent({ action: 'showTab', tab: 'profile' }),
     [applyDrawerIntent],
   );
-  const showFullscreen = useCallback(() => setScreenFull(true), []);
-  const exitFullscreen = useCallback(() => setScreenFull(false), []);
 
   const toggleSidebarDrawer = useCallback(() => setSidebarDrawerOpen((open) => !open), []);
   const closeSidebarDrawer = useCallback(() => setSidebarDrawerOpen(false), []);
 
-  /** 切到私聊时成员页没有意义：回到屏幕页（判定在 dialog-view） */
+  /** 切到私聊时成员页没有意义：回到默认页（判定在 dialog-view） */
   const syncDrawerTabOnChannelChange = useCallback((kind: ChannelItem['kind']) => {
     setDrawerTab((current) => drawerTabOnChannelChange(kind, current));
   }, []);
@@ -148,7 +138,7 @@ export function useDialogs(input: { busy: boolean }) {
       profileEdit: editingBot !== null,
       create: newBotOpen,
       settings: settingsOpen,
-      drawer: drawerPresence.mounted && !screenFull,
+      drawer: drawerPresence.mounted,
     });
     switch (layer) {
       case 'sidebarDrawer':
@@ -181,7 +171,6 @@ export function useDialogs(input: { busy: boolean }) {
     newBotOpen,
     pendingDelete,
     renamingChannel,
-    screenFull,
     settingsOpen,
     sidebarDrawerOpen,
   ]);
@@ -210,12 +199,11 @@ export function useDialogs(input: { busy: boolean }) {
     renamingChannel,
     closeRename,
     screenOpen,
-    screenFull,
     drawerTab,
     setDrawerTab,
     drawerPresence,
-    /** 抽屉占位（含退场动画）且不是全屏 = 右侧面板真的在显示 */
-    panelVisible: drawerPresence.mounted && !screenFull,
+    /** 抽屉占位（含退场动画）= 右侧面板真的在显示 */
+    panelVisible: drawerPresence.mounted,
     sidebarDrawerOpen,
     toggleSidebarDrawer,
     closeSidebarDrawer,
@@ -225,9 +213,6 @@ export function useDialogs(input: { busy: boolean }) {
     togglePanel,
     openProfileDrawer,
     closeDrawer,
-    closeDrawerPanel,
-    showFullscreen,
-    exitFullscreen,
     syncDrawerTabOnChannelChange,
     dismissTopmostOverlay,
   };

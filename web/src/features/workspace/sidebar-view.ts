@@ -11,7 +11,7 @@ export interface SidebarSectionState {
   agents: boolean;
 }
 
-export type SidebarDotKind = 'busy' | 'paused' | 'failed' | 'pending';
+export type SidebarDotKind = 'paused' | 'failed' | 'pending';
 
 export interface SidebarDot {
   kind: SidebarDotKind | null;
@@ -28,14 +28,16 @@ export interface SidebarSection {
   collapsed: boolean;
 }
 
-/** 状态点优先级：暂停 > 有失败来信 > 有待处理来信 > 忙碌（脸在动即「在干活」） */
+/**
+ * 状态点优先级：暂停 > 有消息没处理成功 > 有消息等处理。
+ * 「在干活」不画点：只看头像的脸（docs/UI交互与视觉.md「头像即状态」），不再叠脉冲圈和蓝点。
+ */
 export function channelStatusDot(channel: ChannelItem): SidebarDot {
   if (channel.kind !== 'agent') return { kind: null, title: '' };
   const notes: string[] = [];
-  if (channel.paused) notes.push('已暂停，不自动处理来信');
-  if (channel.failedMail) notes.push(`有 ${channel.failedMail} 条失败来信`);
-  if (channel.pendingMail) notes.push(`有 ${channel.pendingMail} 条待处理来信`);
-  if (notes.length === 0 && channel.status === 'working') return { kind: 'busy', title: '在干活' };
+  if (channel.paused) notes.push('已暂停，不自动处理新消息');
+  if (channel.failedMail) notes.push(`有 ${channel.failedMail} 条消息没处理成功`);
+  if (channel.pendingMail) notes.push(`有 ${channel.pendingMail} 条消息等它处理`);
   if (notes.length === 0) return { kind: null, title: '' };
   if (channel.paused) return { kind: 'paused', title: notes.join('；') };
   if (channel.failedMail) return { kind: 'failed', title: notes.join('；') };
@@ -79,4 +81,26 @@ export function nextSearchCursor(current: number, total: number, delta: 1 | -1):
   if (total <= 0) return -1;
   if (current < 0) return delta > 0 ? 0 : total - 1;
   return (current + delta + total) % total;
+}
+
+/** 未读数徽标文字：超过 99 显示 99+；0 或无效值不显示 */
+export function unreadBadgeText(count: number | undefined): string {
+  if (!count || !Number.isFinite(count) || count <= 0) return '';
+  return count > 99 ? '99+' : String(Math.floor(count));
+}
+
+/** 侧栏宽度的键盘步进：方向键每次 16px，Shift 加速到 48px；与拖拽同一套吸附规则 */
+export function sidebarWidthByKey(width: number, key: string, shift = false): number | null {
+  const step = shift ? 48 : 16;
+  if (key === 'ArrowLeft') return snapSidebarWidth(width - step);
+  if (key === 'ArrowRight') return snapSidebarWidth(width <= 90 ? 200 : width + step);
+  if (key === 'Home') return 72;
+  if (key === 'End') return 450;
+  return null;
+}
+
+/** 拖拽 / 键盘共用的吸附：小于 160 收成迷你 72，其余夹在 200–450 */
+export function snapSidebarWidth(width: number): number {
+  if (width < 160) return 72;
+  return Math.min(450, Math.max(200, width));
 }
