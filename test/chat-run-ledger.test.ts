@@ -37,7 +37,7 @@ describe('聊天运行账本（OPT-01）', () => {
     } finally { await env.cleanup(); }
   });
 
-  it('旧格式账本能读：活动运行标中断且保留完整输入，历史运行当场精简', async () => {
+  it('旧格式账本能读：活动运行标中断、历史与中断记录当场精简', async () => {
     const env = await tempDataDir('chat-ledger-old');
     try {
       await mkdir(join(env.dir, 'chat'), { recursive: true });
@@ -52,7 +52,8 @@ describe('聊天运行账本（OPT-01）', () => {
       const active = coordinator.get('old-active')!;
       assert.equal(active.status, 'interrupted');
       assert.match(active.error ?? '', /已中断/);
-      assert.equal(active.input, LONG, '活动运行的输入不能精简（恢复还要用）');
+      assert.equal(active.input.length, 500, '启动时就中断的运行也按终态精简');
+      assert.equal(active.inputLength, LONG.length);
       const done = coordinator.get('old-done')!;
       assert.equal(done.input.length, 500);
       assert.equal(done.inputLength, LONG.length);
@@ -86,7 +87,7 @@ describe('聊天运行账本（OPT-01）', () => {
     } finally { await env.cleanup(); }
   });
 
-  it('失败与中断的运行保留完整输入（界面 retryText 要用原话）', async () => {
+  it('失败与中断同样只留前 500 字（重试文案从对话消息取，不靠账本）', async () => {
     const env = await tempDataDir('chat-ledger-retry');
     try {
       const coordinator = new ChatRunCoordinator(env.dir, new EventJournal());
@@ -94,13 +95,30 @@ describe('聊天运行账本（OPT-01）', () => {
       await coordinator.fail(run.runId, new Error('模型不可用'));
       const failed = coordinator.get(run.runId)!;
       assert.equal(failed.status, 'failed');
-      assert.equal(failed.input, LONG, '失败运行的输入要留全，否则重试会发出被截断的原话');
-      // 中断（进程退出）同理：重启后仍然要能原话重试
+      assert.equal(failed.input.length, 500);
+      assert.equal(failed.inputLength, LONG.length);
+      // 中断（进程退出）同理：重启后也只留摘要
       const restarted = new ChatRunCoordinator(env.dir, new EventJournal());
       const { run: pending } = await restarted.prepare(userRun(LONG, 'k5'));
       const afterRestart = new ChatRunCoordinator(env.dir, new EventJournal());
       assert.equal(afterRestart.get(pending.runId)?.status, 'interrupted');
-      assert.equal(afterRestart.get(pending.runId)?.input, LONG);
+      assert.equal(afterRestart.get(pending.runId)?.input.length, 500);
+      assert.equal(afterRestart.get(pending.runId)?.inputLength, LONG.length);
+      // 幂等指纹仍然完整：同键不同请求照样报错
+      await assert.rejects(() => afterRestart.prepare(userRun('换个说法', 'k5')), /同一个 clientMessageId/);
+    } finally { await env.cleanup(); }
+  });
+
+  it('挂起的运行保留完整输入（要继续跑，不能只留摘要）', async () => {
+    const env = await tempDataDir('chat-ledger-parked');
+    try {
+      const coordinator = new ChatRunCoordinator(env.dir, new EventJournal());
+      const { run } = await coordinator.prepare(userRun(LONG, 'k6'));
+      await coordinator.execute(run.runId, async () => ({}), () => ({ stopReason: 'parked' }));
+      const parked = coordinator.get(run.runId)!;
+      assert.equal(parked.status, 'parked');
+      assert.equal(parked.input, LONG);
+      assert.equal(parked.inputLength, undefined);
     } finally { await env.cleanup(); }
   });
 

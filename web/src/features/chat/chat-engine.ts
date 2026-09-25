@@ -165,6 +165,9 @@ export class ChatEngine {
         message.runId === run.runId ? { ...message, toolCalls: message.toolCalls.map(call => call.status === 'running'
           ? { ...call, status: 'error' as const, result: '本次执行已结束，工具结果尚未确认；请核对后再继续。' } : call) } : message) };
     }
+    // 重试要发的是用户原话：账本里的 input 会被精简，事实源是对话里那条消息
+    const pendingEntry = run.clientMessageId ? this.pending.get(run.clientMessageId) : undefined;
+    const pendingText = pendingEntry?.channelId === run.channelId ? pendingEntry.text : undefined;
     if (run.clientMessageId) {
       const key = run.clientMessageId;
       const pending = this.pending.get(key);
@@ -178,10 +181,15 @@ export class ChatEngine {
     if (run.status === 'failed' || run.status === 'interrupted') {
       const id = `run-error-${run.runId}`;
       const list = this.histories[run.channelId] ?? [];
-      if (!list.some(m => m.id === id)) this.histories = { ...this.histories, [run.channelId]: [...list, {
-        id, runId: run.runId, role: 'assistant', content: `⚠️ ${run.error ?? '执行失败'}`,
-        error: true, retryText: run.source === 'user' ? run.input : undefined, toolCalls: [], createdAt: new Date(run.updatedAt).toISOString(),
-      }] };
+      if (!list.some(m => m.id === id)) {
+        // 优先级：对话里那条持久消息（事实源）→ 未确认的乐观占位 → 账本 input（已精简，兜底）
+        const origin = list.find(item => item.id === run.messageId && item.role === 'user')?.content;
+        const retryText = run.source === 'user' ? (origin ?? pendingText ?? run.input) : undefined;
+        this.histories = { ...this.histories, [run.channelId]: [...list, {
+          id, runId: run.runId, role: 'assistant', content: `⚠️ ${run.error ?? '执行失败'}`,
+          error: true, retryText, toolCalls: [], createdAt: new Date(run.updatedAt).toISOString(),
+        }] };
+      }
     }
     // 保留活动/挂起任务；终态 UI 缓存有界，历史消息仍在各频道。
     const finished = [...this.runs.values()].filter(item => !isActiveChatRun(item) && item.status !== 'parked');

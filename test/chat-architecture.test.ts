@@ -94,6 +94,20 @@ describe('无框架 ChatEngine 时序', () => {
     assert.equal(engine.histories.a?.find(m => m.error)?.retryText, '任务B');
   });
 
+  it('账本 input 被精简后，重试文案取对话里那条用户消息（长消息不截断）', () => {
+    const engine = new ChatEngine();
+    const long = '长'.repeat(2000);
+    const task = { ...run('L'), messageId: 'msg-L' };
+    engine.applyEntry(entry(1, { run: task }));
+    // 服务端把用户消息写进对话（事实源），账本里的 input 只有前 500 字 + 原始长度
+    engine.applyEntry(entry(2, { type: 'message', message: {
+      id: 'msg-L', agentId: 'a', role: 'user', content: { type: 'text', text: long }, createdAt: 2,
+    } }, 'agent'));
+    engine.applyEntry(entry(3, { run: { ...task, status: 'failed', error: '模型不可用', updatedAt: 3,
+      input: long.slice(0, 500), inputLength: long.length } }));
+    assert.equal(engine.histories.a?.find(m => m.error)?.retryText, long);
+  });
+
   it('终态先到、回执晚到不能复活已完成的运行；finalizing 不补处理气泡', () => {
     const engine = new ChatEngine();
     engine.applyEntry(entry(3, { run: run('A', 'finalizing') }));

@@ -19,21 +19,20 @@ type NewRun = Pick<ChatRun, 'channelId' | 'kind' | 'source' | 'input'> & Partial
 
 /** 已完成运行保留的条数（幂等记录跟随运行保留） */
 const FINISHED_LIMIT = 1000;
-/** 已结束运行的输入只留前这么多字：账本不该把整段对话抄一遍 */
+/** 已结束运行的输入只留前这么多字：账本不该把整段对话抄一遍（重试文案从对话消息取） */
 const INPUT_KEEP_CHARS = 500;
-/** 这两种终态在界面上要用原话重试（chat-engine 的 retryText），输入必须留全 */
-const RETRYABLE_STATUSES = new Set<ChatRunStatus>(['failed', 'interrupted']);
 
 function clientKey(channelId: string, clientMessageId: string): string {
   return channelId + '\u0000' + clientMessageId;
 }
 
 /**
- * 精简已结束运行的输入：运行中/挂起的、以及失败/中断的（要拿原话重试）都保留完整输入。
- * 精简后 inputLength 记原始长度，去重仍靠 commandHash。
+ * 精简已结束运行的输入：运行中/挂起的保留完整输入，其余终态一律只留前 500 字。
+ * 精简后 inputLength 记原始长度、commandHash 留着做幂等比对；界面重试用的是对话里
+ * 那条用户消息（chat-engine 的 retryText 优先从对话取），不依赖这里的正文。
  */
 function trimmed(run: StoredRun): StoredRun {
-  if (isActiveChatRun(run) || run.status === 'parked' || RETRYABLE_STATUSES.has(run.status)) return run;
+  if (isActiveChatRun(run) || run.status === 'parked') return run;
   const inputLength = run.inputLength ?? run.input.length;
   const input = run.input.length > INPUT_KEEP_CHARS ? run.input.slice(0, INPUT_KEEP_CHARS) : run.input;
   return input === run.input && inputLength === run.inputLength ? run : { ...run, input, inputLength };
