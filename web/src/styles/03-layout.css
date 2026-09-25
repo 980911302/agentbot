@@ -371,8 +371,17 @@ box-shadow: 0 0 0 2px var(--bg-card);
   transition: opacity var(--dur-fast) var(--ease);
 }
 
-.msg-group-item:hover .msg-actions {
+/* 悬停整行或键盘焦点进到这一行（Tab 到按钮上）时出现；
+   触屏没有悬停，操作条常显，否则永远点不到。 */
+.msg-row:hover .msg-actions,
+.msg-row:focus-within .msg-actions {
   opacity: 1;
+}
+
+@media (hover: none) {
+  .msg-actions {
+    opacity: 1;
+  }
 }
 
 .msg-actions button {
