@@ -126,6 +126,12 @@
   justify-content: center;
   gap: 10px;
   padding: 6px 0 10px;
+  border-radius: var(--r-lg);
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.sidebar-pinned-section.receiving-pin {
+  background: var(--bg-hover);
 }
 
 .sidebar-drag-preview {

@@ -201,6 +201,7 @@ export function Sidebar({
   ), [channels, isMini, keyword, pinnedIds]);
   const visibleCount = flat.length;
   const hasVisibleChannels = visibleCount > 0 || pinnedChannels.length > 0;
+  const showInitialPinDrop = !isMini && !keyword && pinnedIds.length === 0;
   const effectiveCursor = cursor >= 0 && cursor < visibleCount ? cursor : -1;
 
   // 换一批结果就回到无选中，避免游标指向看不见的行
@@ -550,7 +551,7 @@ export function Sidebar({
           }
         }}
       >
-        {!isMini ? (
+        {showInitialPinDrop ? (
           <div
             ref={pinDropRef}
             className={`sidebar-pin-drop${draggingSource === 'list' ? ' dragging-target' : ''}${pinDropActive ? ' active' : ''}`}
@@ -590,7 +591,7 @@ export function Sidebar({
             {pinnedChannels.length > 0 ? (
               <section
                 ref={pinnedSectionRef}
-                className="sidebar-pinned-section"
+                className={`sidebar-pinned-section${draggingSource === 'list' ? ' receiving-pin' : ''}`}
                 aria-label="置顶智能体"
                 onDragOver={(event) => {
                   if (!draggingIdRef.current) return;
