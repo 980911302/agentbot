@@ -126,12 +126,6 @@
   justify-content: center;
   gap: 10px;
   padding: 6px 0 10px;
-  border-radius: var(--r-lg);
-  transition: background var(--dur-fast) var(--ease);
-}
-
-.sidebar-pinned-section.receiving-pin {
-  background: var(--bg-hover);
 }
 
 .sidebar-drag-preview {
@@ -343,13 +337,13 @@
 
 .channel-item.pinned-channel-item {
   width: min(92px, 100%);
-  min-height: 122px;
+  min-height: 104px;
   flex: 0 1 92px;
   flex-direction: column;
   justify-content: center;
   gap: 4px;
   padding: 9px 6px;
-  background: var(--bg-hover);
+  background: transparent;
   border-radius: var(--r-lg);
   animation: pinned-arrive var(--dur-base) var(--ease);
 }
@@ -360,7 +354,12 @@
 }
 
 .channel-item.pinned-channel-item.active {
-  background: var(--bg-active);
+  background: transparent !important;
+}
+
+.channel-item.pinned-channel-item:hover,
+.channel-item.pinned-channel-item.active:hover {
+  background: var(--bg-hover) !important;
 }
 
 .pinned-channel-item.pin-insert-before::before,
@@ -396,7 +395,10 @@
   text-align: center;
 }
 
-.channel-tag.pinned-role {
+.channel-tag.pinned-title {
+  display: block;
+  box-sizing: border-box;
+  max-width: 100%;
   margin-top: 1px;
   padding: 2px 5px;
   border: 1px solid var(--border);
@@ -405,6 +407,9 @@
   color: var(--text-secondary);
   font-size: var(--fs-xs);
   font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* 键盘游标高亮（⌘K 搜索结果里上下键移动）；与 active 同时出现时以选中态为准 */

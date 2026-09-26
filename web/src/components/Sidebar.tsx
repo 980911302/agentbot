@@ -20,6 +20,8 @@ export interface ChannelItem {
   lastMessage: string;
   color?: string;
   role?: string;
+  /** 独立的短头衔；置顶卡只显示这个字段，不展示完整职责。 */
+  title?: string;
   isGroup?: boolean;
   /** room = 群（扇出给成员）；agent = 1:1 私聊 */
   kind?: 'room' | 'agent';
@@ -470,7 +472,7 @@ export function Sidebar({
               </span>
             ) : null}
           </div>
-          {pinned && channel.role ? <span className="channel-tag pinned-role">{channel.role}</span> : null}
+          {pinned && channel.title?.trim() ? <span className="channel-tag pinned-title" title={channel.title}>{channel.title}</span> : null}
           {!pinned ? (
             <div className="channel-snippet-row">
               <span className="channel-snippet">{channel.lastMessage}</span>
@@ -591,7 +593,7 @@ export function Sidebar({
             {pinnedChannels.length > 0 ? (
               <section
                 ref={pinnedSectionRef}
-                className={`sidebar-pinned-section${draggingSource === 'list' ? ' receiving-pin' : ''}`}
+                className="sidebar-pinned-section"
                 aria-label="置顶智能体"
                 onDragOver={(event) => {
                   if (!draggingIdRef.current) return;

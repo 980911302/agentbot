@@ -22,14 +22,15 @@ export function failedAgentChannel(input: { id: string; time: string }): Channel
 }
 
 /** 服务端确认建成的智能体 → 侧栏条目 */
-export function channelFromBot(bot: { id: string; name: string; role?: string; color?: string }): ChannelItem {
+export function channelFromBot(bot: { id: string; name: string; role?: string; title?: string; color?: string }): ChannelItem {
   return {
     id: bot.id,
     name: bot.name,
     time: '刚刚',
     lastMessage: bot.role || '准备就绪',
     color: bot.color,
-    role: bot.role,
+    role: bot.title || bot.role,
+    title: bot.title,
     kind: 'agent',
   };
 }
@@ -96,7 +97,8 @@ export function mergeBotIntoChannels(channels: ChannelItem[], updated: BotSummar
           ...item,
           name: updated.name ?? item.name,
           color: updated.color ?? item.color,
-          role: updated.role || item.role,
+          role: updated.title || updated.role || item.role,
+          title: updated.title,
         }
       : item,
   );

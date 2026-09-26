@@ -156,6 +156,7 @@ export function useWorkspace(deps: { activeChannelId: string }) {
           lastMessage: bot.activity || bot.title || bot.role || '准备就绪',
           color: bot.color,
           role: bot.title || bot.role,
+          title: bot.title,
           kind: 'agent' as const,
           status: bot.status,
         }));
