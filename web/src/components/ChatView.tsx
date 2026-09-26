@@ -540,21 +540,32 @@ export function ChatView({
                   />
                 );
               }
-              return block.messages.map((message, index) => (
-                <MessageItem
-                  key={message.id}
-                  message={message}
-                  bot={bot}
-                  isGroup={Boolean(isGroup)}
-                  members={faces}
-                  memberNames={isGroup ? faces.map((member) => member.name) : []}
-                  notice={message.role === 'assistant' && message.id === lastSpeakerId}
-                  onRetry={onRetry}
-                  onEdit={onEditMessage}
-                  onMention={isGroup ? insertMention : undefined}
-                  compact={index > 0}
-                />
-              ));
+              return block.messages.map((message, index) => {
+                const hasPlainBubble = Boolean(message.content.trim()) && !message.error && message.toolCalls.length === 0;
+                const previous = block.messages[index - 1];
+                const next = block.messages[index + 1];
+                const joinsPreviousBubble = hasPlainBubble && Boolean(previous?.content.trim())
+                  && !previous?.error && previous?.toolCalls.length === 0;
+                const joinsNextBubble = hasPlainBubble && Boolean(next?.content.trim())
+                  && !next?.error && next?.toolCalls.length === 0;
+                return (
+                  <MessageItem
+                    key={message.id}
+                    message={message}
+                    bot={bot}
+                    isGroup={Boolean(isGroup)}
+                    members={faces}
+                    memberNames={isGroup ? faces.map((member) => member.name) : []}
+                    notice={message.role === 'assistant' && message.id === lastSpeakerId}
+                    onRetry={onRetry}
+                    onEdit={onEditMessage}
+                    onMention={isGroup ? insertMention : undefined}
+                    compact={index > 0}
+                    joinsPreviousBubble={joinsPreviousBubble}
+                    joinsNextBubble={joinsNextBubble}
+                  />
+                );
+              });
             })
           )}
 

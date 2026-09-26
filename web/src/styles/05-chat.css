@@ -610,8 +610,8 @@
 
 .msg-bubble-box.dm-agent,
 .msg-bubble-box.group-stream {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
+  background: var(--ai-agent-bubble);
+  border: 1px solid transparent;
   color: var(--text);
   border-radius: var(--r-lg);
   padding: 10px 14px;
@@ -1536,6 +1536,46 @@ button.msg-sender-name:hover {
   margin-top: calc(-1 * var(--sp-1));
 }
 
+/* 连续纯文本消息仍是独立气泡，但接缝更紧，靠发言者的一侧收小圆角。 */
+.msg-row.compact.bubble-joins-previous {
+  margin-top: calc(-1 * var(--sp-4));
+}
+
+.msg-row.bubble-joins-next:not(.from-user) .msg-bubble-box {
+  border-bottom-left-radius: var(--r-sm);
+}
+
+.msg-row.bubble-joins-previous:not(.from-user) .msg-bubble-box {
+  border-top-left-radius: var(--r-sm);
+}
+
+.msg-row.bubble-joins-next.from-user .msg-bubble-box {
+  border-bottom-right-radius: var(--r-sm);
+}
+
+.msg-row.bubble-joins-previous.from-user .msg-bubble-box {
+  border-top-right-radius: var(--r-sm);
+}
+
+/* 组内前几条的操作按钮浮在气泡侧边，不在隐藏时撑开两条气泡的距离。 */
+.msg-row.bubble-joins-next .msg-content-col {
+  position: relative;
+}
+
+.msg-row.bubble-joins-next .msg-actions {
+  position: absolute;
+  z-index: var(--z-sidebar);
+  top: 0;
+  left: calc(100% + var(--sp-2));
+  margin-top: 0;
+  white-space: nowrap;
+}
+
+.msg-row.bubble-joins-next.from-user .msg-actions {
+  left: auto;
+  right: calc(100% + var(--sp-2));
+}
+
 /* 合并组里的后续行沿用头像列的对齐：留出头像宽度（28）+ 行 gap（12）的占位，
    气泡才不会因为少了头像而错位。私聊对方与群聊（含群里的主人）头像都在左侧，
    保持左缩进；只有私聊里的主人头像在右侧，占位挪到右边。 */
@@ -1553,7 +1593,7 @@ button.msg-sender-name:hover {
 }
 
 /* 合并行里悬停操作条更靠左贴气泡，不飘到整行中间 */
-.msg-row.compact .msg-actions {
+.msg-row.compact:not(.bubble-joins-next) .msg-actions {
   margin-top: var(--sp-1);
 }
 

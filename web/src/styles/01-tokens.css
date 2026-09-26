@@ -165,9 +165,10 @@
   --ring: 0 0 0 3px rgba(184, 146, 78, 0.22);
   --skeleton-sheen: rgba(26, 26, 26, 0.05);
 
-  /* AI 气泡与输入条映射：用户气泡古金淡底 + 金描边 */
+  /* AI 气泡与输入条映射：用户气泡古金淡底，智能体气泡柔和中性灰。 */
   --ai-user-bubble: #fdf8ee;
   --ai-user-bubble-text: #1a1a1a;
+  --ai-agent-bubble: #eeece8;
   --scrim-bottom: linear-gradient(to top, var(--bg) 70%, transparent 100%); /* 输入条上缘渐隐 */
 }
 
@@ -262,5 +263,6 @@
   /* AI 气泡映射：深色金调 */
   --ai-user-bubble: rgba(212, 167, 106, 0.14);
   --ai-user-bubble-text: #f4efe4;
+  --ai-agent-bubble: #252932;
   --scrim-bottom: linear-gradient(to top, var(--bg) 70%, transparent 100%);
 }

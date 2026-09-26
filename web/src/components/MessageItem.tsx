@@ -45,6 +45,8 @@ export function MessageItem({
   /** 时间线合并（规范 5.6）：同一个人 3 分钟内连说的几句，
    *  只有首条显示头像、名字与时间，后续只出气泡。 */
   compact = false,
+  joinsPreviousBubble = false,
+  joinsNextBubble = false,
 }: {
   message: DisplayMessage;
   bot: BotSummary | null;
@@ -57,6 +59,9 @@ export function MessageItem({
   /** 用户消息：把原文填回输入框（不改发送逻辑） */
   onEdit?: (text: string) => void;
   compact?: boolean;
+  /** 连续纯文本气泡的接缝：工具调用、错误和换人不参与。 */
+  joinsPreviousBubble?: boolean;
+  joinsNextBubble?: boolean;
 }) {
   const isUser = message.role === 'user';
   const senderName = message.senderName || (isUser ? '我' : bot?.name || '助手');
@@ -69,7 +74,7 @@ export function MessageItem({
   const pauseTag = isGroup && !isUser && member ? memberPauseTag(member) : null;
   const layout = timelineLayoutKind({ isGroup, role: message.role });
   const enter = messageEnterKind({ isGroup, role: message.role });
-  const rowClass = `msg-row ${layout} enter-${enter}${isUser ? ' from-user' : ''}${compact ? ' compact' : ''}`;
+  const rowClass = `msg-row ${layout} enter-${enter}${isUser ? ' from-user' : ''}${compact ? ' compact' : ''}${joinsPreviousBubble ? ' bubble-joins-previous' : ''}${joinsNextBubble ? ' bubble-joins-next' : ''}`;
   const freshAssistant = notice && !isUser && Number.isFinite(Date.parse(message.createdAt))
     && Date.now() - Date.parse(message.createdAt) < 8_000;
   const [visibleContent, setVisibleContent] = useState<string | null>(() => freshAssistant ? '' : null);
