@@ -85,6 +85,12 @@ function insertPinned(current: string[], id: string, index: number): string[] {
   return without;
 }
 
+function pinnedTitle(value?: string): string | null {
+  const title = value?.trim();
+  if (!title || [...title].length > 10 || /[\n，。！？；：,.!?;:]/u.test(title)) return null;
+  return title;
+}
+
 export function Sidebar({
   channels,
   activeId,
@@ -390,6 +396,7 @@ export function Sidebar({
     const dot = channelStatusDot(channel);
     const isGroup = channel.isGroup || channel.kind === 'room';
     const unread = unreadBadgeText(channel.unread);
+    const shortTitle = pinned ? pinnedTitle(channel.title) : null;
     return (
       <div
         key={channel.id}
@@ -472,7 +479,7 @@ export function Sidebar({
               </span>
             ) : null}
           </div>
-          {pinned && channel.title?.trim() ? <span className="channel-tag pinned-title" title={channel.title}>{channel.title}</span> : null}
+          {shortTitle ? <span className="channel-tag pinned-title">{shortTitle}</span> : null}
           {!pinned ? (
             <div className="channel-snippet-row">
               <span className="channel-snippet">{channel.lastMessage}</span>
