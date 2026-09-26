@@ -1538,7 +1538,7 @@ button.msg-sender-name:hover {
 
 /* 连续纯文本消息仍是独立气泡，但接缝更紧，靠发言者的一侧收小圆角。 */
 .msg-row.compact.bubble-joins-previous {
-  margin-top: calc(-1 * var(--sp-4));
+  margin-top: calc(-1 * var(--sp-3));
 }
 
 .msg-row.bubble-joins-next:not(.from-user) .msg-bubble-box {
