@@ -514,7 +514,7 @@
 .chat-message-list {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--sp-4);
   max-width: 768px;
   margin: 0 auto;
 }
@@ -1557,23 +1557,30 @@ button.msg-sender-name:hover {
   border-top-right-radius: var(--r-sm);
 }
 
-/* 组内前几条的操作按钮浮在气泡侧边，不在隐藏时撑开两条气泡的距离。 */
-.msg-row.bubble-joins-next .msg-content-col {
-  position: relative;
-}
+/* 桌面端将隐藏的操作条浮在气泡外侧，避免每行都多占一截高度。 */
+@media (min-width: 768px) {
+  .msg-row .msg-content-col {
+    position: relative;
+  }
 
-.msg-row.bubble-joins-next .msg-actions {
-  position: absolute;
-  z-index: var(--z-sidebar);
-  top: 0;
-  left: calc(100% + var(--sp-2));
-  margin-top: 0;
-  white-space: nowrap;
-}
+  .msg-row .msg-content-col > .msg-actions {
+    position: absolute;
+    z-index: var(--z-header);
+    top: 50%;
+    left: calc(100% + var(--sp-2));
+    margin: 0;
+    transform: translateY(-50%);
+    white-space: nowrap;
+  }
 
-.msg-row.bubble-joins-next.from-user .msg-actions {
-  left: auto;
-  right: calc(100% + var(--sp-2));
+  .msg-row.from-user .msg-content-col > .msg-actions {
+    right: calc(100% + var(--sp-2));
+    left: auto;
+  }
+
+  .chat-message-list .msg-row.compact .msg-actions {
+    margin: 0;
+  }
 }
 
 /* 合并组里的后续行沿用头像列的对齐：留出头像宽度（28）+ 行 gap（12）的占位，
