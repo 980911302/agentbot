@@ -21,6 +21,16 @@ export const SENSITIVE_DATA_FILES = ['secrets.json', 'model-config.json', 'room-
 /** 项目根的 `.env` 家族里唯一允许读的：模板文件，不含密钥 */
 export const ENV_EXAMPLE_FILE = '.env.example';
 
+const SENSITIVE_NAMES = new Set<string>(SENSITIVE_DATA_FILES.map((rel) => basename(rel)));
+
+/**
+ * 目录扫描的快速预筛：只有这些文件名才可能命中密钥名单，其余不必逐个 realpath。
+ * 扫描本身不跟随符号链接，所以「换了名字的软链指向密钥」进不了列表；预筛只放过同名文件去做完整判定。
+ */
+export function mightBeSensitiveName(name: string): boolean {
+  return SENSITIVE_NAMES.has(name) || name === '.env' || name.startsWith('.env.');
+}
+
 export interface SensitivePaths {
   rootDir: string;
   dataDir: string;
