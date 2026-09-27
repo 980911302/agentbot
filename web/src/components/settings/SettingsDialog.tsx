@@ -1,17 +1,17 @@
+import { useEffect, useState } from 'react';
 import { IconClose } from '../../icons';
 import type { ThemePreference } from '../../theme';
 import { usePresence } from '../../motion';
 import { useModalKeys } from '../ui/useModalKeys.js';
 import { AgentToolsSection } from './AgentToolsSection.js';
 import { GeneralSection } from './GeneralSection.js';
-import { ModelForm } from './ModelForm.js';
-import { ProviderForm } from './ProviderForm.js';
-import { ProviderList } from './ProviderList.js';
+import { ModelsSection } from './ModelsSection.js';
+import { SettingsNav, type SettingsTab } from './SettingsNav.js';
 import { useModelSettings } from './use-model-settings.js';
 
 /**
- * 设置弹窗（UI-08）：壳 + 左导航 + 右内容。
- * 数据与动作在 use-model-settings，各分区在 settings/ 目录下的独立文件里。
+ * 设置弹窗：壳 + 左侧三项导航（通用 / 工具 / 模型）+ 右侧内容。
+ * 模型页的数据与动作在 use-model-settings，各分区在 settings/ 目录下的独立文件里。
  */
 export interface SettingsDialogProps {
   theme: ThemePreference;
@@ -43,7 +43,13 @@ export function SettingsDialog({
 }: SettingsDialogProps) {
   const presence = usePresence(open);
   const windowRef = useModalKeys({ open, onClose, id: 'settings-dialog' });
-  const settings = useModelSettings({ open, openSection, onModel });
+  const [tab, setTab] = useState<SettingsTab>(openSection);
+  const models = useModelSettings({ open, onModel });
+
+  // 每次打开都落到调用方指定的分区（输入条「管理模型」直达模型页）
+  useEffect(() => {
+    if (open) setTab(openSection);
+  }, [open, openSection]);
 
   if (!presence.mounted) return null;
 
@@ -67,10 +73,10 @@ export function SettingsDialog({
           <IconClose />
         </button>
 
-        <ProviderList settings={settings} />
+        <SettingsNav tab={tab} onTab={setTab} />
 
         <div className="provider-content-area">
-          {settings.activeTab === 'general' ? (
+          {tab === 'general' ? (
             <GeneralSection
               theme={theme}
               ownerName={ownerName}
@@ -80,17 +86,13 @@ export function SettingsDialog({
               onTheme={onTheme}
               onOwnerName={onOwnerName}
             />
-          ) : settings.activeTab === 'agent-tools' ? (
+          ) : tab === 'tools' ? (
             <AgentToolsSection />
-          ) : settings.selectedProvider ? (
-            <ProviderForm settings={settings} />
           ) : (
-            <div className="provider-empty-tip">请在左侧选择或添加一个服务商</div>
+            <ModelsSection settings={models} />
           )}
         </div>
       </div>
-
-      <ModelForm settings={settings} />
     </div>
   );
 }

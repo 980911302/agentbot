@@ -76,3 +76,12 @@ test/format.test.ts
 test/tool-call-view.test.ts
 test/interaction-view.test.ts
 test/drawer-view.test.ts
+src/tools/glob.ts
+test/context-window-budget.test.ts
+test/context-progressive-compaction.test.ts
+test/file-tools-coding.test.ts
+test/worker-coding.test.ts
+src/llm/context-overflow.ts
+test/context-overflow.test.ts
+test/settings-provider-partial-save.test.ts
+test/model-settings-view.test.ts

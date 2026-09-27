@@ -179,14 +179,15 @@ describe('zcode model settings chrome', () => {
     assert.equal(/settings-section-title">默认模型/.test(src), false);
   });
 
-  it('model settings keeps provider list, API key, enable, add provider and add model', () => {
+  it('model settings is one page: providers with key, enable switch, add provider and inline add model', () => {
     const src = readSettingsSources();
-    assert.match(src, /模型设置/);
     assert.match(src, /添加服务商/);
     assert.match(src, /添加模型/);
-    assert.match(src, /API Key/);
-    assert.match(src, /已启用/);
-    assert.match(src, /启用此服务商后显示其模型/);
+    assert.match(src, /Key/);
+    assert.match(src, /role="switch"/);
+    assert.match(src, /输入模型名，回车添加/);
+    assert.equal(src.includes('API 格式'), false, '后端只支持 OpenAI 兼容，不再给假选项');
+    assert.equal(src.includes('保存更改'), false, '改动即时保存，不再有保存按钮');
   });
 
   it('composer source shows a model-name selector and 管理模型 in the bottom row', () => {
@@ -204,8 +205,9 @@ describe('zcode model settings chrome', () => {
     assert.equal(src.includes('composer-thinking-trigger'), false);
     assert.equal(src.includes('thinkingLevel'), false);
     assert.equal(src.includes('onThinkingChange'), false);
-    const settings = readSettingsFile('ModelForm.tsx');
-    assert.match(settings, /思考等级/);
+    const settings = readSettingsFile('ModelRow.tsx');
+    assert.match(settings, /思考/);
+    assert.match(settings, /THINKING_CHOICES/);
   });
 });
 

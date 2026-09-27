@@ -77,10 +77,9 @@ describe('工具装卸界面契约（源码与样式守卫，E5.3）', () => {
   const settingsDir = join(process.cwd(), 'web/src/components/settings');
   const read = (name: string) => readFileSync(join(settingsDir, name), 'utf8');
 
-  it('设置页有「工具装卸」入口，并把 activeTab 接到该分区', () => {
-    assert.match(read('ProviderList.tsx'), /工具装卸/);
-    assert.match(read('ProviderList.tsx'), /setActiveTab\('agent-tools'\)/);
-    assert.match(read('SettingsDialog.tsx'), /activeTab === 'agent-tools'/);
+  it('设置页左侧有「工具」入口，并把该分区接到工具装卸', () => {
+    assert.match(read('SettingsNav.tsx'), /id: 'tools', label: '工具'/);
+    assert.match(read('SettingsDialog.tsx'), /tab === 'tools'/);
     assert.match(read('SettingsDialog.tsx'), /<AgentToolsSection \/>/);
   });
 
