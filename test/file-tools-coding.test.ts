@@ -163,6 +163,23 @@ describe('Edit：替换全部、诊断与 CRLF', () => {
     );
   });
 
+  it('old_string/new_string 是 old_text/new_text 的同义名，一样能改', async () => {
+    const path = join(dir, 'alias.ts');
+    await writeFile(path, 'const a = 1;\n');
+    const result = await tools()('Edit', { path, old_string: 'const a = 1;', new_string: 'const a = 2;' });
+    assert.match(result, /已修改/);
+    assert.equal(await readFile(path, 'utf8'), 'const a = 2;\n');
+  });
+
+  it('两个名字都不传：报出清楚的缺参提示，而不是笼统的必填错误', async () => {
+    const path = join(dir, 'missing.ts');
+    await writeFile(path, 'x\n');
+    const result = await tools()('Edit', { path, new_text: 'y' });
+    assert.match(result, /^Error:/);
+    assert.match(result, /old_text/);
+    assert.match(result, /old_string/);
+  });
+
   it('多处命中且没开 replace_all：报出处数与行号，文件不变', async () => {
     const path = join(dir, 'dup.ts');
     const body = 'a();\nb();\na();\n';
