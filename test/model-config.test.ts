@@ -140,6 +140,34 @@ describe('模型配置与思考模式', () => {
     }
   });
 
+  it('OpenAIProvider: DeepSeek 自家模型默认开思考，关闭时要显式发 thinking.type=disabled', async () => {
+    const bodies: any[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (_url: any, init: any) => {
+      bodies.push(JSON.parse(init.body));
+      return new Response(
+        JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }] }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    }) as any;
+    try {
+      for (const model of ['deepseek-flash', 'deepseek-v4-pro', 'deepseek-chat']) {
+        const provider = new OpenAIProvider({ apiKey: 'sk-test', model, baseURL: 'https://api.deepseek.com/v1', thinkingEnabled: false });
+        await provider.chat([{ role: 'user', content: 'test' }]);
+      }
+      for (const body of bodies) {
+        assert.deepEqual(body.thinking, { type: 'disabled' });
+        assert.equal(body.reasoning_effort, undefined);
+      }
+      // 其他供应商不认这个参数：关闭时仍然什么都不发
+      const other = new OpenAIProvider({ apiKey: 'sk-test', model: 'deepseek-chat', baseURL: 'https://api.siliconflow.cn/v1', thinkingEnabled: false });
+      await other.chat([{ role: 'user', content: 'test' }]);
+      assert.equal(bodies.at(-1).thinking, undefined);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it('OpenAIProvider: reasoning_content 不并进对话正文', async () => {
     const originalFetch = globalThis.fetch;
 

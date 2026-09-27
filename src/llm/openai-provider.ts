@@ -106,11 +106,7 @@ export class OpenAIProvider implements LLMProvider {
       messages: messages.map(toWireMessage),
     };
 
-    if (this.thinkingEnabled) {
-      body.reasoning_effort = this.thinkingLevel;
-      const budget = this.thinkingLevel === 'low' ? 2048 : this.thinkingLevel === 'high' ? 24576 : 8192;
-      body.thinking = { type: 'enabled', budget_tokens: budget };
-    }
+    Object.assign(body, this.thinkingParams());
 
     if (options.tools && options.tools.length > 0) {
       body.tools = options.tools.map(toWireTool);
@@ -163,6 +159,19 @@ export class OpenAIProvider implements LLMProvider {
     };
   }
 
+  /**
+   * 思考参数：开启时发 reasoning_effort + thinking（各家按自己认识的字段取用）。
+   * DeepSeek 自家模型（V4 起）默认就开思考，关闭必须显式发 thinking.type=disabled，否则开关形同虚设；
+   * 其他供应商不认这个字段，关闭时仍然什么都不发。
+   */
+  private thinkingParams(): Record<string, unknown> {
+    if (this.thinkingEnabled) {
+      const budget = this.thinkingLevel === 'low' ? 2048 : this.thinkingLevel === 'high' ? 24576 : 8192;
+      return { reasoning_effort: this.thinkingLevel, thinking: { type: 'enabled', budget_tokens: budget } };
+    }
+    return isDeepSeekNative(this.baseURL, this.model) ? { thinking: { type: 'disabled' } } : {};
+  }
+
   /** 流式路径：SSE 逐段解析，增量文本回调 onDelta，tool_calls 分片按 index 拼装 */
   private async chatStream(messages: LLMMessage[], options: ChatOptions): Promise<LLMResponse> {
     const onDelta = options.onDelta!;
@@ -172,11 +181,7 @@ export class OpenAIProvider implements LLMProvider {
       stream: true,
       stream_options: { include_usage: true },
     };
-    if (this.thinkingEnabled) {
-      body.reasoning_effort = this.thinkingLevel;
-      const budget = this.thinkingLevel === 'low' ? 2048 : this.thinkingLevel === 'high' ? 24576 : 8192;
-      body.thinking = { type: 'enabled', budget_tokens: budget };
-    }
+    Object.assign(body, this.thinkingParams());
     if (options.tools && options.tools.length > 0) {
       body.tools = options.tools.map(toWireTool);
       body.tool_choice = 'auto';
@@ -244,10 +249,9 @@ export class OpenAIProvider implements LLMProvider {
       if (!choice) return;
       if (choice.finish_reason) finishReason = choice.finish_reason;
 
-      // 思维链增量只用于模型侧观测，不进正文、不上屏、不入库
-      if ((choice.delta as any)?.reasoning_content) {
-        // 忽略：reasoning_content 与 content 同一 delta 到达时，下面的分支仍会处理正文
-      } else if (choice.delta?.content) {
+      // 思维链增量（reasoning_content）只用于模型侧观测，不进正文、不上屏、不入库；
+      // 同一分片里可能同时带着正文，正文照常处理
+      if (choice.delta?.content) {
         content += choice.delta.content;
         if (content.length > 64000) throw new Error('模型正文超过 64000 字符，请拆分任务');
         onDelta(choice.delta.content);
@@ -303,6 +307,17 @@ export class OpenAIProvider implements LLMProvider {
       }));
     return { content: content || null, toolCalls, finishReason, usage };
   }
+}
+
+/** DeepSeek 官方接口上的自家模型 */
+function isDeepSeekNative(baseURL: string, model: string): boolean {
+  let host = '';
+  try {
+    host = new URL(baseURL).hostname;
+  } catch {
+    return false;
+  }
+  return /(^|\.)deepseek\.com$/i.test(host) && /^deepseek-/i.test(model);
 }
 
 function toWireMessage(message: LLMMessage): WireMessage {

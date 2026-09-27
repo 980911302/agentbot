@@ -73,6 +73,27 @@ describe('OpenAIProvider 流式（onDelta）', () => {
       stall.closeAllConnections();
     }
   });
+
+  it('思维链与正文同一分片到达时，正文不能被丢掉（思维链仍不进正文）', async () => {
+    const mixed = createServer((_request, response) => {
+      response.writeHead(200, { 'content-type': 'text/event-stream' });
+      response.write('data: {"choices":[{"delta":{"reasoning_content":"想一想"}}]}\n\n');
+      response.write('data: {"choices":[{"delta":{"reasoning_content":"。","content":"答"}}]}\n\n');
+      response.write('data: {"choices":[{"delta":{"content":"案"},"finish_reason":"stop"}]}\n\n');
+      response.end('data: [DONE]\n\n');
+    });
+    await new Promise<void>((resolve) => mixed.listen(0, '127.0.0.1', resolve));
+    try {
+      const provider = new OpenAIProvider({ apiKey: 'k', model: 'm', baseURL: `http://127.0.0.1:${(mixed.address() as AddressInfo).port}` });
+      const deltas: string[] = [];
+      const result = await provider.chat([{ role: 'user', content: 'hi' }], { onDelta: (text) => deltas.push(text) });
+      assert.equal(result.content, '答案');
+      assert.deepEqual(deltas, ['答', '案']);
+    } finally {
+      mixed.closeAllConnections();
+      await new Promise<void>((resolve) => mixed.close(() => resolve()));
+    }
+  });
 });
 
 describe('模型响应资源边界', () => {
