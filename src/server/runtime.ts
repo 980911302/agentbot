@@ -67,6 +67,7 @@ import { DelegationService } from '../work/delegation-service.js';
 import { isOpenDelegation } from '../work/delegation.js';
 import type { InteractionRequest } from '../shared/contracts/sse.js';
 import { resolveProjectOwner } from '../tools/builtin/memory.js';
+import { clearAgentDraft } from '../tools/sensitive-paths.js';
 import { ToolRegistry } from '../tools/registry.js';
 import { ToolOutputStore } from '../tools/services/tool-output-store.js';
 import { TaskProgressStore } from '../storage/task-progress.js';
@@ -381,6 +382,8 @@ export class AgentRuntime {
     await this.compaction.clear(agentId);
     // 收件箱与还没处理的来信：同事没了，信没有归属
     await this.inbox.clear(agentId);
+    // 草稿目录：探索性文件本来就是「随时可能被清掉」的东西，同事没了更没有留着的理由
+    await clearAgentDraft(this.dataDir, agentId);
     // 等用户回答的卡片：留着会永远挂着（停止协调器已封装「取消该智能体全部待答卡」）
     this.stopCoordinator.voidPendingInteractions(agentId);
     // 持久等待（E4.3）：撤下卡片、作废记录，同事没了等待也没有归属

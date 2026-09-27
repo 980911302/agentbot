@@ -1,12 +1,13 @@
 import { createReadStream } from 'node:fs';
 import { link, lstat, mkdir, opendir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
-import { dirname, join, relative, resolve, sep } from 'node:path';
+import { dirname, join, relative, sep } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import { defineTool } from '../tool.js';
 import {
   assertNotSensitivePath,
   isSensitivePath,
   mightBeSensitiveName,
+  resolveAgentPath,
   sensitivePaths,
   type SensitivePaths,
 } from '../sensitive-paths.js';
@@ -83,7 +84,7 @@ export function createReadTool(rootDir = process.cwd(), paths: SensitivePaths = 
     },
     async execute({ path, offset = 1, limit = 200, column = 1 }, context) {
       if (!path.trim() || offset === 0) throw new Error('path 不能为空，offset 不能为 0');
-      const absolute = resolve(rootDir, path.trim());
+      const absolute = resolveAgentPath(paths, context.agentId, path.trim());
       // 密钥文件默认不读（OPT-07）：按真实路径判断，软链也挡
       await assertNotSensitivePath(absolute, paths);
       if (!(await stat(absolute)).isFile()) throw new Error('path 必须是文件');
@@ -238,7 +239,7 @@ export function createFileTools(rootDir = process.cwd(), paths: SensitivePaths =
       },
     },
     async execute({ path = '.', glob, offset = 0, limit = 50 }, context) {
-      const root = resolve(rootDir, path);
+      const root = resolveAgentPath(paths, context.agentId, path);
       // 与 SearchFiles 一致：直接指过来的路径也要过密钥名单，并且给出面向用户的错误
       await assertNotSensitivePath(root, paths);
       const info = await stat(root).catch(() => null);
@@ -294,7 +295,7 @@ export function createFileTools(rootDir = process.cwd(), paths: SensitivePaths =
     },
     async execute({ query, path = '.', glob, case_sensitive = false, limit = 30, offset = 0 }, context) {
       if (!query.trim()) throw new Error('query 不能为空');
-      const root = resolve(rootDir, path);
+      const root = resolveAgentPath(paths, context.agentId, path);
       const info = await stat(root).catch(() => null);
       if (!info) throw new Error(`路径不存在：${root}`);
       // 直接指到某个文件时要单独过一遍密钥名单（目录扫描已跳过）
@@ -367,7 +368,7 @@ export function createFileTools(rootDir = process.cwd(), paths: SensitivePaths =
   const write = defineTool<{ path: string; content: string; overwrite?: boolean; append?: boolean }>({
     name: 'Write',
     description:
-      '写文本文件，每次最多 32000 字符，产物最多 2MiB。不回显全文。默认只新建；覆盖已有文件必须 overwrite=true；可 append=true 分块追加，不能同时 overwrite。大修改用 Edit。',
+      '写文本文件，每次最多 32000 字符，产物最多 2MiB。不回显全文。默认只新建；覆盖已有文件必须 overwrite=true；可 append=true 分块追加，不能同时 overwrite。大修改用 Edit。探索性/一次性草稿写 draft/xxx（隔离到你自己的草稿目录，不是交付位置）。',
     parameters: {
       type: 'object',
       properties: {
@@ -379,7 +380,7 @@ export function createFileTools(rootDir = process.cwd(), paths: SensitivePaths =
       required: ['path', 'content'],
     },
     async execute(args, context) {
-      const path = resolve(rootDir, args.path);
+      const path = resolveAgentPath(paths, context.agentId, args.path);
       // 密钥文件不允许由工具改写（写坏密钥会让用户彻底连不上模型）
       await assertNotSensitivePath(path, paths);
       return withFileLock(path, async () => {
@@ -425,7 +426,7 @@ export function createFileTools(rootDir = process.cwd(), paths: SensitivePaths =
       const newText = args.new_text ?? args.new_string;
       if (oldText === undefined) throw new Error('缺少 old_text（也可以传 old_string）');
       if (newText === undefined) throw new Error('缺少 new_text（也可以传 new_string）');
-      const path = resolve(rootDir, args.path);
+      const path = resolveAgentPath(paths, context.agentId, args.path);
       await assertNotSensitivePath(path, paths);
       return withFileLock(path, async () => {
         const current = await writableText(path, context.signal);

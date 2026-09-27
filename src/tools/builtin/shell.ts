@@ -1,10 +1,12 @@
 import { existsSync } from 'node:fs';
+import { mkdir } from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
-import { resolve } from 'node:path';
 import { defineTool } from '../tool.js';
 import { ShellSessionManager } from '../services/shell-session-manager.js';
 import type { BackgroundProcesses } from '../services/background-processes.js';
 import {
+  DRAFT_PREFIX,
+  resolveAgentPath,
   sensitivePaths,
   shellCommandSensitiveHit,
   shellRefusalMessage,
@@ -89,7 +91,8 @@ export function createShellTools(
         command: { type: 'string', description: '要执行的完整命令' },
         working_directory: {
           type: 'string',
-          description: '工作目录；相对路径按运行时根目录解析，默认运行时根目录',
+          description:
+            '工作目录；相对路径按运行时根目录解析，默认运行时根目录。传 draft 或 draft/xxx 会隔离到你自己的草稿目录，不占用运行时根目录',
         },
         block_until_ms: {
           type: 'integer',
@@ -104,7 +107,12 @@ export function createShellTools(
     async execute(args, context) {
       const command = args.command?.trim();
       if (!command) throw new Error('command 不能为空');
-      const cwd = resolve(rootDir, args.working_directory?.trim() || '.');
+      const requestedCwd = args.working_directory?.trim() || '.';
+      const cwd = resolveAgentPath(paths, context.agentId, requestedCwd);
+      // 草稿目录第一次用：Write 会自动建目录，Shell 不会，这里补一下，不然 cd 进去就报「不存在」
+      if (requestedCwd === DRAFT_PREFIX || requestedCwd.startsWith(`${DRAFT_PREFIX}/`)) {
+        await mkdir(cwd, { recursive: true });
+      }
       if (cwd && !existsSync(cwd)) throw new Error(`working_directory 不存在：${cwd}`);
       // 密钥文件：命令里出现这些路径就直接拒绝（OPT-07，保守字面检查）
       const hit = shellCommandSensitiveHit(command, paths);

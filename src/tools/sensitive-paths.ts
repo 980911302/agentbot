@@ -9,8 +9,8 @@
  * 完整沙箱不在本任务范围（见 docs/工具参考.md「文件、网络与数据边界」）。
  */
 
-import { realpath } from 'node:fs/promises';
-import { basename, dirname, join, resolve } from 'node:path';
+import { realpath, rm } from 'node:fs/promises';
+import { basename, dirname, join, resolve, sep } from 'node:path';
 
 /** 默认数据目录名（与 src/config.ts 的 DEFAULT_DATA_DIR 一致；这里不反向依赖 config） */
 export const DEFAULT_DATA_DIR_NAME = '.agentbot';
@@ -45,6 +45,42 @@ export function sensitivePaths(rootDir: string, dataDir?: string): SensitivePath
 /** 给用户看的拒绝原因（要求里指定要说清「不是不能给，是不该由工具给」） */
 export function secretRefusalMessage(path: string): string {
   return `拒绝访问密钥文件：${path}。本机工具默认不读写密钥；需要密钥请让用户在界面的密钥框里提供，并用 secretName 引用，不要直接读文件。`;
+}
+
+/**
+ * 草稿区前缀（OPT-08）：这个开头的路径不落进项目根，而是隔离到调用者自己的草稿目录。
+ * 特意不叫 scratch——记忆体系里 scratch 已经是「随手笔记」那个 tier，同一个词两种意思会
+ * 让人（和模型）分不清说的是文件还是记忆条目。
+ */
+export const DRAFT_PREFIX = 'draft';
+
+/**
+ * Read / Write / Edit / ListFiles / SearchFiles / Shell 共用的路径解析：
+ * `draft` 或 `draft/...` 不解析进项目根，而是按**真实调用者** agentId（工具执行时
+ * 上下文里就有，模型改不了也拼不出别人的）映射到 `<dataDir>/draft/<agentId>/...`，
+ * 让探索性/一次性文件有地方放，不用散落进交付目录或到处乱猜 `/tmp` 路径。
+ * 其余路径行为不变，仍是 `resolve(rootDir, requested)`。
+ *
+ * 这里只挡一种越界——`draft/../x` 跳出自己的草稿目录：这是这个功能唯一要保证的
+ * 边界，值得单独做；不代表整个工具集从此变成沙箱（文件顶部已经说明这不是目标）。
+ */
+export function resolveAgentPath(paths: SensitivePaths, agentId: string, requested: string): string {
+  const trimmed = requested.trim();
+  if (trimmed === DRAFT_PREFIX || trimmed.startsWith(`${DRAFT_PREFIX}/`)) {
+    const root = resolve(paths.dataDir, DRAFT_PREFIX, agentId);
+    const rest = trimmed.slice(DRAFT_PREFIX.length).replace(/^\/+/, '');
+    const target = resolve(root, rest);
+    if (target !== root && !target.startsWith(root + sep)) {
+      throw new Error(`draft/ 下不能用 .. 跳出自己的草稿目录：${requested}`);
+    }
+    return target;
+  }
+  return resolve(paths.rootDir, trimmed);
+}
+
+/** 同事被删除时顺带清掉它的草稿目录：草稿本来就是「可能被随时清掉」的东西，不留孤儿目录 */
+export async function clearAgentDraft(dataDir: string, agentId: string): Promise<void> {
+  await rm(join(dataDir, DRAFT_PREFIX, agentId), { recursive: true, force: true });
 }
 
 async function realOrSelf(path: string): Promise<string> {

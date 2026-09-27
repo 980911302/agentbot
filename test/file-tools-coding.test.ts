@@ -4,12 +4,13 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createFileTools } from '../src/tools/builtin/files.js';
+import { createShellTools } from '../src/tools/builtin/shell.js';
 import { globMatcher } from '../src/tools/glob.js';
 import { ToolRegistry } from '../src/tools/registry.js';
 import type { ToolContext } from '../src/tools/tool.js';
 
-const context = (): ToolContext => ({
-  agentId: 'a1',
+const context = (agentId = 'a1'): ToolContext => ({
+  agentId,
   projectIds: [],
   turnState: { workbench: { agentsCreated: 0, roomsCreated: 0 } },
 });
@@ -22,10 +23,10 @@ after(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
-const tools = (root = dir) => {
+const tools = (root = dir, agentId = 'a1') => {
   const registry = ToolRegistry.from(createFileTools(root));
   return (name: string, args: unknown) =>
-    registry.execute({ id: 'call', name, arguments: JSON.stringify(args) }, context());
+    registry.execute({ id: 'call', name, arguments: JSON.stringify(args) }, context(agentId));
 };
 
 describe('glob 过滤', () => {
@@ -248,5 +249,52 @@ describe('Edit：替换全部、诊断与 CRLF', () => {
   it('Write 报告行数', async () => {
     const result = await tools()('Write', { path: join(dir, 'new.ts'), content: 'a\nb\nc\n' });
     assert.match(result, /3 行/);
+  });
+});
+
+describe('草稿目录（draft/）：探索性文件的落点', () => {
+  it('draft/xxx 落进 .agentbot/draft/<agentId>/，不是项目根', async () => {
+    const write = await tools()('Write', { path: 'draft/note.md', content: '先记一下' });
+    assert.match(write, /已写入/);
+    const real = join(dir, '.agentbot', 'draft', 'a1', 'note.md');
+    assert.equal(await readFile(real, 'utf8'), '先记一下');
+    const read = await tools()('Read', { path: 'draft/note.md' });
+    assert.match(read, /先记一下/);
+  });
+
+  it('两个同事的 draft 互不可见：各按自己的 agentId 隔离', async () => {
+    await tools(dir, 'a1')('Write', { path: 'draft/secret.txt', content: '只有 a1 能看' });
+    const fromA2 = await tools(dir, 'a2')('Read', { path: 'draft/secret.txt' });
+    assert.match(fromA2, /^Error:/);
+    const list = await tools(dir, 'a2')('ListFiles', { path: 'draft' });
+    assert.match(list, /路径不存在|共 0 个/);
+  });
+
+  it('ListFiles 能看见自己 draft 下写过的文件', async () => {
+    await tools()('Write', { path: 'draft/a.txt', content: 'a' });
+    await tools()('Write', { path: 'draft/b.txt', content: 'b' });
+    const list = await tools()('ListFiles', { path: 'draft' });
+    assert.match(list, /a\.txt/);
+    assert.match(list, /b\.txt/);
+  });
+
+  it('draft/../.. 不能跳出自己的草稿目录', async () => {
+    const result = await tools()('Write', { path: 'draft/../../escape.txt', content: 'x' });
+    assert.match(result, /^Error:/);
+    assert.match(result, /跳出自己的草稿目录/);
+    await assert.rejects(readFile(join(dir, 'escape.txt'), 'utf8'));
+  });
+
+  it('Shell 的 working_directory: draft 第一次用也能 cd 进去（自动建目录）', async () => {
+    const registry = ToolRegistry.from(createShellTools(dir));
+    const result = await registry.execute(
+      {
+        id: 'call',
+        name: 'Shell',
+        arguments: JSON.stringify({ command: 'pwd', working_directory: 'draft' }),
+      },
+      context('a3'),
+    );
+    assert.match(result, /\.agentbot[\\/]draft[\\/]a3/);
   });
 });
