@@ -137,6 +137,20 @@ export interface Worker {
 }
 
 /**
+ * 工人的执行纪律，放在派工说明之前。工人没有主人的对话上下文、没有 SendToUser，
+ * 也拿不到同事那份产品规则——写代码这类活怎么定位、怎么改、怎么验证，要在这里交代清楚。
+ */
+export const WORKER_RULES = [
+  '## 工人纪律',
+  '- 你是一次性执行者：只做派工说明里的事。收尾时用一段话交代做了什么、改了哪些文件、怎么验证的、还剩什么——这段话就是交付结果。',
+  '- 先定位再动手：用 ListFiles（可带 glob）/ SearchFiles 找到位置，Read 分段读需要的部分，不要通读整个仓库。',
+  '- 改代码优先用 Edit：old_text 按文件原文写，不要带 Read 输出的行号前缀；批量改名用 replace_all；新文件用 Write。',
+  '- 改完用 Shell 跑相关的测试、类型检查或构建来验证；失败就读报错、修正后再跑。',
+  '- 写入成功、命令 exit 0 都不等于任务完成；没验证的地方如实说明，不要编造结果。',
+  '- 不删除用户数据，不改派工说明之外的文件；派工说明没要求就不要提交或推送 git。',
+].join('\n');
+
+/**
  * 工人不该持有的工具：派工 / 协作 / 出口 / 组织管理。
  * 工人是一次性执行者——不许递归派工，也不许代同事说话或改组织结构。
  */
@@ -188,6 +202,12 @@ export class WorkerManager {
       providerFor?: (model: string) => LLMProvider;
       ownerAuthority?: (ownerId: string) => Promise<ExecutionAuthority | undefined>;
       maxIterations?: number;
+      /** 工人每段工作的工具总额度；不传用库默认值 */
+      turnLimits?: import('../limits.js').TurnLimits;
+      /** 工人所用模型的上下文预算（tokens）；不传按 AgentLoop 的 60K 兜底 */
+      contextTokensFor?: (model: string | undefined) => number;
+      /** 工人的模型报超长后学到的实际上限，回报给运行时（与派工者同一份记录） */
+      learnContextLimit?: (model: string | undefined, tokens: number) => void;
       maxWorkers?: number;
       /** 同一智能体同时能跑几个（E4.5）：只有全局上限时，一个同事能占满所有工人额度 */
       maxWorkersPerAgent?: number;
@@ -398,6 +418,8 @@ export class WorkerManager {
           provider: worker.authority?.model && this.deps.providerFor ? this.deps.providerFor(worker.authority.model) : this.deps.provider,
           messages: this.deps.messages,
           maxIterations: this.deps.maxIterations,
+          ...(this.deps.turnLimits ? { turnLimits: this.deps.turnLimits } : {}),
+          onContextLimit: (tokens) => this.deps.learnContextLimit?.(worker.authority?.model, tokens),
           signal: controller.signal,
           toolContext: { outputs: this.outputs, turnState: { workbench: { agentsCreated: 0, roomsCreated: 0 }, registerJob: abort => { jobs.add(abort); if (controller.signal.aborted) abort(); } } },
           ...(this.progress ? { progress: { store: this.progress, id: runId } } : {}),
@@ -416,12 +438,13 @@ export class WorkerManager {
           tools: selectWorkerTools(await this.deps.workerTools(worker.ownerId), worker.authority, currentAuthority),
           memory: { projectIds },
         };
+        const system = `${WORKER_RULES}\n\n## 派工说明\n${worker.prompt}`;
         const built = {
           agentId: worker.id,
-          system: worker.prompt,
-          messages: [{ role: 'system' as const, content: worker.prompt }, ...history.slice(0, -1),
+          system,
+          messages: [{ role: 'system' as const, content: system }, ...history.slice(0, -1),
             ...(previousTaskId && this.progress ? [{ role: 'user' as const, content: this.progress.brief(runId, worker.id) }] : []), ...history.slice(-1)],
-          stats: { sections: [], totalTokens: 0, budgetTokens: 0, generatedAt: Date.now() },
+          stats: { sections: [], totalTokens: 0, budgetTokens: this.deps.contextTokensFor?.(worker.authority?.model) ?? 0, generatedAt: Date.now() },
           surfaced: [],
           droppedRecent: 0,
           droppedGroups: 0,

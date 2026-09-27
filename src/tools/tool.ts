@@ -54,6 +54,8 @@ export interface TurnState {
   toolCalls?: number;
   toolInputChars?: number;
   toolOutputChars?: number;
+  /** 本回合的工具总额度（由 AgentLoop 按运行时配置写入）；缺省用 limits.ts 的库默认值 */
+  limits?: import('./limits.js').TurnLimits;
   /** 触及硬配额后只允许运行时交接，不继续反复请求被拒绝的工具。 */
   toolLimitReason?: string;
   /**

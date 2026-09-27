@@ -41,6 +41,8 @@ export interface BuildOptions {
    */
   turnBrief?: string;
   model?: string;
+  /** 这一回合按所用模型的窗口定下的预算；不传用构造时的基础预算 */
+  budget?: ContextBudget;
   scope?: string;
   tools?: ToolSchema[];
   systemSnapshot?: SystemSnapshot;
@@ -61,8 +63,9 @@ export class ContextBuilder {
   ) {}
 
   async build(agent: Agent, task: Message, options: BuildOptions = {}): Promise<BuiltContext> {
+    const budget = options.budget ?? this.budget;
     const taskText = messageText(task);
-    const recentCandidates = await this.messages.recent(agent.id, this.budget.recentLimit, task.id);
+    const recentCandidates = await this.messages.recent(agent.id, budget.recentLimit, task.id);
 
     const refs = agent.memory.refs;
 
@@ -79,14 +82,14 @@ export class ContextBuilder {
 
     // ── 检索：补上眼前没有、但与当前任务相关的 ──
     const rules = composeSystem({ identity: composeIdentity(agent), instructions: agent.instructions });
-    const limits = memoryPartBudgets(this.budget);
+    const limits = memoryPartBudgets(budget);
     const selected: Record<MemoryPart, MemoryRef[]> = {
       portrait: [...ownPortrait, ...projectPortrait], shared: sharedPortrait, log: logRecent, scratch: scratchRecent,
     };
     const scope = options.scope ?? (task.roomId ? `room:${task.roomId}` : task.source === 'agent' ? 'agent' : 'dm');
     // 这一轮真正会发出去的工具面：分配器要按它扣预算（E4.6 预算统一）。
     const toolSchemas = options.tools ?? ToolRegistry.from(agent.tools ?? []).getSchemas();
-    const key = promptHash({ version: 1, rules, scope, model: options.model ?? '', budget: this.budget, policy: TIER_POLICY,
+    const key = promptHash({ version: 1, rules, scope, model: options.model ?? '', budget, policy: TIER_POLICY,
       projectIds: [...agent.memory.projectIds].sort(), tools: toolSchemas,
       compaction: agent.memory.compaction ? [agent.memory.compaction.coversUpTo, agent.memory.compaction.messageCount, agent.memory.compaction.summary] : null,
     });
@@ -139,8 +142,8 @@ export class ContextBuilder {
     // 全部在同一个分配器里算。以前这里直接按 budget.total 分配，window 再扣一遍
     // schema 与输出预留，两处各留一套余量，结果是最该留的原文被两边各挤一次。
     const sectionBudget: ContextBudget = {
-      ...this.budget,
-      total: Math.max(0, contextAvailable(this.budget.total) - toolSchemaCost(toolSchemas)),
+      ...budget,
+      total: Math.max(0, contextAvailable(budget.total) - toolSchemaCost(toolSchemas)),
     };
     const { alloc } = allocateSections(sectionBudget, wants, wants.memory);
     const summary = truncateToTokens(compactedText, alloc.compacted);
@@ -201,7 +204,7 @@ export class ContextBuilder {
       stats: {
         sections,
         totalTokens,
-        budgetTokens: this.budget.total,
+        budgetTokens: budget.total,
         generatedAt: Date.now(),
       },
       surfaced: [

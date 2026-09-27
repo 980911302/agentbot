@@ -22,6 +22,12 @@ export function createTaskTools(input: {
   providerFor?: (model: string) => import('../../llm/provider.js').LLMProvider;
   ownerAuthority?: (ownerId: string) => Promise<import('../tool.js').ExecutionAuthority | undefined>;
   maxIterations?: number;
+  /** 工人每段工作的工具总额度；不传用库默认值 */
+  turnLimits?: import('../limits.js').TurnLimits;
+  /** 工人所用模型的上下文预算（tokens）；不传按 60K 兜底 */
+  contextTokensFor?: (model: string | undefined) => number;
+  /** 工人的模型报超长后学到的实际上限 */
+  learnContextLimit?: (model: string | undefined, tokens: number) => void;
   maxWorkers?: number;
   /** 同一个智能体能同时跑几个工人（E4.5）；缺省 3，且不超过 maxWorkers */
   maxWorkersPerAgent?: number;
@@ -49,6 +55,9 @@ export function createTaskTools(input: {
     messages: input.messages,
     workerTools: input.workerTools,
     maxIterations: input.maxIterations,
+    ...(input.turnLimits ? { turnLimits: input.turnLimits } : {}),
+    ...(input.contextTokensFor ? { contextTokensFor: input.contextTokensFor } : {}),
+    ...(input.learnContextLimit ? { learnContextLimit: input.learnContextLimit } : {}),
     maxWorkers: input.maxWorkers,
     maxWorkersPerAgent: input.maxWorkersPerAgent,
     invocations: input.invocations,

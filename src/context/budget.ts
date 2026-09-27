@@ -29,6 +29,26 @@ export const DEFAULT_BUDGET: ContextBudget = {
   },
 };
 
+/** 服务端每回合的上下文预算，默认 1M（AGENT_MAX_CONTEXT_TOKENS 可改） */
+export const DEFAULT_CONTEXT_CEILING = 1_000_000;
+/** 预算下限：再小就放不下规则、工具 schema 和输出预留 */
+export const MIN_CONTEXT_BUDGET = 16_000;
+
+/**
+ * 这一回合的总预算：默认就是上限（1M）；模型报过超长、知道它实际上限更小时按实际上限。
+ * 各段 min/max 不跟着放大——多出来的空间留给本轮工具结果（读过的文件、命令输出），
+ * 而不是塞进更多旧历史。
+ */
+export function budgetForWindow(
+  base: ContextBudget,
+  modelLimit: number | undefined,
+  ceiling = DEFAULT_CONTEXT_CEILING,
+): ContextBudget {
+  const cap = Math.max(MIN_CONTEXT_BUDGET, ceiling);
+  const total = Math.max(MIN_CONTEXT_BUDGET, Math.min(modelLimit ?? cap, cap));
+  return total === base.total ? base : { ...base, total };
+}
+
 /** 固定切片只依赖配置，不借用本轮任务/历史空余。修改配置时重建提示词快照。 */
 export function memoryPartBudgets(budget: ContextBudget) {
   const total = Math.max(0, Math.floor(budget.sections.memory.max));

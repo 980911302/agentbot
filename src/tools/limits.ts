@@ -34,6 +34,15 @@ export const TOOL_LIMITS: Record<string, { input: number; output: number }> = {
 export const MAX_TOOL_CALLS_PER_TURN = 128;
 export const MAX_TOOL_CHARS_PER_TURN = 256000;
 export const MAX_TOOL_BATCH = 8;
+
+/** 一个回合的工具总额度；运行时按配置注入（见 config.ts 的 TurnConfig），不注入时用上面的库默认值 */
+export interface TurnLimits {
+  maxCalls: number;
+  /** 工具输入、输出各自的累计字符上限 */
+  maxChars: number;
+}
+
+export const DEFAULT_TURN_LIMITS: TurnLimits = { maxCalls: MAX_TOOL_CALLS_PER_TURN, maxChars: MAX_TOOL_CHARS_PER_TURN };
 const FALLBACK = { input: 16000, output: 8000 };
 export const limitsFor = (name: string) => TOOL_LIMITS[name] ?? FALLBACK;
 
@@ -50,6 +59,7 @@ const STRING_LIMITS: Record<string, number> = {
   url: 4096,
   query: 1000,
   pattern: 500,
+  glob: 300,
   command: 24000,
   content: 32000,
   old_text: 16000,

@@ -509,7 +509,9 @@ export class AgentRuntime {
       content: { type: 'text', text: '' },
       createdAt: Date.now(),
     };
-    return this.builder.build(agent, task);
+    // 预览按默认模型的窗口算预算，与真正发起回合时一致
+    const model = this.agentService.resolveModel(undefined);
+    return this.builder.build(agent, task, { model, budget: this.agentService.contextBudgetFor(model) });
   }
 
   // ── 事件日志（E3.4：发送与订阅分离）───────────────

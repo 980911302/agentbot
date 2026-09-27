@@ -401,6 +401,19 @@ export function pickerOptionsFromProviders(providers: PickerProviderInput[]): Pi
   return options;
 }
 
+/**
+ * 上下文长度写法 → token 数（AGENT_MAX_CONTEXT_TOKENS 用）。
+ * 认 128K / 200k / 1M / 1000K / 131072 / 64K tokens 这类写法；K 按 1000 计，比 1024 保守。
+ * 解析不了、或小于 4K 的一律返回 undefined，由调用方回落默认值。
+ */
+export function parseContextWindow(label: string | undefined): number | undefined {
+  const match = /^\s*(\d+(?:\.\d+)?)\s*([km])?\s*(?:tokens?)?\s*$/i.exec(label ?? '');
+  if (!match) return undefined;
+  const unit = match[2]?.toLowerCase();
+  const tokens = Math.round(Number(match[1]) * (unit === 'm' ? 1_000_000 : unit === 'k' ? 1000 : 1));
+  return Number.isSafeInteger(tokens) && tokens >= 4000 ? tokens : undefined;
+}
+
 /* ── 模型配置契约（E1.4 从 storage/model-config-store.ts 迁入）──────────
    类型与纯函数放契约层：routes 与前端都只用这里的类型/脱敏函数，
    存储模块反向依赖本文件（契约不依赖任何运行模块，check-imports 强制）。 */

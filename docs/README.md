@@ -66,7 +66,7 @@ npm run dev -- "读一下 package.json"   # 命令行单次对话
 
 ## 3. 配置
 
-启动时读取项目根 `.env`（`src/config.ts`，进程环境变量优先）。设置页保存的模型配置写入数据目录 `model-config.json`，启动时优先于环境变量，可在界面热更新。
+启动时读取项目根 `.env`（`src/config.ts`，进程环境变量优先）。设置页保存的模型配置写入数据目录 `model-config.json`，启动时优先于环境变量，可在界面热更新。每个回合的上下文预算默认 1M，模型实际上限更小时自动识别并收缩（见[工具参考](./工具参考.md)「上下文预算与每轮额度」）。
 
 | 变量                                 | 默认/作用                                                   |
 | ------------------------------------ | ----------------------------------------------------------- |
@@ -78,6 +78,10 @@ npm run dev -- "读一下 package.json"   # 命令行单次对话
 | `AGENT_MEMORY_EXTRACTION`            | `off` 关闭回合后的自动记忆抽取（update_state 仍可写记忆）   |
 | `AGENT_WEB`                          | `off` 不装载 WebSearch / WebFetch                           |
 | `AGENT_STOP_WORDS`                   | 逗号或空白分隔，追加到默认停止词（停、停止、取消、stop 等） |
+| `AGENT_MAX_CONTEXT_TOKENS`           | 每个回合的上下文预算，默认 `1M`；模型报超长时按它的实际上限自动收缩 |
+| `AGENT_MAX_ITERATIONS`               | 每个回合最多几轮模型往返，默认 64（8–400）                  |
+| `AGENT_MAX_TOOL_CALLS`               | 每个回合最多几次工具调用，默认 256（16–2000）               |
+| `AGENT_MAX_TOOL_CHARS`               | 每个回合工具输入/输出各自的字符总量，默认 1000000           |
 | `AGENT_DELIVER_DIRS`                 | 文件交付目录白名单，默认下载、桌面、文档目录                |
 | `PORT`                               | `npm run server` 的端口，默认 8787；桌面端使用随机端口      |
 
