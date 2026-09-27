@@ -89,7 +89,7 @@ describe('groupTimelineMessages：同一发言者 3 分钟内合并', () => {
     assert.equal(group.senderName, '小审');
   });
 
-  it('带工具调用的消息也并进同一组：工具卡各自渲染，只是不再重复头部', () => {
+  it('只有工具调用的消息不上时间线，前后两句照样并成一组', () => {
     const messages = [
       msg('m1', 'assistant', T0, { sender: { kind: 'agent', id: 'bot', name: '小审' } }),
       msg('m2', 'assistant', T0 + MIN, {
@@ -101,10 +101,10 @@ describe('groupTimelineMessages：同一发言者 3 分钟内合并', () => {
     ];
     const entries = groupTimelineMessages(messages, { isGroup: false, now: T0 });
     const groups = entries.filter((entry) => entry.kind === 'group');
-    assert.equal(groups.length, 1, '同一个人一分钟内干活不该出现三个完整头部');
+    assert.equal(groups.length, 1, '同一个人一分钟内干活不该出现多个完整头部');
     assert.deepEqual(
       (groups[0] as Extract<TimelineEntry, { kind: 'group' }>).messages.map((m) => m.id),
-      ['m1', 'm2', 'm3'],
+      ['m1', 'm3'],
     );
   });
 

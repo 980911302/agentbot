@@ -541,13 +541,11 @@ export function ChatView({
                 );
               }
               return block.messages.map((message, index) => {
-                const hasPlainBubble = Boolean(message.content.trim()) && !message.error && message.toolCalls.length === 0;
+                const hasPlainBubble = Boolean(message.content.trim()) && !message.error;
                 const previous = block.messages[index - 1];
                 const next = block.messages[index + 1];
-                const joinsPreviousBubble = hasPlainBubble && Boolean(previous?.content.trim())
-                  && !previous?.error && previous?.toolCalls.length === 0;
-                const joinsNextBubble = hasPlainBubble && Boolean(next?.content.trim())
-                  && !next?.error && next?.toolCalls.length === 0;
+                const joinsPreviousBubble = hasPlainBubble && Boolean(previous?.content.trim()) && !previous?.error;
+                const joinsNextBubble = hasPlainBubble && Boolean(next?.content.trim()) && !next?.error;
                 return (
                   <MessageItem
                     key={message.id}

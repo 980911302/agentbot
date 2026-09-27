@@ -5,8 +5,7 @@ import { messageEnterKind, timelineLayoutKind } from '../features/chat/ui-chrome
 import { memberPauseTag } from '../features/chat/group-view';
 import type { BotSummary, DisplayMessage } from '../types';
 import { BotAvatar, type AvatarMember } from './BotAvatar';
-import { ToolCallCard } from './ToolCallCard';
-import { IconAlert, IconChevronRight, IconTool } from '../icons';
+import { IconAlert } from '../icons';
 
 /** 消息头像统一 28（docs/主题与CSS.md §4）；.user-initial-avatar 与加载骨架同尺寸 */
 export const MESSAGE_AVATAR_SIZE = 28;
@@ -59,7 +58,7 @@ export function MessageItem({
   /** 用户消息：把原文填回输入框（不改发送逻辑） */
   onEdit?: (text: string) => void;
   compact?: boolean;
-  /** 连续纯文本气泡的接缝：工具调用、错误和换人不参与。 */
+  /** 连续纯文本气泡的接缝：错误和换人不参与。 */
   joinsPreviousBubble?: boolean;
   joinsNextBubble?: boolean;
 }) {
@@ -125,7 +124,7 @@ export function MessageItem({
     <span className="msg-origin-tag">{message.originLabel}</span>
   ) : null;
 
-  // 只有工具调用的消息没有正文：别画一个空气泡，工具卡自己会说话。
+  // 执行过程（工具调用）不在聊天里展示：没有正文就不画气泡。
   // 错误消息统一在这里画一个警示图标（正文不再拼 ⚠️），图标带 aria-label 让读屏先读「出错」。
   const visibleMessage = visibleContent === null ? message : { ...message, content: visibleContent };
   const typeCaret = visibleContent !== null ? <span className="type-caret" aria-hidden="true" /> : null;
@@ -146,41 +145,12 @@ export function MessageItem({
     )
   ) : null;
 
-  /** 工具过程聚合成一条摘要，默认收起；失败时展开，便于看见需要处理的问题。 */
-  const toolState = message.toolCalls.some((call) => call.status === 'error')
-    ? 'error'
-    : message.toolCalls.some((call) => call.status === 'running')
-      ? 'running'
-      : 'ok';
-  const toolStateLabel =
-    toolState === 'error' ? '有调用失败' : toolState === 'running' ? '执行中' : '已完成';
-  const toolCards =
-    message.toolCalls.length > 0 ? (
-      <details className={`tool-call-group ${toolState}`} open={toolState === 'error'}>
-        <summary className="tool-call-group-summary">
-          <span className={`tool-status-dot ${toolState}`} />
-          <IconTool size={13} />
-          <span className="tool-call-group-title">执行过程</span>
-          <span className="tool-call-group-meta">
-            {message.toolCalls.length} 次调用 · {toolStateLabel}
-          </span>
-          <IconChevronRight size={14} className="tool-call-group-chevron" />
-        </summary>
-        <div className="msg-tool-cards">
-          {message.toolCalls.map((call) => (
-            <ToolCallCard key={call.id} call={call} />
-          ))}
-        </div>
-      </details>
-    ) : null;
-
   /** 合并组里的后续消息：只出气泡，不重复头像、名字与时间 */
   if (compact) {
     return (
       <div className={rowClass}>
         <div className={`msg-content-col ${isUser ? 'user-content' : 'assistant-content'}`}>
           {text}
-          {toolCards}
           {actions}
         </div>
       </div>
@@ -197,7 +167,6 @@ export function MessageItem({
             <span className="msg-time">{formatMessageTime(message.createdAt)}</span>
           </div>
           {text}
-          {toolCards}
           {actions}
         </div>
         <div className="msg-avatar-col">
@@ -252,7 +221,6 @@ export function MessageItem({
           <span className="msg-time">{formatMessageTime(message.createdAt)}</span>
         </div>
         {text}
-        {toolCards}
         {actions}
       </div>
     </div>

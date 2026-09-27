@@ -18,10 +18,9 @@ export type TimelineEntry =
   | { kind: 'group'; key: string; messages: DisplayMessage[]; showSender: boolean; senderName: string }
   | { kind: 'divider'; key: string; label: string };
 
-/** 展示用消息：有正文、或有往来/工具可看；空正文的 scaffolding 不占位 */
+/** 展示用消息：有正文或有往来；执行过程不在聊天里展示，只有工具调用的消息不占位 */
 function isRenderable(message: DisplayMessage): boolean {
   if (message.correspondence) return true;
-  if (message.toolCalls.length > 0) return true;
   return message.content.trim().length > 0;
 }
 
@@ -36,7 +35,7 @@ export function speakerName(message: DisplayMessage): string {
   return message.senderName || message.sender?.name || '助手';
 }
 
-/** 带工具调用的消息自己占一行，不并进相邻的气泡组 */
+/** 往来条自己占一行，不并进相邻的气泡组 */
 function isMergeable(message: DisplayMessage): boolean {
   return !message.correspondence;
 }
@@ -44,8 +43,6 @@ function isMergeable(message: DisplayMessage): boolean {
 /**
  * 同一发言者 3 分钟内的连续消息合成一组。
  * 换人、跨过 3 分钟、或中间夹了同事往来条都断开。
- * 带工具调用的消息也参与合并：工具卡仍各自渲染，只是不再每条都重复头像、名字和时间
- * （以前一次干活会刷出三四个完整的头部）。
  */
 export function mergeRun(
   messages: DisplayMessage[],

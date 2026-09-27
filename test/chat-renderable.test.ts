@@ -4,9 +4,9 @@ import { chatRows, isChatRenderable } from '../web/src/features/chat/corresponde
 import type { DisplayMessage } from '../web/src/types.js';
 
 describe('聊天可渲染选择器', () => {
-  // 工具卡接入后（UI-04），只有工具调用、正文为空的消息也要渲染：
-  // 它是工具卡的载体。藏起来会让整段工具过程从时间线消失。
-  it('纯工具消息也渲染——它是工具卡的载体', () => {
+  // 聊天里不展示执行过程（工具调用）：只有工具调用、正文为空的消息不占位，
+  // 否则会剩下一个只有名字和时间的空行。
+  it('只有工具调用的消息不上时间线', () => {
     const toolOnly: DisplayMessage = {
       id: 't1',
       role: 'assistant',
@@ -14,11 +14,13 @@ describe('聊天可渲染选择器', () => {
       toolCalls: [{ id: 'c1', name: 'Read', arguments: '{}', status: 'running' }],
       createdAt: new Date(0).toISOString(),
     };
-    assert.equal(isChatRenderable(toolOnly), true);
-    assert.equal(chatRows([toolOnly])[0]?.kind, 'message');
+    assert.equal(isChatRenderable(toolOnly), false);
+    assert.deepEqual(chatRows([toolOnly]), []);
+    // 有正文的照常显示，调用记录只是不画出来
+    assert.equal(isChatRenderable({ ...toolOnly, content: '改好了' }), true);
   });
 
-  it('既无正文也无工具可看的空消息仍然不渲染', () => {
+  it('空正文的消息仍然不渲染', () => {
     const empty: DisplayMessage = {
       id: 't0',
       role: 'assistant',
