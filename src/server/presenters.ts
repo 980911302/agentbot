@@ -79,9 +79,17 @@ export function toCorrespondenceView(transfer: Correspondence): DisplayMessageVi
  * 群消息会写入每位成员的 MessageStore，供该智能体后续理解群上下文；它们不是
  * 主人与该智能体的私聊消息，不能因为共用一份内部存储就被投影到私聊时间线。
  * 同时检查 roomId 与 source，兼容只写入其中一个来源字段的旧数据。
+ *
+ * 同事之间用 SendToAgent 互相私信（source === 'agent'）也是同理：那是它和另一个
+ * 同事的私下沟通，以及处理这条私信时自己产生的读写文件、跑 Shell 等整回合动作，
+ * 不是主人跟它的对话。这类交流已经有专门的「往来」摘要（toCorrespondenceView）
+ * 表示是否发生过，不需要、也不应该整回合都投影进私聊时间线——混进来既会让未读数
+ * 把同事间的动静也算成「你俩之间没看的消息」，也会让人分不清一条消息到底是谁发的。
  */
 export function privateConversationMessages(raw: Message[]): Message[] {
-  return raw.filter((message) => !message.roomId && message.source !== 'room');
+  return raw.filter(
+    (message) => !message.roomId && message.source !== 'room' && message.source !== 'agent',
+  );
 }
 
 /**
