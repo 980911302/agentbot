@@ -66,7 +66,7 @@ describe('conversationMarkdown：当前频道整理成 Markdown', () => {
     assert.ok(markdown.includes('**机柜** · '));
   });
 
-  it('思考块不导出；工具过程只列调用名，不带参数', () => {
+  it('思考块与执行过程都不导出，只导正文', () => {
     const { markdown } = conversationMarkdown({
       ...base,
       messages: [
@@ -81,16 +81,21 @@ describe('conversationMarkdown：当前频道整理成 Markdown', () => {
     });
     assert.ok(!markdown.includes('先想想'));
     assert.ok(markdown.includes('结论是 42'));
-    assert.ok(markdown.includes('_执行过程：2 次调用（Read、Shell）_'));
+    assert.ok(!markdown.includes('执行过程'));
+    assert.ok(!markdown.includes('Read'));
     assert.ok(!markdown.includes('/secret'));
   });
 
-  it('错误消息标「出错」；空正文且无工具的消息不导出也不计数', () => {
+  it('错误消息标「出错」；空正文的消息（包括只有工具调用的）不导出也不计数', () => {
     const { markdown, count } = conversationMarkdown({
       ...base,
       messages: [
         msg('m1', 'assistant', { content: '请求超时', error: true }),
         msg('m2', 'assistant', { content: '  ' }),
+        msg('m3', 'assistant', {
+          content: '',
+          toolCalls: [{ id: 'c1', name: 'SendToAgent', arguments: '{}', status: 'ok' }],
+        }),
       ],
     });
     assert.equal(count, 1);

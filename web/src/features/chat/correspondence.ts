@@ -3,12 +3,10 @@ import type { Correspondence, MessageActor } from '../../../../src/shared/contra
 
 export type ChatRow = { kind: 'message'; message: DisplayMessage } | { kind: 'correspondence'; id: string; transfers: Correspondence[] };
 
-/** 有正文、有往来、或有工具过程可看；只有工具调用的消息正文为空，也要渲染 */
+/** 有正文或有往来才上时间线；执行过程（工具调用）不在聊天里展示，只有工具调用的消息不占位 */
 export function isChatRenderable(message: DisplayMessage): boolean {
   if (message.correspondence) return true;
-  if (message.toolCalls.length > 0) return true;
-  if (message.content.trim()) return true;
-  return false;
+  return message.content.trim().length > 0;
 }
 /** 工具脚手架不显示；相邻的原始投递折成往来行，不能吞掉真正的用户输入。 */
 export function chatRows(messages: DisplayMessage[]): ChatRow[] {

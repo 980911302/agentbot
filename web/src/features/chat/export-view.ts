@@ -49,15 +49,12 @@ function messageSection(message: DisplayMessage, input: ConversationExportInput)
       .join('\n');
     return `${head}\n\n${body || '>'}`;
   }
+  // 执行过程（工具调用）与聊天里一样不导出，只导正文
   const text = stripThinkingBlocks(message.content);
-  const tools = message.toolCalls.map((call) => call.name);
-  if (!text && tools.length === 0) return null;
+  if (!text) return null;
   const tags = [message.error ? '（出错）' : '', message.originLabel ? `（${message.originLabel}）` : ''].join('');
   const head = `**${senderOf(message, input)}**${tags}${time ? ` · ${time}` : ''}`;
-  const parts = [head];
-  if (text) parts.push(text);
-  if (tools.length > 0) parts.push(`_执行过程：${tools.length} 次调用（${tools.join('、')}）_`);
-  return parts.join('\n\n');
+  return `${head}\n\n${text}`;
 }
 
 export interface ConversationExport {
