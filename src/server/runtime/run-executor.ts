@@ -81,6 +81,8 @@ export class RunExecutor {
       progress: TaskProgressStore;
       outputs: ToolOutputStore;
       maxIterations?: number;
+      /** 每个回合的工具总额度（运行时配置）；不传用库默认值 */
+      turnLimits?: import('../../tools/limits.js').TurnLimits;
       chatRuns: ChatRunCoordinator;
       canResumeRoom: (agentId: string, roomId: string) => Promise<boolean>;
       publishResumedPosts: (
@@ -396,6 +398,8 @@ export class RunExecutor {
       const built = await this.deps.builder.build(agent, task, {
         turnBrief: turn.brief,
         model,
+        // 预算跟随本回合所用模型的窗口（受上限约束）；AgentLoop 按 built.stats.budgetTokens 裁窗
+        budget: this.deps.agentService.contextBudgetFor(model),
         scope: progressScope,
         tools: registry.getSchemas(),
         systemSnapshot: turn.resumeTaskId
@@ -480,6 +484,9 @@ export class RunExecutor {
         provider,
         messages: this.deps.messages,
         maxIterations: this.deps.maxIterations,
+        ...(this.deps.turnLimits ? { turnLimits: this.deps.turnLimits } : {}),
+        // 模型报超长后按它的实际上限重试；记下来，之后的回合直接按这个上限组装
+        onContextLimit: (tokens) => this.deps.agentService.learnContextLimit(model, tokens),
         onEvent: options.onEvent,
         // 正文增量可能在出口校验前包含未验证声明或最终会转成工具调用，不能提前透给聊天区。
         // 先保留模型草稿隔离；前端只渲染通过出口校验并落盘的完整消息。

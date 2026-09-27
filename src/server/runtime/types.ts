@@ -40,9 +40,13 @@ export interface AgentRuntimeOptions {
   defaultModel: string;
   knownModels: string[];
   budget: ContextBudget;
+  /** 每回合上下文预算（tokens）；不传用 DEFAULT_CONTEXT_CEILING（1M）。模型报超长时按它的实际上限自动收缩 */
+  contextCeiling?: number;
   memoryExtraction: boolean;
   memoryStore?: MemoryStore;
   maxIterations?: number;
+  /** 每个回合的工具总额度（调用次数、输入/输出字符）；不传用库默认值 */
+  turnLimits?: import('../../tools/limits.js').TurnLimits;
   seed?: SeedAgent[];
   seedRooms?: SeedRoom[];
   /** 智能体互传的链深度上限，防止无限互发 */

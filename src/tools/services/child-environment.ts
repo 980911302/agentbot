@@ -27,13 +27,58 @@ const ALLOWED_EXACT = new Set([
   'XDG_STATE_HOME',
   'npm_config_cache',
   'NODE_OPTIONS',
+  // 网络：代理与 SSH agent。国内装依赖、拉仓库、git push 都靠它们；少了就是「命令在我终端能跑、智能体跑不了」
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'ALL_PROXY',
+  'NO_PROXY',
+  'http_proxy',
+  'https_proxy',
+  'all_proxy',
+  'no_proxy',
+  'SSH_AUTH_SOCK',
+  'GIT_SSH',
+  'GIT_SSH_COMMAND',
+  // 各语言工具链的安装位置与镜像源（值是路径或源地址，不是凭据）
+  'JAVA_HOME',
+  'GRADLE_USER_HOME',
+  'MAVEN_HOME',
+  'M2_HOME',
+  'ANDROID_HOME',
+  'ANDROID_SDK_ROOT',
+  'DEVELOPER_DIR',
+  'GOPATH',
+  'GOROOT',
+  'GOPROXY',
+  'GOPRIVATE',
+  'GONOSUMDB',
+  'GOFLAGS',
+  'CARGO_HOME',
+  'RUSTUP_HOME',
+  'RUSTUP_DIST_SERVER',
+  'RUSTUP_UPDATE_ROOT',
+  'PYENV_ROOT',
+  'VIRTUAL_ENV',
+  'CONDA_PREFIX',
+  'CONDA_DEFAULT_ENV',
+  'PIP_INDEX_URL',
+  'PIP_EXTRA_INDEX_URL',
+  'PIP_TRUSTED_HOST',
+  'UV_INDEX_URL',
+  'NVM_DIR',
+  'PNPM_HOME',
+  'BUN_INSTALL',
+  'DENO_DIR',
+  'HOMEBREW_PREFIX',
+  'HOMEBREW_BOTTLE_DOMAIN',
+  'HOMEBREW_API_DOMAIN',
 ]);
 
 /**
- * 前缀放行：版本管理与工具链。这里刻意不含 AGENT_/OPENAI_——
+ * 前缀放行：locale、版本管理与工具链。这里刻意不含 AGENT_/OPENAI_——
  * 那正是密钥和运行配置的来源，任何以它们开头的变量都不给子进程。
  */
-const ALLOWED_PREFIXES = ['npm_config_', 'NODE_', 'NPM_'];
+const ALLOWED_PREFIXES = ['npm_config_', 'NODE_', 'NPM_', 'LC_'];
 
 /**
  * 从当前进程环境里挑出允许继承的部分。

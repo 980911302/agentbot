@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { openDialogCount } from '../a11y.js';
 import { shortcutAction, type ShortcutAction } from '../features/chat/shortcuts.js';
 
 export interface ShortcutHandlers {
@@ -44,6 +45,9 @@ export function useShortcuts(handlers: ShortcutHandlers): void {
         targetIsEditable: isEditableTarget(event.target),
       });
       if (!action) return;
+      // Esc：登记在弹窗栈里的弹窗（useModalKeys）自己关最上层那个。这里再关一次「应用级最上层」，
+      // 设置窗口里叠的子弹窗按一下 Esc 就会连设置窗口一起关掉；全局这层只管没登记的浮层（抽屉等）。
+      if (action === 'dismiss-top' && openDialogCount() > 0) return;
       const handler = handlers[DISPATCH[action]];
       if (!handler) return;
       // Esc 用于关浮层时不一定想拦默认行为；其余组合键一律 preventDefault，

@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { DEFAULT_BUDGET, type ContextBudget } from './context/budget.js';
+import { DEFAULT_BUDGET, DEFAULT_CONTEXT_CEILING, MIN_CONTEXT_BUDGET, type ContextBudget } from './context/budget.js';
+import { parseContextWindow } from './shared/contracts/model-catalog.js';
 
 export const DEFAULT_BASE_URL = 'https://api.deepseek.com/v1';
 export const DEFAULT_MODEL = 'deepseek-chat';
@@ -24,12 +25,34 @@ export const AVAILABLE_MODELS: ModelOption[] = [
   { id: 'deepseek-reasoner', label: 'Reasoner', hint: '深度推理 · 支持工具调用' },
 ];
 
+/**
+ * 服务端每个回合的执行额度（库默认值见 agent-loop.ts / tools/limits.ts，偏保守，供直接调用方与单测使用）。
+ * 写代码这类长任务要读很多文件、反复跑测试，服务端默认放宽；AGENT_MAX_* 可改，超出安全范围会被夹回。
+ */
+export interface TurnConfig {
+  maxIterations: number;
+  maxToolCalls: number;
+  maxToolChars: number;
+}
+
+export const DEFAULT_TURN_CONFIG: TurnConfig = { maxIterations: 64, maxToolCalls: 256, maxToolChars: 1_000_000 };
+
+function envInteger(raw: string | undefined, fallback: number, min: number, max: number): number {
+  const value = Number(raw?.trim());
+  if (!raw?.trim() || !Number.isFinite(value)) return fallback;
+  return Math.min(max, Math.max(min, Math.floor(value)));
+}
+
 export interface AppConfig {
   apiKey: string;
   baseURL: string;
   model: string;
   dataDir: string;
   budget: ContextBudget;
+  /** 上下文预算上限（tokens）：模型窗口更大也不超过它（AGENT_MAX_CONTEXT_TOKENS） */
+  contextCeiling: number;
+  /** 每个回合的轮数与工具额度（AGENT_MAX_ITERATIONS / AGENT_MAX_TOOL_CALLS / AGENT_MAX_TOOL_CHARS） */
+  turn: TurnConfig;
   memoryExtraction: boolean;
   /** 主人在群里的显示名 */
   ownerName: string;
@@ -136,6 +159,12 @@ export function resolveConfig(options: ResolveConfigOptions = {}): AppConfig {
     model: env.AGENT_MODEL ?? DEFAULT_MODEL,
     dataDir: env.AGENT_DATA_DIR ?? join(rootDir, DEFAULT_DATA_DIR),
     budget: DEFAULT_BUDGET,
+    contextCeiling: Math.max(MIN_CONTEXT_BUDGET, parseContextWindow(env.AGENT_MAX_CONTEXT_TOKENS) ?? DEFAULT_CONTEXT_CEILING),
+    turn: {
+      maxIterations: envInteger(env.AGENT_MAX_ITERATIONS, DEFAULT_TURN_CONFIG.maxIterations, 8, 400),
+      maxToolCalls: envInteger(env.AGENT_MAX_TOOL_CALLS, DEFAULT_TURN_CONFIG.maxToolCalls, 16, 2000),
+      maxToolChars: envInteger(env.AGENT_MAX_TOOL_CHARS, DEFAULT_TURN_CONFIG.maxToolChars, 64_000, 4_000_000),
+    },
     memoryExtraction: env.AGENT_MEMORY_EXTRACTION !== 'off',
     ownerName:
       (env.AGENT_OWNER_NAME ?? '').trim() ||

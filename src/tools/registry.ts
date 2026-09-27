@@ -56,14 +56,16 @@ export class ToolRegistry {
     context.signal?.throwIfAborted();
     if (context.turnState) {
       if (context.turnState.toolLimitReason) return toolError('TOOL_LIMIT', context.turnState.toolLimitReason + '；该调用未执行，只能整理阶段交接');
+      const maxCalls = context.turnState.limits?.maxCalls ?? MAX_TOOL_CALLS_PER_TURN;
+      const maxChars = context.turnState.limits?.maxChars ?? MAX_TOOL_CHARS_PER_TURN;
       context.turnState.toolCalls = (context.turnState.toolCalls ?? 0) + 1;
-      if (context.turnState.toolCalls > MAX_TOOL_CALLS_PER_TURN) {
+      if (context.turnState.toolCalls > maxCalls) {
         context.turnState.toolLimitReason = '本轮工具调用已达上限';
         return toolError('TOOL_LIMIT', context.turnState.toolLimitReason + '；该调用未执行');
       }
       context.turnState.toolInputChars = (context.turnState.toolInputChars ?? 0) + call.arguments.length;
-      if (context.turnState.toolInputChars > MAX_TOOL_CHARS_PER_TURN || (context.turnState.toolOutputChars ?? 0) + limitsFor(call.name).output > MAX_TOOL_CHARS_PER_TURN) {
-        context.turnState.toolLimitReason = `本轮工具输入/输出额度不足（各限 ${MAX_TOOL_CHARS_PER_TURN} 字符）`;
+      if (context.turnState.toolInputChars > maxChars || (context.turnState.toolOutputChars ?? 0) + limitsFor(call.name).output > maxChars) {
+        context.turnState.toolLimitReason = `本轮工具输入/输出额度不足（各限 ${maxChars} 字符）`;
         return toolError('TOOL_LIMIT', context.turnState.toolLimitReason + '；该调用未执行，请整理阶段交接');
       }
     }

@@ -101,3 +101,38 @@ describe('Shell 子进程环境变量隔离', () => {
     assert.ok(statSync(join(logDir, files[0]!)).size > 0);
   });
 });
+
+describe('Shell 子进程保留开发环境需要的变量', () => {
+  it('代理、SSH agent、各语言工具链与镜像源透传；密钥和其它变量照样挡住', async () => {
+    const { childEnvironment } = await import('../src/tools/services/child-environment.js');
+    const env = childEnvironment(
+      {
+        PATH: '/usr/bin',
+        HTTPS_PROXY: 'http://127.0.0.1:7890',
+        https_proxy: 'http://127.0.0.1:7890',
+        ALL_PROXY: 'socks5://127.0.0.1:7890',
+        NO_PROXY: 'localhost,127.0.0.1',
+        SSH_AUTH_SOCK: '/tmp/agent.sock',
+        JAVA_HOME: '/opt/jdk',
+        GOPROXY: 'https://goproxy.cn',
+        GOPATH: '/Users/me/go',
+        CARGO_HOME: '/Users/me/.cargo',
+        VIRTUAL_ENV: '/proj/.venv',
+        PIP_INDEX_URL: 'https://pypi.tuna.tsinghua.edu.cn/simple',
+        LC_MESSAGES: 'zh_CN.UTF-8',
+        AGENT_API_KEY: 'sk-secret',
+        OPENAI_API_KEY: 'sk-openai',
+        AWS_SECRET_ACCESS_KEY: 'aws-secret',
+        GITHUB_TOKEN: 'ghp_secret',
+        RANDOM_VAR: 'x',
+      },
+      'darwin',
+    );
+    for (const name of ['PATH', 'HTTPS_PROXY', 'https_proxy', 'ALL_PROXY', 'NO_PROXY', 'SSH_AUTH_SOCK', 'JAVA_HOME', 'GOPROXY', 'GOPATH', 'CARGO_HOME', 'VIRTUAL_ENV', 'PIP_INDEX_URL', 'LC_MESSAGES']) {
+      assert.ok(env[name], `${name} 应该透传给子进程`);
+    }
+    for (const name of ['AGENT_API_KEY', 'OPENAI_API_KEY', 'AWS_SECRET_ACCESS_KEY', 'GITHUB_TOKEN', 'RANDOM_VAR']) {
+      assert.equal(env[name], undefined, `${name} 不该进子进程`);
+    }
+  });
+});

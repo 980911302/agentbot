@@ -87,6 +87,9 @@ describe('channelFromBot / channelFromRoom：新建频道条目', () => {
       kind: 'agent',
     });
     assert.equal(channelFromBot({ id: 'b2', name: '无职责' }).lastMessage, '准备就绪');
+    const titled = channelFromBot({ id: 'b3', name: '审查员', role: '代码审查', title: '把关代码质量' });
+    assert.equal(titled.title, '把关代码质量');
+    assert.equal(titled.role, '把关代码质量', '有头衔时一句话简介优先用头衔');
   });
 
   it('群条目带成员表、人数与 isGroup，颜色取第一个成员、缺省回默认棕', () => {

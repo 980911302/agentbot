@@ -1,14 +1,16 @@
 import { createReadStream } from 'node:fs';
 import { link, lstat, mkdir, opendir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
-import { dirname, join, relative, resolve } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import { defineTool } from '../tool.js';
 import {
   assertNotSensitivePath,
   isSensitivePath,
+  mightBeSensitiveName,
   sensitivePaths,
   type SensitivePaths,
 } from '../sensitive-paths.js';
+import { globMatcher } from '../glob.js';
 
 const SCAN_BYTES = 32 * 1024 * 1024;
 const FILE_BYTES = 2 * 1024 * 1024;
@@ -16,7 +18,17 @@ const READ_CHARS = 12000;
 const LINE_CHARS = 2000;
 /** column 的上限：续读提示必须落在 schema 允许的范围内 */
 const MAX_COLUMN = 1000000;
-const IGNORED = new Set(['node_modules', '.git', 'dist', 'build', '.agentbot', '.next']);
+const IGNORED = new Set([
+  'node_modules',
+  '.git',
+  'dist',
+  'build',
+  '.agentbot',
+  '.next',
+  'coverage',
+  '__pycache__',
+  'venv',
+]);
 
 /** 逐块读，不把大文件或单行压缩文件整体装进内存。扫描量也有硬上限。 */
 export async function* textLines(path: string, signal?: AbortSignal, column = 1, maxBytes = SCAN_BYTES) {
@@ -128,41 +140,104 @@ export function createReadTool(rootDir = process.cwd(), paths: SensitivePaths = 
   });
 }
 
+/** 目录枚举上限：目录项与目录数（再大的仓库请缩小 path 或用 glob） */
+const SCAN_ENTRIES = 20000;
+const SCAN_DIRS = 5000;
+/** SearchFiles：单文件上限、单次总扫描量与耗时预算 */
+const SEARCH_FILE_BYTES = 1024 * 1024;
+const SEARCH_TOTAL_BYTES = 64 * 1024 * 1024;
+const SEARCH_MS = 15_000;
+
 async function scanFiles(root: string, signal: AbortSignal | undefined, paths: SensitivePaths) {
   const files: string[] = [],
     queue = [root];
-  let visited = 0;
-  for (let i = 0; i < queue.length; i++) {
+  let visited = 0,
+    capped = false;
+  scan: for (let i = 0; i < queue.length; i++) {
     signal?.throwIfAborted();
-    const dir = await opendir(queue[i]!);
+    let dir: Awaited<ReturnType<typeof opendir>>;
+    try {
+      dir = await opendir(queue[i]!);
+    } catch (error) {
+      if (i === 0) throw error;
+      continue; // 没权限读的子目录跳过，不让整次扫描失败
+    }
     for await (const entry of dir) {
       signal?.throwIfAborted();
-      if (++visited > 5000) return { files: files.sort(), capped: true };
+      if (++visited > SCAN_ENTRIES) {
+        capped = true;
+        break scan;
+      }
       if (entry.name.startsWith('.') || IGNORED.has(entry.name)) continue;
       const path = join(queue[i]!, entry.name);
-      // 密钥文件不进列表、不进搜索（数据目录名可配置，不能只靠隐藏目录过滤）
-      if (await isSensitivePath(path, paths)) continue;
-      if (entry.isDirectory() && queue.length < 500) queue.push(path);
-      else if (entry.isFile()) files.push(path);
+      if (entry.isDirectory()) {
+        if (queue.length < SCAN_DIRS) queue.push(path);
+        else capped = true;
+      } else if (entry.isFile()) {
+        // 密钥文件不进列表、不进搜索（数据目录名可配置，不能只靠隐藏目录过滤）；
+        // 只有同名的才逐个核对真实路径，大仓库不必为每个文件做 realpath
+        if (mightBeSensitiveName(entry.name) && (await isSensitivePath(path, paths))) continue;
+        files.push(path);
+      }
     }
   }
-  return { files: files.sort(), capped: queue.length >= 500 };
+  return { files: files.sort(), capped };
+}
+
+/** 按 glob 过滤扫描结果（相对搜索根比较，统一用 / 分隔） */
+function filterByGlob(files: string[], root: string, glob: string | undefined): string[] {
+  if (!glob?.trim()) return files;
+  const match = globMatcher(glob);
+  return files.filter((file) => match(relative(root, file).split(sep).join('/')));
+}
+
+/** 读出可搜索的文本：超过单文件上限、二进制或读不了的返回 null */
+async function searchableText(
+  file: string,
+  signal?: AbortSignal,
+): Promise<{ text: string; bytes: number } | null> {
+  const entry = await stat(file).catch(() => null);
+  if (!entry?.isFile() || entry.size > SEARCH_FILE_BYTES) return null;
+  try {
+    const text = await readFile(file, { encoding: 'utf8', signal });
+    return text.includes('\0') ? null : { text, bytes: entry.size };
+  } catch {
+    signal?.throwIfAborted();
+    return null;
+  }
+}
+
+/** 命中位置（原文下标）；不区分大小写时把折叠后的下标映射回原文 */
+function locate(line: string, needle: string, caseSensitive: boolean): number {
+  if (caseSensitive) return line.indexOf(needle);
+  const lowered = line.toLowerCase();
+  const at = lowered.indexOf(needle);
+  if (at < 0 || lowered.length === line.length) return at;
+  // toLowerCase 可能改变长度（如 İ→i̇）：逐字映射回原文下标，否则预览会错位
+  let position = 0;
+  let loweredSoFar = 0;
+  while (loweredSoFar < at && position < line.length) {
+    loweredSoFar += line[position]!.toLowerCase().length;
+    position += 1;
+  }
+  return position;
 }
 
 export function createFileTools(rootDir = process.cwd(), paths: SensitivePaths = sensitivePaths(rootDir)) {
-  const list = defineTool<{ path?: string; offset?: number; limit?: number }>({
+  const list = defineTool<{ path?: string; glob?: string; offset?: number; limit?: number }>({
     name: 'ListFiles',
     description:
-      '递归列出文件路径，不读取内容。跳过隐藏/依赖/构建目录及符号链接；最多扫描 5000 条目录项/500 个目录，默认返回 50 条；大目录请缩小 path。offset 从 0 起。',
+      '递归列出文件路径，不读取内容；glob 可按文件名/路径过滤（如 *.ts、src/**/*.tsx、**/*.test.ts），用来按模式找文件。跳过隐藏目录（要看 .github 这类请直接写进 path）、依赖/构建目录及符号链接；最多枚举 20000 个目录项，默认返回 50 条，offset 从 0 起。',
     parameters: {
       type: 'object',
       properties: {
         path: { type: 'string' },
-        offset: { type: 'integer', minimum: 0, maximum: 5000 },
+        glob: { type: 'string', description: '文件名或相对路径模式：*.ts、src/**/*.tsx、*.{js,ts}' },
+        offset: { type: 'integer', minimum: 0, maximum: SCAN_ENTRIES },
         limit: { type: 'integer', minimum: 1, maximum: 100 },
       },
     },
-    async execute({ path = '.', offset = 0, limit = 50 }, context) {
+    async execute({ path = '.', glob, offset = 0, limit = 50 }, context) {
       const root = resolve(rootDir, path);
       // 与 SearchFiles 一致：直接指过来的路径也要过密钥名单，并且给出面向用户的错误
       await assertNotSensitivePath(root, paths);
@@ -171,10 +246,11 @@ export function createFileTools(rootDir = process.cwd(), paths: SensitivePaths =
       if (!info.isDirectory())
         throw new Error(`ListFiles 需要目录，收到的是文件：${root}（读文件请用 Read）`);
       const scan = await scanFiles(root, context.signal, paths);
+      const files = filterByGlob(scan.files, root, glob);
       let next = offset,
         size = 0;
       const rows: string[] = [];
-      for (const file of scan.files.slice(offset, offset + limit)) {
+      for (const file of files.slice(offset, offset + limit)) {
         const row = relative(root, file);
         if (size + row.length + 1 > Math.min(10000, 12000 - root.length - 512)) break;
         rows.push(row);
@@ -186,91 +262,105 @@ export function createFileTools(rootDir = process.cwd(), paths: SensitivePaths =
         '\n' +
         (rows.join('\n') || '（无）') +
         '\n' +
-        (next < scan.files.length ? 'next_offset=' + next : '本次扫描已列完') +
-        (scan.capped ? '；扫描达到上限，请缩小 path（这不是完整目录）' : '')
+        (next < files.length
+          ? `next_offset=${next}（共 ${files.length} 个）`
+          : `本次扫描已列完（共 ${files.length} 个）`) +
+        (scan.capped ? '；扫描达到上限，请缩小 path 或加 glob（这不是完整目录）' : '')
       );
     },
   });
-  const search = defineTool<{ query: string; path?: string; limit?: number; offset?: number }>({
+  const search = defineTool<{
+    query: string;
+    path?: string;
+    glob?: string;
+    case_sensitive?: boolean;
+    limit?: number;
+    offset?: number;
+  }>({
     name: 'SearchFiles',
     description:
-      '搜索文本字面量（忽略大小写，不是正则）。最多扫描 100 个文件/总计 8MiB，单文件 ≤1MiB；默认 30 条命中，含路径/行号/短预览。长行仅搜索前 2000 字符；大仓库先 ListFiles，再缩小 path。也可直接指定文件。',
+      '在文件内容里搜字面文本（不是正则；默认忽略大小写，case_sensitive=true 区分），返回「路径:行号: 片段」；也可直接指定单个文件。glob 限定文件范围（如 *.ts、src/**/*.tsx）。单次最多搜 64MiB、单文件 ≤1MiB，默认 30 条命中，命中多时按 next_offset 翻页。跳过隐藏/依赖/构建目录；需要正则时用 Shell 跑 rg 或 grep -E。',
     parameters: {
       type: 'object',
       properties: {
         query: { type: 'string', minLength: 1 },
         path: { type: 'string' },
+        glob: { type: 'string', description: '只搜匹配的文件：*.ts、src/**/*.tsx、*.{js,ts}' },
+        case_sensitive: { type: 'boolean' },
         limit: { type: 'integer', minimum: 1, maximum: 50 },
         offset: { type: 'integer', minimum: 0, maximum: 5000 },
       },
       required: ['query'],
     },
-    async execute({ query, path = '.', limit = 30, offset = 0 }, context) {
+    async execute({ query, path = '.', glob, case_sensitive = false, limit = 30, offset = 0 }, context) {
       if (!query.trim()) throw new Error('query 不能为空');
-      const root = resolve(rootDir, path),
-        info = await stat(root);
+      const root = resolve(rootDir, path);
+      const info = await stat(root).catch(() => null);
+      if (!info) throw new Error(`路径不存在：${root}`);
       // 直接指到某个文件时要单独过一遍密钥名单（目录扫描已跳过）
       if (info.isFile()) await assertNotSensitivePath(root, paths);
       const scan = info.isFile()
         ? { files: [root], capped: false }
         : await scanFiles(root, context.signal, paths);
-      let bytes = 0,
-        count = 0,
-        hits = 0,
-        size = 0,
-        capped = scan.capped,
-        skipped = 0;
+      const files = info.isFile() ? scan.files : filterByGlob(scan.files, root, glob);
+      const needle = case_sensitive ? query : query.toLowerCase();
       const rows: string[] = [];
-      outer: for (const file of scan.files) {
-        const entry = await stat(file).catch(() => null);
-        if (!entry || entry.size > 1024 * 1024) {
+      const deadline = Date.now() + SEARCH_MS;
+      let hits = 0,
+        size = 0,
+        bytes = 0,
+        searched = 0,
+        skipped = 0,
+        full = false,
+        unsearched = -1;
+      outer: for (let index = 0; index < files.length; index++) {
+        context.signal?.throwIfAborted();
+        if (bytes >= SEARCH_TOTAL_BYTES || Date.now() > deadline) {
+          unsearched = index;
+          break;
+        }
+        const file = files[index]!;
+        const loaded = await searchableText(file, context.signal);
+        if (!loaded) {
           skipped++;
           continue;
         }
-        if (++count > 100 || bytes + entry.size > 8 * 1024 * 1024) {
-          capped = true;
-          break;
-        }
-        bytes += entry.size;
-        try {
-          for await (const row of textLines(file, context.signal, 1, 1024 * 1024)) {
-            if (row.truncated) capped = true;
-            const needle = query.toLowerCase();
-            const lowered = row.text.toLowerCase();
-            const loweredAt = lowered.indexOf(needle);
-            if (loweredAt < 0 || hits++ < offset) continue;
-            // toLowerCase 可能改变长度（如 İ→i̇）：把折叠后的下标映射回原文下标，否则预览会错位
-            let position = 0;
-            let loweredSoFar = 0;
-            while (loweredSoFar < loweredAt && position < row.text.length) {
-              loweredSoFar += row.text[position]!.toLowerCase().length;
-              position += 1;
-            }
-            const result =
-              (info.isFile() ? file : relative(root, file)) +
-              ':' +
-              row.line +
-              ': ' +
-              row.text.slice(Math.max(0, position - 80), position + 200);
-            if (rows.length >= limit || size + result.length > 10000) {
-              capped = true;
-              break outer;
-            }
-            rows.push(result);
-            size += result.length + 1;
+        bytes += loaded.bytes;
+        searched++;
+        // 整个文件先粗筛一遍，绝大多数不含命中的文件不必逐行拆分
+        if (!(case_sensitive ? loaded.text : loaded.text.toLowerCase()).includes(needle)) continue;
+        const label = info.isFile() ? file : relative(root, file);
+        const lines = loaded.text.split('\n');
+        for (let line = 0; line < lines.length; line++) {
+          const raw = lines[line]!;
+          const at = locate(raw, needle, case_sensitive);
+          if (at < 0 || hits++ < offset) continue;
+          const row = `${label}:${line + 1}: ${raw.slice(Math.max(0, at - 80), at + 200).replace(/\r$/, '')}`;
+          if (rows.length >= limit || size + row.length > 10000) {
+            full = true;
+            break outer;
           }
-        } catch {
-          context.signal?.throwIfAborted();
-          skipped++;
+          rows.push(row);
+          size += row.length + 1;
         }
       }
+      const notes: string[] = [];
+      if (full)
+        notes.push(
+          `命中较多，本页 ${rows.length} 条；next_offset=${offset + rows.length} 继续翻页，或加 glob / 缩小 path`,
+        );
+      if (unsearched >= 0)
+        notes.push(
+          `未搜完：已搜 ${searched} 个文件，${relative(root, files[unsearched]!)} 起还有 ${files.length - unsearched} 个没搜；请缩小 path 或加 glob`,
+        );
+      if (scan.capped) notes.push(`目录过大，只枚举了前 ${SCAN_ENTRIES} 个目录项，结果不完整；请缩小 path`);
+      if (!notes.length) notes.push(`扫描完成：共搜索 ${searched} 个文件`);
       return (
         (rows.join('\n') || '本次范围内没有命中') +
-        '\n' +
-        (capped
-          ? '[结果不完整；next_offset=' + (offset + rows.length) + '，或缩小 path 后重查]'
-          : '[扫描完成]') +
-        (skipped ? '（跳过 ' + skipped + ' 个超限/二进制/不可读文件）' : '')
+        '\n[' +
+        notes.join('；') +
+        ']' +
+        (skipped ? '（跳过 ' + skipped + ' 个超过 1MiB/二进制/不可读的文件）' : '')
       );
     },
   });
@@ -299,30 +389,27 @@ export function createFileTools(rootDir = process.cwd(), paths: SensitivePaths =
           throw new Error('文件已存在；请先 Read，再 Edit 或显式 overwrite=true');
         const text = args.append ? (current ?? '') + args.content : args.content;
         await saveText(path, text, current, context.signal);
-        return (
-          '已' +
-          (args.append ? '追加' : '写入') +
-          ' ' +
-          path +
-          '（' +
-          Buffer.byteLength(text) +
-          ' 字节；sha256=' +
-          hash(text) +
-          '）'
-        );
+        return `已${args.append ? '追加' : '写入'} ${path}（${lineCount(text)} 行，${Buffer.byteLength(text)} 字节；sha256=${hash(text)}）`;
       });
     },
   });
-  const edit = defineTool<{ path: string; old_text: string; new_text: string; expected_sha256?: string }>({
+  const edit = defineTool<{
+    path: string;
+    old_text: string;
+    new_text: string;
+    replace_all?: boolean;
+    expected_sha256?: string;
+  }>({
     name: 'Edit',
     description:
-      '精确替换文本，old_text 必须恰好匹配一次，避免误改；每段最多 16000 字符，文件最多 2MiB。可传 expected_sha256 防止覆盖其它人新改动。结果不回显文件。',
+      '精确替换文本：old_text 默认必须恰好命中一次（避免误改），replace_all=true 时替换全部命中（如改名）；每段最多 16000 字符，文件最多 2MiB。old_text 按文件原文写，不要带 Read 的行号前缀；CRLF 文件可直接用换行写。可传 expected_sha256 防止覆盖别人的新改动。成功后回显改动处附近几行（带行号）；没命中会指出最接近的位置。',
     parameters: {
       type: 'object',
       properties: {
         path: { type: 'string', minLength: 1 },
         old_text: { type: 'string', minLength: 1 },
         new_text: { type: 'string' },
+        replace_all: { type: 'boolean', description: 'true = 替换全部命中；默认只允许恰好一处' },
         expected_sha256: { type: 'string', minLength: 64, maxLength: 64 },
       },
       required: ['path', 'old_text', 'new_text'],
@@ -335,16 +422,163 @@ export function createFileTools(rootDir = process.cwd(), paths: SensitivePaths =
         if (current === null) throw new Error('文件不存在');
         if (args.expected_sha256 && hash(current) !== args.expected_sha256)
           throw new Error('文件已改变，请重新读取');
-        const index = current.indexOf(args.old_text);
-        if (index < 0 || current.indexOf(args.old_text, index + 1) >= 0)
-          throw new Error('old_text 必须恰好命中一次，请补充上下文');
-        const next = current.slice(0, index) + args.new_text + current.slice(index + args.old_text.length);
-        await saveText(path, next, current, context.signal);
-        return '已修改 ' + path + '（' + Buffer.byteLength(next) + ' 字节；sha256=' + hash(next) + '）';
+        const plan = planEdit(current, args.old_text, args.new_text, args.replace_all === true);
+        await saveText(path, plan.next, current, context.signal);
+        const where =
+          plan.lines.length > 1
+            ? `替换 ${plan.lines.length} 处（第 ${listLines(plan.lines)} 行），首处${lineRange(plan.start, plan.end)}`
+            : lineRange(plan.start, plan.end);
+        return `已修改 ${path}（${where}；${Buffer.byteLength(plan.next)} 字节；sha256=${hash(plan.next)}）\n${snippet(plan.next, plan.start, plan.end)}`;
       });
     },
   });
   return [createReadTool(rootDir, paths), list, search, write, edit];
+}
+
+interface EditPlan {
+  next: string;
+  /** 每处替换在新文本里的起始行 */
+  lines: number[];
+  /** 首处替换在新文本里的行范围（回显用） */
+  start: number;
+  end: number;
+}
+
+/**
+ * 算出替换后的全文；old_text 没命中/命中多处时抛出带定位信息的错误（文件不动）。
+ * CRLF 文件：Read 显示的行已去掉 \r，模型按 LF 写的 old_text 在这里按 CRLF 再找一次，写回也保持 CRLF。
+ */
+export function planEdit(current: string, oldText: string, newText: string, replaceAll: boolean): EditPlan {
+  let find = oldText,
+    replace = newText;
+  let positions = occurrences(current, find);
+  if (!positions.length && current.includes('\r\n') && oldText.includes('\n') && !oldText.includes('\r')) {
+    const crlf = oldText.replace(/\n/g, '\r\n');
+    const found = occurrences(current, crlf);
+    if (found.length) {
+      find = crlf;
+      replace = newText.replace(/\r?\n/g, '\r\n');
+      positions = found;
+    }
+  }
+  if (!positions.length) throw new Error(missHint(current, oldText));
+  if (positions.length > 1 && !replaceAll) {
+    const lines = [...new Set(lineNumbers(current, positions))];
+    throw new Error(
+      `old_text 命中 ${positions.length} 处（第 ${listLines(lines)} 行），必须恰好命中一次：补充上下文让它唯一，或设 replace_all=true 全部替换`,
+    );
+  }
+  // 重叠命中只取不重叠的那些（replace_all 从左到右替换）
+  const targets: number[] = [];
+  for (const at of positions) if (!targets.length || at >= targets.at(-1)! + find.length) targets.push(at);
+  let next = '',
+    last = 0;
+  const starts: number[] = [];
+  for (const at of targets) {
+    next += current.slice(last, at);
+    starts.push(next.length);
+    next += replace;
+    last = at + find.length;
+  }
+  next += current.slice(last);
+  const lines = lineNumbers(next, starts);
+  const start = lines[0]!;
+  const end = start + Math.max(0, replace.replace(/\r?\n$/, '').split('\n').length - 1);
+  return { next, lines, start, end };
+}
+
+/** 所有命中位置（含重叠命中：「aa」在「aaa」里算两处，单处替换时视为有歧义） */
+function occurrences(text: string, find: string): number[] {
+  const found: number[] = [];
+  for (let at = text.indexOf(find); at >= 0 && found.length < 10000; at = text.indexOf(find, at + 1))
+    found.push(at);
+  return found;
+}
+
+/** 递增的下标 → 所在行号（1 起），一次扫描算完 */
+function lineNumbers(text: string, positions: number[]): number[] {
+  const lines: number[] = [];
+  let line = 1,
+    newline = text.indexOf('\n');
+  for (const at of positions) {
+    while (newline >= 0 && newline < at) {
+      line++;
+      newline = text.indexOf('\n', newline + 1);
+    }
+    lines.push(line);
+  }
+  return lines;
+}
+
+function listLines(lines: number[]): string {
+  return lines.slice(0, 10).join('、') + (lines.length > 10 ? ' 等' : '');
+}
+
+function lineRange(start: number, end: number): string {
+  return start === end ? `第 ${start} 行` : `第 ${start}–${end} 行`;
+}
+
+function lineCount(text: string): number {
+  if (!text) return 0;
+  return text.split('\n').length - (text.endsWith('\n') ? 1 : 0);
+}
+
+/** 改动处前后各 2 行（带行号，格式同 Read），最多 14 行 / 1200 字符 */
+function snippet(text: string, start: number, end: number): string {
+  const lines = text.split('\n');
+  const from = Math.max(1, start - 2);
+  const to = Math.min(lines.length, end + 2, from + 13);
+  const rows: string[] = [];
+  let size = 0;
+  for (let line = from; line <= to; line++) {
+    const body = lines[line - 1]!.replace(/\r$/, '');
+    const row = `${line}: ${body.length > 200 ? body.slice(0, 200) + '…' : body}`;
+    if (size + row.length > 1200) {
+      rows.push('…');
+      break;
+    }
+    rows.push(row);
+    size += row.length + 1;
+  }
+  return rows.join('\n');
+}
+
+/** old_text 没命中时，尽量指出原因和最接近的位置，让下一次改动一次成功 */
+function missHint(current: string, oldText: string): string {
+  const base = 'old_text 在文件里没有找到';
+  const oldLines = oldText.split('\n').map((line) => line.replace(/\r$/, ''));
+  const meaningful = oldLines.filter((line) => line.trim());
+  if (meaningful.length && meaningful.every((line) => /^\s*\d+: /.test(line))) {
+    return `${base}：old_text 每行都带着 Read 输出的行号前缀（如「12: 」），那不是文件内容；去掉前缀按原文再试`;
+  }
+  const normalize = (line: string) => line.trim().replace(/\s+/g, ' ');
+  const fileLines = current.split('\n').map((line) => line.replace(/\r$/, ''));
+  let first = 0,
+    last = oldLines.length;
+  while (first < last && !oldLines[first]!.trim()) first++;
+  while (last > first && !oldLines[last - 1]!.trim()) last--;
+  const wanted = oldLines.slice(first, last).map(normalize);
+  if (wanted.length) {
+    const candidates: number[] = [];
+    for (let line = 0; line + wanted.length <= fileLines.length && candidates.length < 3; line++) {
+      if (wanted.every((text, offset) => normalize(fileLines[line + offset]!) === text))
+        candidates.push(line);
+    }
+    if (candidates.length) {
+      const at = candidates[0]!;
+      const original = fileLines.slice(at, at + wanted.length).join('\n');
+      const more = candidates.length > 1 ? `（另有 ${candidates.length - 1} 处相似）` : '';
+      return `${base}，但${lineRange(at + 1, at + wanted.length)}只差空白/缩进${more}。文件里的原文是：\n${original.length > 800 ? original.slice(0, 800) + '…' : original}\n请按原文（含缩进）重写 old_text`;
+    }
+    const anchor = wanted[0]!;
+    let lines = fileLines.flatMap((line, index) => (normalize(line) === anchor ? [index + 1] : []));
+    if (!lines.length && anchor.length >= 8)
+      lines = fileLines.flatMap((line, index) => (normalize(line).includes(anchor) ? [index + 1] : []));
+    if (lines.length) {
+      return `${base}：它的第一行出现在第 ${listLines(lines.slice(0, 3))} 行，但后面的内容对不上（文件可能已被改过）；请先 Read 那一段（如 offset=${Math.max(1, lines[0]! - 3)}）再按原文改`;
+    }
+  }
+  return `${base}（文件可能已被改过）；请先 Read 目标位置，按当前原文重写 old_text`;
 }
 
 const locks = new Set<string>();

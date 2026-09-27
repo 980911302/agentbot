@@ -30,7 +30,8 @@ export function channelFromBot(bot: { id: string; name: string; role?: string; t
     lastMessage: bot.role || '准备就绪',
     color: bot.color,
     role: bot.title || bot.role,
-    title: bot.title,
+    // 没有头衔就不带这个键：条目形状与其他来源一致，不留 title: undefined
+    ...(bot.title ? { title: bot.title } : {}),
     kind: 'agent',
   };
 }

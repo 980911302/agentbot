@@ -71,6 +71,7 @@ export function createExecutionLayer(
     knownModels: options.knownModels,
     budget: options.budget,
     tools: () => tools,
+    ...(options.contextCeiling !== undefined ? { contextCeiling: options.contextCeiling } : {}),
   });
   const executor = new RunExecutor({
     registry,
@@ -97,6 +98,7 @@ export function createExecutionLayer(
     progress: taskProgress,
     outputs: toolOutputs,
     maxIterations: options.maxIterations,
+    ...(options.turnLimits ? { turnLimits: options.turnLimits } : {}),
     chatRuns,
     canResumeRoom: async (agentId, roomId) =>
       (await rooms.get(roomId))?.memberIds.includes(agentId) ?? false,
@@ -140,6 +142,10 @@ export function createExecutionLayer(
         return owner ? { toolNames: effectiveToolNames(owner.toolNames), projectIds: owner.projectIds } : undefined;
       },
       maxIterations: options.maxIterations,
+      ...(options.turnLimits ? { turnLimits: options.turnLimits } : {}),
+      // 工人与派工者同一口径：预算跟随工人所用模型的窗口
+      contextTokensFor: (model) => agentService.contextBudgetFor(agentService.resolveModel(model)).total,
+      learnContextLimit: (model, tokens) => agentService.learnContextLimit(agentService.resolveModel(model), tokens),
       // TodoWrite → WorkStep（E4.1）：有正在进行的工作才记步骤
       onTodoWrite: async (agentId, todos) => {
         const work = await works.openWorkOf(agentId);

@@ -114,7 +114,8 @@ export async function handleModelSettingsRoute(
           id: readString(p.id)!,
           name: readString(p.name),
           group: readString(p.group),
-          enabled: typeof p.enabled === 'boolean' ? p.enabled : true,
+          // 没带就不改：设置页逐项即时保存，只改名不能把停用的服务商重新启用（新建时存储层默认启用）
+          ...(typeof p.enabled === 'boolean' ? { enabled: p.enabled } : {}),
           baseURL: readString(p.baseURL),
           apiFormat: p.apiFormat,
           apiKey: readString(p.apiKey),

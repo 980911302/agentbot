@@ -66,12 +66,25 @@ function shrinkSchema(tool: ToolSchema, tokens: number): ToolSchema {
   };
 }
 
+/**
+ * 跨轮的压缩边界（同一回合内由 AgentLoop 持有）：最早的 compacted 组已经压短过，
+ * 下一轮继续按原样压，发出去的前缀就不会每轮都变（利于供应商前缀缓存）。
+ */
+export interface WindowState {
+  compacted: number;
+}
+
+/** 需要压缩时压到可用预算的这个比例：留出余量，后面几轮追加工具结果时不必再动前缀 */
+const COMPACT_TARGET = 0.9;
+/** 被压缩的工具结果保留的 token 数 */
+const COMPACTED_RESULT_TOKENS = 1000;
+
 /** 每次请求前执行，不改持久历史；把 schema、消息包装、输出预留一起计入。 */
-export function fitContextWindow(input: LLMMessage[], tools: ToolSchema[], total = 60000, taskContent?: string | null, protectedContents: readonly string[] = []): LLMMessage[] {
+export function fitContextWindow(input: LLMMessage[], tools: ToolSchema[], total = 60000, taskContent?: string | null, protectedContents: readonly string[] = [], state?: WindowState): LLMMessage[] {
   const available = contextAvailable(total);
   const schemaCost = toolSchemaCost(tools);
-  const cost = (messages: LLMMessage[]) => schemaCost + estimateTokens(JSON.stringify(messages))
-    + messages.reduce((sum, message) => sum + (message.images?.length ?? 0) * IMAGE_CONTEXT_RESERVE, 0);
+  const imageCost = (messages: LLMMessage[]) => messages.reduce((sum, message) => sum + (message.images?.length ?? 0) * IMAGE_CONTEXT_RESERVE, 0);
+  const cost = (messages: LLMMessage[]) => schemaCost + estimateTokens(JSON.stringify(messages)) + imageCost(messages);
   const groups: LLMMessage[][] = [];
   for (let index = 0; index < input.length; index++) {
     const message = input[index]!;
@@ -94,19 +107,35 @@ export function fitContextWindow(input: LLMMessage[], tools: ToolSchema[], total
   const pinned = (group: LLMMessage[]) => group[0]?.role === 'system' || (group[0]?.role === 'user' && (group[0]?.content === task || protectedContents.includes(group[0]?.content ?? '')));
   let current = groups.flat();
   if (cost(current) <= available) return current;
-  // 先压缩工具大正文与写入参数，不碰用户的任务或系统规则。
-  for (const group of groups) {
-    for (const message of group) {
-      if (message.role === 'tool' && message.content) message.content = truncateToTokens(message.content, 1000);
-      if (message.toolCalls) message.toolCalls = message.toolCalls.map(call => {
-        if (call.arguments.length <= 2000) return call;
-        let path: string | undefined;
-        try { path = JSON.parse(call.arguments).path; } catch { /* 旧的坏参数不能影响恢复 */ }
-        return { ...call, arguments: JSON.stringify({ ...(typeof path === 'string' ? { path } : {}), _history_note: '历史调用的长参数已移出上下文；执行结果见对应 tool 消息，必要时重新读取文件' }) };
-      });
-    }
-  }
   const notice: LLMMessage = { role: 'assistant', content: NOTICE };
+  // 渐进压缩：从最早的组开始压工具大正文与长参数，压到目标就停，不碰用户的任务或系统规则。
+  // 最近几次读到的原文往往正是下一步要改的代码，一刀切全压会让模型反复重读、甚至按残缺内容改。
+  // 组成本按组分别估（各组之和略高于整体，偏保守），最后再用整体成本核一遍。
+  const groupCost = (group: LLMMessage[]) => estimateTokens(JSON.stringify(group)) + imageCost(group);
+  const costs = groups.map(groupCost);
+  let estimate = schemaCost + groupCost([notice]) + costs.reduce((sum, value) => sum + value, 0);
+  const compactAt = (index: number) => {
+    if (!compactGroup(groups[index]!)) return;
+    const next = groupCost(groups[index]!);
+    estimate -= costs[index]! - next;
+    costs[index] = next;
+  };
+  const kept = Math.min(state?.compacted ?? 0, groups.length);
+  for (let index = 0; index < kept; index++) compactAt(index);
+  let reached = kept;
+  if (estimate > available) {
+    const target = Math.floor(available * COMPACT_TARGET);
+    while (reached < groups.length && estimate > target) compactAt(reached++);
+  }
+  if (state) state.compacted = reached;
+  // 全部压过仍放不下：从最早的非固定组开始整组移出（调用与结果成对移出）
+  while (estimate > available) {
+    const index = groups.findIndex(group => !pinned(group));
+    if (index < 0) break;
+    estimate -= costs[index]!;
+    groups.splice(index, 1);
+    costs.splice(index, 1);
+  }
   while (cost([...groups.flat(), notice]) > available) {
     const index = groups.findIndex(group => !pinned(group));
     if (index < 0) throw new Error('系统规则或本次任务本身超过上下文预算，请缩短提示词/分批提交；尚未继续执行工具');
@@ -117,4 +146,25 @@ export function fitContextWindow(input: LLMMessage[], tools: ToolSchema[], total
   const afterSystem = current.findIndex(message => message.role !== 'system');
   current.splice(afterSystem < 0 ? current.length : afterSystem, 0, notice);
   return current;
+}
+
+/** 压短一组里的工具大正文与写入类长参数（就地改组内副本）；有改动返回 true */
+function compactGroup(group: LLMMessage[]): boolean {
+  let changed = false;
+  for (const message of group) {
+    if (message.role === 'tool' && message.content) {
+      const shorter = truncateToTokens(message.content, COMPACTED_RESULT_TOKENS);
+      if (shorter !== message.content) { message.content = shorter; changed = true; }
+    }
+    if (message.toolCalls?.some(call => call.arguments.length > 2000)) {
+      message.toolCalls = message.toolCalls.map(call => {
+        if (call.arguments.length <= 2000) return call;
+        let path: string | undefined;
+        try { path = JSON.parse(call.arguments).path; } catch { /* 旧的坏参数不能影响恢复 */ }
+        return { ...call, arguments: JSON.stringify({ ...(typeof path === 'string' ? { path } : {}), _history_note: '历史调用的长参数已移出上下文；执行结果见对应 tool 消息，必要时重新读取文件' }) };
+      });
+      changed = true;
+    }
+  }
+  return changed;
 }
