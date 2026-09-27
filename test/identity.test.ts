@@ -17,6 +17,14 @@ describe('产品层提示词', () => {
     assert.ok(BASE_PROMPT.includes('不自动改写成“可执行任务”'));
   });
 
+  // 实测：前端只跑了语法检查就说「自检过了」，后端中途改了返回结构，
+  // 作品集页在后端真的在线时反而全空——要等第二轮联调才发现。
+  it('和同事分工时，交付前要按对方的真实产出联调，语法检查不算', () => {
+    assert.ok(BASE_PROMPT.includes('联调'));
+    assert.ok(BASE_PROMPT.includes('语法检查、本地示例数据都不算联调'));
+    assert.ok(BASE_PROMPT.includes('说「测过了」要讲清测的是什么'));
+  });
+
   it('群规则只使用统一出口，零出口就是沉默', () => {
     assert.ok(ROOM_SKILL.includes('SendToUser'));
     assert.ok(ROOM_SKILL.includes('沉默'));
