@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { existsSync } from 'node:fs';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { createAgentServer, type AgentServerHandle } from '../src/server/http.js';
 import { AgentRuntime } from '../src/server/runtime.js';
 import { DEFAULT_BUDGET } from '../src/context/budget.js';
@@ -136,6 +139,24 @@ describe('删除同事的生命周期一致性', () => {
       const del = await fetch(`${server.url}api/agents/${victim.id}`, { method: 'DELETE' });
       assert.equal(del.status, 200);
       assert.equal((await runtime.inbox.peek(victim.id)).length, 0, '删除后收件箱不该留下积压来信');
+    } finally {
+      await close();
+    }
+  });
+
+  it('删除后草稿目录一并清掉，不留孤儿数据', async () => {
+    const { server, close } = await startServer('delete-agent-draft');
+    try {
+      const victim = await createAgent(server, '写过草稿的同事');
+      // 模拟它之前用 Write({path:"draft/xxx"}) 落过探索性文件
+      const draftDir = join(server.runtime.dataDir, 'draft', victim.id);
+      await mkdir(draftDir, { recursive: true });
+      await writeFile(join(draftDir, 'note.txt'), '探索性笔记');
+      assert.ok(existsSync(draftDir), '先确认草稿目录真的有内容');
+
+      const del = await fetch(`${server.url}api/agents/${victim.id}`, { method: 'DELETE' });
+      assert.equal(del.status, 200);
+      assert.ok(!existsSync(draftDir), '删除后草稿目录不该留下孤儿数据');
     } finally {
       await close();
     }
