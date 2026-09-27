@@ -108,12 +108,20 @@ describe('模型角色与真实消息身份分离', () => {
       assert.deepEqual(applyEvent([], { type: 'message', message }), toDisplayMessages([message]));
     }
   });
-  it('私聊投影排除群经历，同时兼容旧数据缺少一个来源字段', () => {
+  it('私聊投影排除群经历与同事私信，同时兼容旧数据缺少一个来源字段', () => {
     const direct = input({ id: 'direct' });
     const byRoomId = input({ id: 'room-id-only', roomId: 'r' });
     const bySource = input({ id: 'room-source-only', source: 'room' });
+    const peerPing = input({ id: 'peer-ping', source: 'agent' });
+    const peerToolCall = input({
+      id: 'peer-processing',
+      source: 'agent',
+      content: { type: 'tool_calls', calls: [] },
+    });
     assert.deepEqual(
-      privateConversationMessages([direct, byRoomId, bySource]).map((message) => message.id),
+      privateConversationMessages([direct, byRoomId, bySource, peerPing, peerToolCall]).map(
+        (message) => message.id,
+      ),
       ['direct'],
     );
   });
