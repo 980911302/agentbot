@@ -395,26 +395,36 @@ export function createFileTools(rootDir = process.cwd(), paths: SensitivePaths =
   });
   const edit = defineTool<{
     path: string;
-    old_text: string;
-    new_text: string;
+    old_text?: string;
+    new_text?: string;
+    // 兼容常见的同义叫法（不少同类编程工具用这两个名字）：任何一对都能用，
+    // 混着传也认 old_text/new_text 优先，不必因为叫惯了另一套名字而调用失败。
+    old_string?: string;
+    new_string?: string;
     replace_all?: boolean;
     expected_sha256?: string;
   }>({
     name: 'Edit',
     description:
-      '精确替换文本：old_text 默认必须恰好命中一次（避免误改），replace_all=true 时替换全部命中（如改名）；每段最多 16000 字符，文件最多 2MiB。old_text 按文件原文写，不要带 Read 的行号前缀；CRLF 文件可直接用换行写。可传 expected_sha256 防止覆盖别人的新改动。成功后回显改动处附近几行（带行号）；没命中会指出最接近的位置。',
+      '精确替换文本：old_text 默认必须恰好命中一次（避免误改），replace_all=true 时替换全部命中（如改名）；每段最多 16000 字符，文件最多 2MiB。old_text 按文件原文写，不要带 Read 的行号前缀；CRLF 文件可直接用换行写。也接受 old_string/new_string 这对同义名。可传 expected_sha256 防止覆盖别人的新改动。成功后回显改动处附近几行（带行号）；没命中会指出最接近的位置。',
     parameters: {
       type: 'object',
       properties: {
         path: { type: 'string', minLength: 1 },
         old_text: { type: 'string', minLength: 1 },
         new_text: { type: 'string' },
+        old_string: { type: 'string', minLength: 1, description: 'old_text 的同义名' },
+        new_string: { type: 'string', description: 'new_text 的同义名' },
         replace_all: { type: 'boolean', description: 'true = 替换全部命中；默认只允许恰好一处' },
         expected_sha256: { type: 'string', minLength: 64, maxLength: 64 },
       },
-      required: ['path', 'old_text', 'new_text'],
+      required: ['path'],
     },
     async execute(args, context) {
+      const oldText = args.old_text ?? args.old_string;
+      const newText = args.new_text ?? args.new_string;
+      if (oldText === undefined) throw new Error('缺少 old_text（也可以传 old_string）');
+      if (newText === undefined) throw new Error('缺少 new_text（也可以传 new_string）');
       const path = resolve(rootDir, args.path);
       await assertNotSensitivePath(path, paths);
       return withFileLock(path, async () => {
@@ -422,7 +432,7 @@ export function createFileTools(rootDir = process.cwd(), paths: SensitivePaths =
         if (current === null) throw new Error('文件不存在');
         if (args.expected_sha256 && hash(current) !== args.expected_sha256)
           throw new Error('文件已改变，请重新读取');
-        const plan = planEdit(current, args.old_text, args.new_text, args.replace_all === true);
+        const plan = planEdit(current, oldText, newText, args.replace_all === true);
         await saveText(path, plan.next, current, context.signal);
         const where =
           plan.lines.length > 1

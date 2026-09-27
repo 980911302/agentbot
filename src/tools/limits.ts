@@ -64,6 +64,9 @@ const STRING_LIMITS: Record<string, number> = {
   content: 32000,
   old_text: 16000,
   new_text: 16000,
+  // Edit 的常见别名（很多同类工具叫 old_string/new_string）：限制与正式参数一致
+  old_string: 16000,
+  new_string: 16000,
   name: 100,
   title: 200,
   description: 8000,
